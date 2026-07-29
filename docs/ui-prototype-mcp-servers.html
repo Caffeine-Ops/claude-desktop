@@ -1,0 +1,1239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MCP 服务器 · 内容区重设计原型</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════════════
+   Design tokens —— 1:1 抄自 packages/design-tokens/tokens.css。
+   原型里不新造任何色相：chat 面用什么，这里就用什么。
+   ═══════════════════════════════════════════════════════════════════════ */
+:root {
+  color-scheme: light;
+  --background: 240 7% 97%;
+  --foreground: 240 3% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 3% 12%;
+  --popover: 0 0% 100%;
+  --primary: 211 100% 45%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 6% 94%;
+  --muted: 0 0% 95.3%;
+  --muted-foreground: 240 4% 40%;
+  --hover: 240 6% 90%;
+  --destructive: 0 72% 50%;
+  --border: 240 6% 84%;
+  --input: 240 6% 86%;
+  --ring: 211 100% 45%;
+  /* 身份绿：工具行绿勾 / 运行态同源，刻意不跟用户主题色跑 */
+  --brand: 142 76% 36%;
+  --brand-foreground: 0 0% 100%;
+  /* 警示琥珀 —— tokens.css 没有这个语义位。原型里先派生一个（不是新造
+     色相，是 destructive 与 brand 之间的中间态），落地时需要在
+     tokens.css 补 --warning 或复用 --muted-foreground 降级处理。 */
+  --warning: 35 92% 42%;
+
+  --radius-xs: 5px;
+  --radius-sm: 8px;
+  --radius-md: 11px;
+  --radius-lg: 12px;
+  --radius-pill: 980px;
+
+  --ui-font-size: 13px;
+  --code-font-size: 12px;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+    'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
+  --weight-medium: 500;
+  --weight-strong: 650;
+
+  /* 抬升：chat 面靠 --card 提亮 + 一条 hairline 分层，阴影极克制 */
+  --elev-1: 0 1px 2px hsl(240 6% 10% / 0.04);
+  --elev-2: 0 4px 14px hsl(240 6% 10% / 0.07), 0 1px 3px hsl(240 6% 10% / 0.04);
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur: 180ms;
+}
+
+.dark {
+  color-scheme: dark;
+  --background: 40 6% 10%;
+  --foreground: 40 21% 89%;
+  --card: 30 3% 13%;
+  --card-foreground: 39 35% 92%;
+  --popover: 36 6% 15%;
+  --primary: 210 100% 58%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 30 5% 15%;
+  --muted: 36 6% 17%;
+  --muted-foreground: 36 5% 58%;
+  --hover: 36 6% 17%;
+  --destructive: 0 72% 55%;
+  --border: 49 12% 18%;
+  --input: 42 8% 25%;
+  --ring: 210 100% 58%;
+  --brand: 142 76% 36%;
+  --warning: 35 85% 52%;
+  --elev-1: 0 1px 2px hsl(0 0% 0% / 0.3);
+  --elev-2: 0 4px 16px hsl(0 0% 0% / 0.4), 0 1px 3px hsl(0 0% 0% / 0.3);
+}
+
+* { box-sizing: border-box; }
+
+/* HTML 的 hidden 属性来自 UA 样式表（display:none，特异性最低），任何作者
+ * 侧的 display 声明都会压过它 —— .row-body / .error-bar 都写了 display:flex，
+ * 结果 hidden 静默失效、默认态把展开表单和错误条一起漏出来。全局兜底一条。 */
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--ui-font-size);
+  line-height: 1.55;
+  color: hsl(var(--foreground));
+  background: hsl(var(--background));
+  -webkit-font-smoothing: antialiased;
+  text-wrap: pretty;
+  transition: background var(--dur) var(--ease-out), color var(--dur) var(--ease-out);
+}
+
+code, .mono { font-family: var(--font-mono); font-size: var(--code-font-size); }
+
+/* ═══ 内容区外壳 ═══════════════════════════════════════════════════════
+   设置页右侧滚动区。左导航壳不在本次范围内，原型只渲染内容列。 */
+.settings-viewport {
+  min-height: 100vh;
+  padding: 40px 48px 96px;
+}
+.content-col {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+/* ═══ Section header ═══════════════════════════════════════════════════ */
+.page-title {
+  font-size: 22px;
+  font-weight: var(--weight-strong);
+  letter-spacing: -0.01em;
+  margin: 0 0 28px;
+}
+
+.section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 16px;
+}
+.section-head h3 {
+  font-size: 15px;
+  font-weight: var(--weight-strong);
+  margin: 0 0 2px;
+  letter-spacing: -0.005em;
+}
+.section-head .hint {
+  margin: 0;
+  color: hsl(var(--muted-foreground));
+  font-size: 12.5px;
+}
+
+/* ═══ 按钮基件（对齐 shadcn Button 的尺寸/圆角/过渡）═════════════════ */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 30px; padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-family: inherit; font-size: 12.5px; font-weight: var(--weight-medium);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--dur) var(--ease-out),
+              border-color var(--dur) var(--ease-out),
+              color var(--dur) var(--ease-out),
+              opacity var(--dur) var(--ease-out);
+}
+.btn:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+.btn svg { width: 14px; height: 14px; flex: none; }
+
+.btn-primary { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
+.btn-primary:hover { background: hsl(var(--primary) / 0.9); }
+.btn-primary:active { background: hsl(var(--primary) / 0.82); }
+
+.btn-outline {
+  background: hsl(var(--card));
+  border-color: hsl(var(--border));
+  color: hsl(var(--foreground));
+  box-shadow: var(--elev-1);
+}
+.btn-outline:hover { background: hsl(var(--hover)); }
+
+.btn-ghost { background: transparent; color: hsl(var(--muted-foreground)); }
+.btn-ghost:hover { background: hsl(var(--hover)); color: hsl(var(--foreground)); }
+
+.btn[disabled] { opacity: 0.45; cursor: default; pointer-events: none; }
+
+.btn-icon {
+  width: 28px; height: 28px; padding: 0;
+  justify-content: center;
+  border-radius: var(--radius-xs);
+}
+.btn-icon svg { width: 15px; height: 15px; }
+
+/* ═══ 转发说明 banner ═════════════════════════════════════════════════
+   原设计是一整块密集英文灰底段落。改成两行 chip：一眼看清"谁收得到 /
+   谁收不到"，长解释收进折叠，只在用户主动想读时展开。 */
+.forward-card {
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-md);
+  background: hsl(var(--card));
+  box-shadow: var(--elev-1);
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+.forward-row {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 11px 14px;
+  flex-wrap: wrap;
+}
+.forward-row + .forward-row { border-top: 1px solid hsl(var(--border)); }
+
+.forward-label {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: var(--weight-medium);
+  color: hsl(var(--muted-foreground));
+  flex: none;
+  min-width: 78px;
+}
+.dot { width: 6px; height: 6px; border-radius: var(--radius-pill); flex: none; }
+.dot-on  { background: hsl(var(--brand)); }
+.dot-off { background: hsl(var(--warning)); }
+
+.agent-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.agent-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 22px; padding: 0 8px;
+  border-radius: var(--radius-xs);
+  background: hsl(var(--muted));
+  font-size: 11.5px;
+  color: hsl(var(--foreground));
+}
+.agent-chip.is-off { color: hsl(var(--muted-foreground)); }
+.agent-chip .tag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: hsl(var(--muted-foreground));
+  padding-left: 4px;
+  border-left: 1px solid hsl(var(--border));
+}
+
+.forward-more {
+  border-top: 1px solid hsl(var(--border));
+  background: hsl(var(--muted) / 0.5);
+}
+.forward-more summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 9px 14px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  display: flex; align-items: center; gap: 6px;
+  user-select: none;
+}
+.forward-more summary::-webkit-details-marker { display: none; }
+.forward-more summary:hover { color: hsl(var(--foreground)); }
+.forward-more summary svg {
+  width: 13px; height: 13px;
+  transition: transform var(--dur) var(--ease-out);
+}
+.forward-more[open] summary svg { transform: rotate(180deg); }
+.forward-more-body {
+  padding: 0 14px 13px 33px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  max-width: 62ch;
+}
+.forward-more-body code {
+  background: hsl(var(--muted));
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: hsl(var(--foreground));
+}
+
+/* ═══ 服务器行 ═════════════════════════════════════════════════════════ */
+.rows { display: flex; flex-direction: column; gap: 8px; }
+
+.row {
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-md);
+  background: hsl(var(--card));
+  box-shadow: var(--elev-1);
+  transition: box-shadow var(--dur) var(--ease-out),
+              border-color var(--dur) var(--ease-out),
+              opacity var(--dur) var(--ease-out);
+}
+.row:hover { border-color: hsl(var(--input)); }
+.row.is-expanded { box-shadow: var(--elev-2); border-color: hsl(var(--input)); }
+.row.is-disabled { opacity: 0.62; }
+.row.is-disabled .row-name { color: hsl(var(--muted-foreground)); }
+
+.row-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 10px 10px 6px;
+}
+
+/* 拖拽把手 —— 取代原来占位的 "1/1" 计数器。默认极淡，hover 行才显形。 */
+.grip {
+  width: 18px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  color: hsl(var(--muted-foreground) / 0.35);
+  cursor: grab;
+  flex: none;
+  transition: color var(--dur) var(--ease-out);
+}
+.row:hover .grip { color: hsl(var(--muted-foreground) / 0.8); }
+.grip svg { width: 14px; height: 14px; }
+
+/* Switch —— 尺寸对齐 shadcn Switch（h-5 w-9 一档） */
+.switch {
+  position: relative; flex: none;
+  width: 34px; height: 20px;
+  border-radius: var(--radius-pill);
+  background: hsl(var(--input));
+  border: none; padding: 0; cursor: pointer;
+  transition: background var(--dur) var(--ease-out);
+}
+.switch[aria-checked="true"] { background: hsl(var(--brand)); }
+.switch::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 16px; height: 16px; border-radius: var(--radius-pill);
+  background: #fff;
+  box-shadow: 0 1px 2px hsl(0 0% 0% / 0.18);
+  transition: transform var(--dur) var(--ease-out);
+}
+.switch[aria-checked="true"]::after { transform: translateX(14px); }
+.switch:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+
+/* 名称 + 命令摘要双行 —— 不展开也能认出这是什么服务器 */
+.row-identity {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; gap: 1px;
+  background: none; border: none; padding: 0; margin: 0;
+  font: inherit; color: inherit; text-align: left; cursor: pointer;
+}
+.row-name-line { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.row-name {
+  font-weight: var(--weight-medium);
+  font-size: 13.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.transport-chip {
+  flex: none;
+  height: 17px; padding: 0 6px;
+  display: inline-flex; align-items: center;
+  border-radius: var(--radius-xs);
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.row-sub {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: hsl(var(--muted-foreground));
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* 运行状态 —— 需要 daemon 新增数据源，详见页脚说明 */
+.row-status {
+  display: inline-flex; align-items: center; gap: 5px;
+  flex: none;
+  font-size: 11.5px;
+  color: hsl(var(--muted-foreground));
+  padding-right: 2px;
+}
+.row-status .dot { width: 5px; height: 5px; }
+.row-status.is-idle { opacity: 0.55; }
+
+.row-actions { display: flex; align-items: center; gap: 2px; flex: none; }
+.row-actions .btn-icon { opacity: 0; }
+.row:hover .row-actions .btn-icon,
+.row.is-expanded .row-actions .btn-icon,
+.row-actions .btn-icon:focus-visible { opacity: 1; }
+/* 展开箭头常驻 —— 它是主要的展开入口，不该藏 */
+.row-actions .chev { opacity: 1 !important; }
+.chev svg { transition: transform var(--dur) var(--ease-out); }
+.row.is-expanded .chev svg { transform: rotate(180deg); }
+
+/* ═══ 行展开态：表单 ═══════════════════════════════════════════════════ */
+.row-body {
+  border-top: 1px solid hsl(var(--border));
+  padding: 14px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field-label {
+  font-size: 11.5px;
+  font-weight: var(--weight-medium);
+  color: hsl(var(--muted-foreground));
+}
+.field-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.input, .textarea, .select {
+  width: 100%;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid hsl(var(--input));
+  border-radius: var(--radius-sm);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: inherit; font-size: 12.5px;
+  transition: border-color var(--dur) var(--ease-out),
+              box-shadow var(--dur) var(--ease-out);
+}
+.input.mono, .textarea { font-family: var(--font-mono); font-size: var(--code-font-size); }
+.textarea { height: auto; padding: 7px 9px; resize: vertical; min-height: 56px; line-height: 1.5; }
+.input:focus, .textarea:focus, .select:focus {
+  outline: none;
+  border-color: hsl(var(--ring));
+  box-shadow: 0 0 0 3px hsl(var(--ring) / 0.16);
+}
+.input::placeholder, .textarea::placeholder { color: hsl(var(--muted-foreground) / 0.7); }
+.select { appearance: none; cursor: pointer; padding-right: 28px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 8px center; background-size: 14px;
+}
+
+/* 模板信息条 */
+.tpl-note {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 9px 11px;
+  border-radius: var(--radius-sm);
+  background: hsl(var(--muted));
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+.tpl-note svg { width: 14px; height: 14px; flex: none; margin-top: 2px; }
+.tpl-note a { color: hsl(var(--primary)); text-decoration: none; }
+.tpl-note a:hover { text-decoration: underline; }
+
+/* OAuth 控件 */
+.oauth-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-sm);
+  background: hsl(var(--background));
+}
+.oauth-state { display: flex; align-items: center; gap: 7px; font-size: 12.5px; }
+.oauth-state .dot { width: 6px; height: 6px; }
+
+/* JSON 帮助折叠 */
+.json-help { border: 1px solid hsl(var(--border)); border-radius: var(--radius-sm); overflow: hidden; }
+.json-help summary {
+  list-style: none; cursor: pointer;
+  display: flex; align-items: center; gap: 7px;
+  padding: 9px 11px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  user-select: none;
+}
+.json-help summary::-webkit-details-marker { display: none; }
+.json-help summary:hover { background: hsl(var(--hover)); color: hsl(var(--foreground)); }
+.json-help summary svg { width: 14px; height: 14px; flex: none; }
+.json-help summary .spacer { flex: 1; }
+.json-help-body { padding: 0 11px 11px; }
+.json-help pre {
+  margin: 0 0 10px;
+  padding: 11px;
+  border-radius: var(--radius-sm);
+  background: hsl(var(--muted));
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.65;
+}
+.j-key { color: hsl(var(--primary)); }
+.j-str { color: hsl(var(--brand)); }
+.j-pun { color: hsl(var(--muted-foreground)); }
+.map-grid { display: grid; grid-template-columns: 92px 1fr; gap: 6px 12px; font-size: 11.5px; align-items: center; }
+.map-grid strong { font-weight: var(--weight-medium); color: hsl(var(--muted-foreground)); }
+.map-grid code { background: hsl(var(--muted)); padding: 2px 6px; border-radius: 4px; }
+
+/* ═══ 空态 ═════════════════════════════════════════════════════════════ */
+.empty {
+  border: 1px dashed hsl(var(--border));
+  border-radius: var(--radius-md);
+  padding: 40px 32px;
+  text-align: center;
+  background: hsl(var(--card) / 0.5);
+}
+.empty-icon {
+  width: 40px; height: 40px; margin: 0 auto 14px;
+  border-radius: var(--radius-md);
+  background: hsl(var(--muted));
+  display: flex; align-items: center; justify-content: center;
+  color: hsl(var(--muted-foreground));
+}
+.empty-icon svg { width: 19px; height: 19px; }
+.empty strong { display: block; font-size: 13.5px; font-weight: var(--weight-medium); margin-bottom: 5px; }
+.empty p { margin: 0 auto 18px; max-width: 46ch; font-size: 12.5px; color: hsl(var(--muted-foreground)); }
+
+/* ═══ 错误条 ═══════════════════════════════════════════════════════════ */
+.error-bar {
+  display: flex; align-items: flex-start; gap: 9px;
+  padding: 11px 13px;
+  border: 1px solid hsl(var(--destructive) / 0.35);
+  border-radius: var(--radius-md);
+  background: hsl(var(--destructive) / 0.07);
+  color: hsl(var(--destructive));
+  font-size: 12.5px;
+  margin-bottom: 12px;
+}
+.error-bar svg { width: 15px; height: 15px; flex: none; margin-top: 1px; }
+
+/* ═══ 页脚：保存条 ═════════════════════════════════════════════════════
+   原设计把"所有更改已保存"做成一个禁用按钮 —— 状态被误读成可点的动作。
+   这里拆开：状态是文字，按钮只在真有待存改动时才实体化。 */
+.foot {
+  display: flex; align-items: center; gap: 12px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid hsl(var(--border));
+}
+.save-state {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12.5px;
+  color: hsl(var(--muted-foreground));
+}
+.save-state svg { width: 14px; height: 14px; }
+.save-state.is-dirty { color: hsl(var(--warning)); }
+.save-state.is-saving svg { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.foot-spacer { flex: 1; }
+.stored-at {
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+.stored-at code {
+  background: hsl(var(--muted));
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: hsl(var(--foreground));
+}
+
+/* ═══ 模板选择面板 ═════════════════════════════════════════════════════ */
+.picker {
+  border: 1px solid hsl(var(--input));
+  border-radius: var(--radius-md);
+  background: hsl(var(--card));
+  box-shadow: var(--elev-2);
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+.picker-head { padding: 13px 14px 12px; border-bottom: 1px solid hsl(var(--border)); }
+.picker-head-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 3px; }
+.picker-head strong { font-size: 13px; font-weight: var(--weight-strong); }
+.picker-head .hint { font-size: 12px; color: hsl(var(--muted-foreground)); display: block; margin-bottom: 10px; }
+.picker-groups { max-height: 340px; overflow-y: auto; }
+.picker-group summary {
+  list-style: none; cursor: pointer;
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 14px;
+  font-size: 12px;
+  user-select: none;
+  background: hsl(var(--muted) / 0.55);
+  border-bottom: 1px solid hsl(var(--border));
+}
+.picker-group summary::-webkit-details-marker { display: none; }
+.picker-group summary:hover { background: hsl(var(--hover)); }
+.picker-group-title { font-weight: var(--weight-medium); }
+.picker-group-count {
+  font-family: var(--font-mono); font-size: 10.5px;
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--card)); padding: 1px 6px; border-radius: var(--radius-xs);
+  border: 1px solid hsl(var(--border));
+}
+.picker-group-hint { color: hsl(var(--muted-foreground)); font-size: 11.5px; margin-left: auto; }
+.picker-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+.picker-card {
+  text-align: left;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-sm);
+  background: hsl(var(--background));
+  padding: 10px 11px;
+  cursor: pointer;
+  font: inherit; color: inherit;
+  display: flex; flex-direction: column; gap: 4px;
+  transition: border-color var(--dur) var(--ease-out), background var(--dur) var(--ease-out);
+}
+.picker-card:hover { border-color: hsl(var(--primary) / 0.55); background: hsl(var(--card)); }
+.picker-card-head { display: flex; align-items: center; gap: 6px; }
+.picker-card-head svg { width: 13px; height: 13px; color: hsl(var(--muted-foreground)); flex: none; }
+.picker-card-head strong { font-size: 12.5px; font-weight: var(--weight-medium); }
+.picker-card-desc { font-size: 11.5px; color: hsl(var(--muted-foreground)); }
+.picker-foot { padding: 12px 14px; }
+.picker-custom {
+  width: 100%;
+  border: 1px dashed hsl(var(--border));
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 11px;
+  cursor: pointer; font: inherit; color: inherit;
+  text-align: left;
+  display: flex; flex-direction: column; gap: 3px;
+  transition: border-color var(--dur) var(--ease-out), background var(--dur) var(--ease-out);
+}
+.picker-custom:hover { border-color: hsl(var(--primary) / 0.5); background: hsl(var(--muted) / 0.5); }
+.picker-custom strong { font-size: 12.5px; font-weight: var(--weight-medium); }
+.picker-custom span { font-size: 11.5px; color: hsl(var(--muted-foreground)); }
+
+/* ═══ 设计说明标注（原型专用，落地时不存在）═══════════════════════════ */
+.spec-note {
+  margin-top: 40px;
+  padding: 16px 18px;
+  border-radius: var(--radius-md);
+  border: 1px dashed hsl(var(--border));
+  background: hsl(var(--muted) / 0.45);
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+.spec-note h4 { margin: 0 0 8px; font-size: 12px; color: hsl(var(--foreground)); font-weight: var(--weight-strong); }
+.spec-note ul { margin: 0; padding-left: 18px; }
+.spec-note li { margin-bottom: 4px; }
+.spec-note code { background: hsl(var(--card)); padding: 1px 5px; border-radius: 4px; }
+
+/* ═══ Tweaks 面板 ══════════════════════════════════════════════════════ */
+.tweaks-fab {
+  position: fixed; right: 20px; bottom: 20px; z-index: 60;
+  width: 40px; height: 40px; border-radius: var(--radius-pill);
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--popover));
+  color: hsl(var(--foreground));
+  box-shadow: var(--elev-2);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: transform var(--dur) var(--ease-out);
+}
+.tweaks-fab:hover { transform: scale(1.06); }
+.tweaks-fab svg { width: 17px; height: 17px; }
+.tweaks {
+  position: fixed; right: 20px; bottom: 20px; z-index: 61;
+  width: 244px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg);
+  background: hsl(var(--popover));
+  box-shadow: var(--elev-2);
+  display: none;
+  overflow: hidden;
+}
+.tweaks.is-open { display: block; }
+.tweaks-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 11px 13px;
+  border-bottom: 1px solid hsl(var(--border));
+  font-size: 12px; font-weight: var(--weight-strong);
+}
+.tweaks-body { padding: 11px 13px 13px; display: flex; flex-direction: column; gap: 11px; }
+.tweak { display: flex; flex-direction: column; gap: 5px; }
+.tweak > span { font-size: 11px; color: hsl(var(--muted-foreground)); }
+.tweak .select { height: 28px; font-size: 12px; }
+.tweak-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.tweak-row label { font-size: 12px; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="settings-viewport">
+  <div class="content-col">
+
+    <h1 class="page-title">MCP 服务器</h1>
+
+    <!-- ── Section header ─────────────────────────────────────────── -->
+    <div class="section-head">
+      <div>
+        <h3>外部 MCP 服务器</h3>
+        <p class="hint">供编码智能体使用的第三方工具。</p>
+      </div>
+      <button class="btn btn-primary" id="btn-add">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+        <span>添加服务器</span>
+      </button>
+    </div>
+
+    <!-- ── 模板选择面板（默认收起）───────────────────────────────── -->
+    <div class="picker" id="picker" hidden>
+      <div class="picker-head">
+        <div class="picker-head-row">
+          <strong>选择模板</strong>
+          <button class="btn btn-ghost btn-icon" id="picker-close" aria-label="关闭">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+        <span class="hint">会预填表单，之后每个字段仍可修改。</span>
+        <input class="input" type="search" placeholder="按名称、传输方式、能力筛选…" name="p1">
+      </div>
+      <div class="picker-groups">
+        <details class="picker-group" open>
+          <summary>
+            <span class="picker-group-title">图像生成</span>
+            <span class="picker-group-count">4</span>
+            <span class="picker-group-hint">文生图 / 图生图</span>
+          </summary>
+          <div class="picker-grid">
+            <button class="picker-card">
+              <span class="picker-card-head">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                <strong>Higgsfield</strong>
+                <span class="transport-chip">http</span>
+              </span>
+              <span class="picker-card-desc">托管的图像与视频生成，走 OAuth 授权。</span>
+            </button>
+            <button class="picker-card">
+              <span class="picker-card-head">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                <strong>Pollinations</strong>
+                <span class="transport-chip">stdio</span>
+              </span>
+              <span class="picker-card-desc">免密钥的开放图像生成，本地进程启动。</span>
+            </button>
+          </div>
+        </details>
+        <details class="picker-group">
+          <summary>
+            <span class="picker-group-title">数据与存储</span>
+            <span class="picker-group-count">6</span>
+            <span class="picker-group-hint">数据库 / 文件系统</span>
+          </summary>
+          <div class="picker-grid">
+            <button class="picker-card">
+              <span class="picker-card-head">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+                <strong>MySQL</strong>
+                <span class="transport-chip">stdio</span>
+              </span>
+              <span class="picker-card-desc">只读查询本地或远程 MySQL 实例。</span>
+            </button>
+            <button class="picker-card">
+              <span class="picker-card-head">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+                <strong>Filesystem</strong>
+                <span class="transport-chip">stdio</span>
+              </span>
+              <span class="picker-card-desc">把指定目录暴露成可读写的工具。</span>
+            </button>
+          </div>
+        </details>
+      </div>
+      <div class="picker-foot">
+        <button class="picker-custom">
+          <strong>自定义服务器</strong>
+          <span>空白表单。自己选 stdio 或 SSE / HTTP 并填写字段。</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ── 转发说明 ───────────────────────────────────────────────── -->
+    <div class="forward-card" id="forward-card">
+      <div class="forward-row">
+        <span class="forward-label"><span class="dot dot-on"></span>已转发给</span>
+        <span class="agent-chips">
+          <span class="agent-chip">Claude Code</span>
+          <span class="agent-chip">OpenCode</span>
+          <span class="agent-chip">Hermes<span class="tag">仅 stdio</span></span>
+        </span>
+      </div>
+      <div class="forward-row">
+        <span class="forward-label"><span class="dot dot-off"></span>未转发给</span>
+        <span class="agent-chips">
+          <span class="agent-chip is-off">Codex CLI</span>
+          <span class="agent-chip is-off">Cursor Agent</span>
+          <span class="agent-chip is-off">DeepSeek TUI</span>
+          <span class="agent-chip is-off">Gemini CLI</span>
+          <span class="agent-chip is-off">Pi</span>
+        </span>
+      </div>
+      <details class="forward-more">
+        <summary>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+          这些智能体要怎么配置？
+        </summary>
+        <div class="forward-more-body">
+          未转发的智能体需要在它们自己的配置文件里单独配置 MCP 服务器，例如
+          <code>~/.codex/config.toml</code>、<code>~/.gemini/settings.json</code>。
+          下面列出的服务器在那些智能体里不会生效，也不会报错。
+          <br><br>
+          标注「仅 stdio」的 ACP 适配器只接收 <code>stdio</code> 类型的服务器，
+          HTTP 与 SSE 条目会在启动时被丢弃。
+        </div>
+      </details>
+    </div>
+
+    <!-- ── 错误条（默认隐藏）──────────────────────────────────────── -->
+    <div class="error-bar" id="error-bar" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+      <span>无法连接本地 daemon。请确认应用正在运行，然后重新打开此面板。</span>
+    </div>
+
+    <!-- ── 空态（默认隐藏）───────────────────────────────────────── -->
+    <div class="empty" id="empty" hidden>
+      <div class="empty-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+      </div>
+      <strong>尚未配置 MCP 服务器</strong>
+      <p>从模板开始最快 —— 数据库、文件系统、图像生成都有现成配置；也可以手动填写自定义的 stdio 或 HTTP 服务器。</p>
+      <button class="btn btn-primary" style="margin:0 auto;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+        <span>添加服务器</span>
+      </button>
+    </div>
+
+    <!-- ── 服务器列表 ─────────────────────────────────────────────── -->
+    <div class="rows" id="rows">
+
+      <!-- 行 1：stdio，启用，折叠 -->
+      <div class="row" data-row="1">
+        <div class="row-head">
+          <span class="grip" title="拖动排序">
+            <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>
+          </span>
+          <button class="switch" role="switch" aria-checked="true" aria-label="启用此服务器"></button>
+          <button class="row-identity" data-toggle="1">
+            <span class="row-name-line">
+              <span class="row-name">本地 MySQL（hospital_his）</span>
+              <span class="transport-chip">stdio</span>
+            </span>
+            <span class="row-sub">npx -y @modelcontextprotocol/server-mysql</span>
+          </button>
+          <span class="row-status" data-tools>
+            <span class="dot dot-on"></span>
+            <span>12 个工具</span>
+          </span>
+          <span class="row-actions">
+            <button class="btn btn-ghost btn-icon" title="更多">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+            </button>
+            <button class="btn btn-ghost btn-icon chev" data-toggle="1" title="展开">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+          </span>
+        </div>
+
+        <div class="row-body" hidden>
+          <div class="tpl-note">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+            <span>
+              基于 <strong>MySQL</strong> 模板创建。只读查询本地或远程 MySQL 实例。
+              <a href="#">模板主页</a>
+            </span>
+          </div>
+
+          <div class="field-2col">
+            <label class="field">
+              <span class="field-label">显示名称</span>
+              <input class="input" type="text" value="本地 MySQL（hospital_his）" name="p2">
+            </label>
+            <label class="field">
+              <span class="field-label">ID</span>
+              <input class="input mono" type="text" value="local-mysql" name="p3">
+            </label>
+          </div>
+
+          <label class="field">
+            <span class="field-label">传输方式</span>
+            <select class="select" name="p4">
+              <option selected>stdio</option>
+              <option>SSE</option>
+              <option>streamable HTTP</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span class="field-label">命令</span>
+            <input class="input mono" type="text" value="npx" placeholder="例如 npx、node、/path/to/binary" name="p5">
+          </label>
+          <label class="field">
+            <span class="field-label">参数</span>
+            <input class="input mono" type="text" value="-y @modelcontextprotocol/server-mysql" placeholder="空格分隔" name="p6">
+          </label>
+          <label class="field">
+            <span class="field-label">环境变量（KEY=VALUE）</span>
+            <textarea class="textarea" rows="2" placeholder="MYSQL_DSN=…" name="p7">MYSQL_HOST=127.0.0.1
+MYSQL_DATABASE=hospital_his</textarea>
+          </label>
+
+          <details class="json-help">
+            <summary>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"/><circle cx="12" cy="12" r="3"/></svg>
+              <span>不知道怎么填？对照下面的 MCP JSON 示例</span>
+              <span class="spacer"></span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+            </summary>
+            <div class="json-help-body">
+<pre><code><span class="j-pun">{</span>
+  <span class="j-key">"mcpServers"</span><span class="j-pun">: {</span>
+    <span class="j-key">"tdesign"</span><span class="j-pun">: {</span>
+      <span class="j-key">"command"</span><span class="j-pun">:</span> <span class="j-str">"npx"</span><span class="j-pun">,</span>
+      <span class="j-key">"args"</span><span class="j-pun">: [</span><span class="j-str">"-y"</span><span class="j-pun">, </span><span class="j-str">"tdesign-mcp-server@latest"</span><span class="j-pun">],</span>
+      <span class="j-key">"env"</span><span class="j-pun">: {</span> <span class="j-key">"API_KEY"</span><span class="j-pun">:</span> <span class="j-str">"your-key-here"</span> <span class="j-pun">}</span>
+    <span class="j-pun">}</span>
+  <span class="j-pun">}</span>
+<span class="j-pun">}</span></code></pre>
+              <div class="map-grid">
+                <strong>命令</strong><span><code>npx</code></span>
+                <strong>参数</strong><span><code>-y tdesign-mcp-server@latest</code></span>
+                <strong>环境变量</strong><span><code>API_KEY = your-key-here</code></span>
+                <strong>HTTP / SSE</strong><span><code>改填 url + headers，不用 command / args</code></span>
+              </div>
+            </div>
+          </details>
+        </div>
+      </div>
+
+      <!-- 行 2：HTTP + OAuth，启用，折叠 -->
+      <div class="row" data-row="2">
+        <div class="row-head">
+          <span class="grip" title="拖动排序">
+            <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>
+          </span>
+          <button class="switch" role="switch" aria-checked="true" aria-label="启用此服务器"></button>
+          <button class="row-identity" data-toggle="2">
+            <span class="row-name-line">
+              <span class="row-name">Higgsfield</span>
+              <span class="transport-chip">http</span>
+            </span>
+            <span class="row-sub">https://mcp.higgsfield.ai/mcp</span>
+          </button>
+          <span class="row-status" data-tools>
+            <span class="dot dot-on"></span>
+            <span>6 个工具</span>
+          </span>
+          <span class="row-actions">
+            <button class="btn btn-ghost btn-icon" title="更多">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+            </button>
+            <button class="btn btn-ghost btn-icon chev" data-toggle="2" title="展开">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+          </span>
+        </div>
+
+        <div class="row-body" hidden>
+          <div class="oauth-bar">
+            <span class="oauth-state">
+              <span class="dot dot-on"></span>
+              <span>已通过 OAuth 授权 · <span style="color:hsl(var(--muted-foreground))">2026-07-20 连接</span></span>
+            </span>
+            <button class="btn btn-outline">断开连接</button>
+          </div>
+
+          <div class="field-2col">
+            <label class="field">
+              <span class="field-label">显示名称</span>
+              <input class="input" type="text" value="Higgsfield" name="p8">
+            </label>
+            <label class="field">
+              <span class="field-label">ID</span>
+              <input class="input mono" type="text" value="higgsfield" name="p9">
+            </label>
+          </div>
+
+          <div class="field-2col">
+            <label class="field">
+              <span class="field-label">传输方式</span>
+              <select class="select" name="p10">
+                <option>stdio</option>
+                <option>SSE</option>
+                <option selected>streamable HTTP</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="field-label">授权方式</span>
+              <select class="select" name="p11">
+                <option>不使用托管 OAuth</option>
+                <option selected>托管 OAuth</option>
+              </select>
+            </label>
+          </div>
+
+          <label class="field">
+            <span class="field-label">URL</span>
+            <input class="input mono" type="text" value="https://mcp.higgsfield.ai/mcp" name="p12">
+          </label>
+          <label class="field">
+            <span class="field-label">请求头（KEY=VALUE）</span>
+            <textarea class="textarea" rows="2" placeholder="Authorization=Bearer …" name="p13"></textarea>
+          </label>
+        </div>
+      </div>
+
+      <!-- 行 3：已停用 -->
+      <div class="row is-disabled" data-row="3">
+        <div class="row-head">
+          <span class="grip" title="拖动排序">
+            <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>
+          </span>
+          <button class="switch" role="switch" aria-checked="false" aria-label="启用此服务器"></button>
+          <button class="row-identity" data-toggle="3">
+            <span class="row-name-line">
+              <span class="row-name">Filesystem</span>
+              <span class="transport-chip">stdio</span>
+            </span>
+            <span class="row-sub">npx -y @modelcontextprotocol/server-filesystem ~/Documents</span>
+          </button>
+          <span class="row-status is-idle" data-tools>
+            <span>已停用</span>
+          </span>
+          <span class="row-actions">
+            <button class="btn btn-ghost btn-icon" title="更多">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+            </button>
+            <button class="btn btn-ghost btn-icon chev" data-toggle="3" title="展开">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+          </span>
+        </div>
+        <div class="row-body" hidden>
+          <div class="field-2col">
+            <label class="field">
+              <span class="field-label">显示名称</span>
+              <input class="input" type="text" value="Filesystem" name="p14">
+            </label>
+            <label class="field">
+              <span class="field-label">ID</span>
+              <input class="input mono" type="text" value="filesystem" name="p15">
+            </label>
+          </div>
+          <label class="field">
+            <span class="field-label">命令</span>
+            <input class="input mono" type="text" value="npx" name="p16">
+          </label>
+          <label class="field">
+            <span class="field-label">参数</span>
+            <input class="input mono" type="text" value="-y @modelcontextprotocol/server-filesystem ~/Documents" name="p17">
+          </label>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ── 保存条 ─────────────────────────────────────────────────── -->
+    <div class="foot">
+      <span class="save-state" id="save-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>
+        <span id="save-state-text">所有更改已保存</span>
+      </span>
+      <button class="btn btn-primary" id="btn-save" disabled>保存更改</button>
+      <span class="foot-spacer"></span>
+      <span class="stored-at">存储于 <code>.od/mcp-config.json</code></span>
+    </div>
+
+    <!-- ── 设计说明（原型专用）───────────────────────────────────── -->
+    <div class="spec-note">
+      <h4>落地前需要确认的两件事</h4>
+      <ul>
+        <li><strong>「12 个工具」需要新数据源。</strong>现有 <code>McpServerConfig</code> 里没有工具数，daemon 也未在 <code>/api/mcp/servers</code> 返回连接状态。这个 chip 是设计上最有价值的新增信息（用户当前完全看不出服务器是否活着），但需要 daemon 侧补一个探活接口。如果这轮不做，降级方案是只显示传输方式，不显示状态点。</li>
+        <li><strong>琥珀色 <code>--warning</code> 在 tokens.css 里不存在。</strong>「未转发给」和「未保存」两处用到。要么在共享 token 里补一个语义位，要么降级用 <code>--muted-foreground</code>（代价是「未保存」的提醒力度变弱）。</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══ Tweaks ═════════════════════════════════════════════════════════ -->
+<button class="tweaks-fab" id="tweaks-fab" aria-label="打开调节面板">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>
+</button>
+
+<div class="tweaks" id="tweaks">
+  <div class="tweaks-head">
+    <span>Tweaks</span>
+    <button class="btn btn-ghost btn-icon" id="tweaks-close" aria-label="关闭">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+    </button>
+  </div>
+  <div class="tweaks-body">
+    <div class="tweak">
+      <span>页面状态</span>
+      <select class="select" id="tw-state" name="p18">
+        <option value="default">默认（3 个服务器）</option>
+        <option value="dirty">有未保存更改</option>
+        <option value="saving">保存中</option>
+        <option value="empty">空态</option>
+        <option value="error">daemon 连不上</option>
+        <option value="picker">模板选择面板展开</option>
+      </select>
+    </div>
+    <div class="tweak">
+      <span>主题</span>
+      <select class="select" id="tw-theme" name="p19">
+        <option value="light">浅色</option>
+        <option value="dark">深色</option>
+      </select>
+    </div>
+    <div class="tweak">
+      <span>主按钮色（用户主题色）</span>
+      <select class="select" id="tw-accent" name="p20">
+        <option value="211 100% 45%">Apple 蓝（默认）</option>
+        <option value="142 76% 36%">绿（当前线上截图）</option>
+        <option value="262 65% 55%">紫</option>
+        <option value="24 92% 50%">橙</option>
+      </select>
+    </div>
+    <div class="tweak-row">
+      <label for="tw-tools">显示运行状态 chip</label>
+      <button class="switch" role="switch" aria-checked="true" id="tw-tools"></button>
+    </div>
+    <div class="tweak-row">
+      <label for="tw-density">紧凑行高</label>
+      <button class="switch" role="switch" aria-checked="false" id="tw-density"></button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const $ = (s, r) => (r || document).querySelector(s);
+  const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+
+  /* ── 行展开 ─────────────────────────────────────────────────────── */
+  $$('[data-toggle]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const row = $('.row[data-row="' + el.dataset.toggle + '"]');
+      const body = $('.row-body', row);
+      const open = row.classList.toggle('is-expanded');
+      body.hidden = !open;
+      $('.chev', row).setAttribute('title', open ? '收起' : '展开');
+    });
+  });
+
+  /* ── Switch（行内 + Tweaks 共用）────────────────────────────────── */
+  document.addEventListener('click', (e) => {
+    const sw = e.target.closest('.switch');
+    if (!sw) return;
+    const next = sw.getAttribute('aria-checked') !== 'true';
+    sw.setAttribute('aria-checked', String(next));
+    const row = sw.closest('.row');
+    if (row) {
+      row.classList.toggle('is-disabled', !next);
+      const status = $('.row-status', row);
+      status.classList.toggle('is-idle', !next);
+      // 没有已知工具数时不编造数字 —— 只说"已启用"，等 daemon 探活回来再填
+      status.innerHTML = next
+        ? '<span class="dot dot-on"></span><span>' +
+          (row.dataset.tools ? row.dataset.tools + ' 个工具' : '已启用') + '</span>'
+        : '<span>已停用</span>';
+      setState('dirty');
+    }
+  });
+  // 记住每行原本的工具数，停用/启用来回切时不丢
+  $$('.row').forEach((r) => {
+    const t = $('.row-status span:last-child', r).textContent.match(/\d+/);
+    if (t) r.dataset.tools = t[0];
+  });
+
+  /* ── 页面状态机 ─────────────────────────────────────────────────── */
+  const saveBtn = $('#btn-save');
+  const saveState = $('#save-state');
+  const saveText = $('#save-state-text');
+  const CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>';
+  const DOT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>';
+  const SPIN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
+
+  function setState(name) {
+    const rows = $('#rows'), empty = $('#empty'), err = $('#error-bar'),
+          picker = $('#picker'), fwd = $('#forward-card');
+    rows.hidden = false; empty.hidden = true; err.hidden = true;
+    picker.hidden = true; fwd.hidden = false;
+    saveState.className = 'save-state';
+
+    // 保存按钮只在真有待存改动时才存在 —— 这是本次重设计的核心一条：
+    // "已保存"是状态不是动作，把它做成常驻的禁用按钮会让用户反复去点。
+    if (name === 'default') {
+      saveState.innerHTML = CHECK + '<span>所有更改已保存</span>';
+      saveBtn.hidden = true; saveBtn.disabled = true;
+    } else if (name === 'dirty') {
+      saveState.className = 'save-state is-dirty';
+      saveState.innerHTML = DOT + '<span>有 1 处更改尚未保存</span>';
+      saveBtn.hidden = false; saveBtn.disabled = false;
+      saveBtn.textContent = '保存更改';
+    } else if (name === 'saving') {
+      saveState.className = 'save-state is-saving';
+      saveState.innerHTML = SPIN + '<span>正在保存…</span>';
+      saveBtn.hidden = false; saveBtn.disabled = true;
+      saveBtn.textContent = '保存更改';
+    } else if (name === 'empty') {
+      rows.hidden = true; empty.hidden = false;
+      saveState.innerHTML = CHECK + '<span>所有更改已保存</span>';
+      saveBtn.hidden = true; saveBtn.disabled = true;
+    } else if (name === 'error') {
+      err.hidden = false; fwd.hidden = true; rows.hidden = true;
+      saveState.innerHTML = '';
+      saveBtn.hidden = true; saveBtn.disabled = true;
+    } else if (name === 'picker') {
+      picker.hidden = false;
+      saveState.innerHTML = CHECK + '<span>所有更改已保存</span>';
+      saveBtn.hidden = true; saveBtn.disabled = true;
+    }
+    const sel = $('#tw-state');
+    if (sel.value !== name && ['default','dirty','saving','empty','error','picker'].includes(name)) {
+      sel.value = name;
+    }
+  }
+
+  $('#tw-state').addEventListener('change', (e) => setState(e.target.value));
+  $('#btn-add').addEventListener('click', () => setState($('#picker').hidden ? 'picker' : 'default'));
+  $('#picker-close').addEventListener('click', () => setState('default'));
+  saveBtn.addEventListener('click', () => {
+    setState('saving');
+    setTimeout(() => setState('default'), 900);
+  });
+
+  /* ── 主题 ───────────────────────────────────────────────────────── */
+  $('#tw-theme').addEventListener('change', (e) => {
+    document.documentElement.classList.toggle('dark', e.target.value === 'dark');
+  });
+
+  /* ── 用户主题色（模拟 appearance applier 覆盖 --primary）────────── */
+  $('#tw-accent').addEventListener('change', (e) => {
+    document.documentElement.style.setProperty('--primary', e.target.value);
+    document.documentElement.style.setProperty('--ring', e.target.value);
+  });
+
+  /* ── 运行状态 chip 开关（对应「daemon 还没这个数据」的降级方案）──
+   * 注意：document 上的 switch 委托是冒泡阶段跑的，元素自身的 handler
+   * 先于它执行 —— 这里读到的 aria-checked 还是**翻转前**的值，所以取反。 */
+  $('#tw-tools').addEventListener('click', () => {
+    const wasOn = $('#tw-tools').getAttribute('aria-checked') === 'true';
+    $$('.row-status').forEach((s) => { s.style.display = wasOn ? 'none' : ''; });
+  });
+
+  /* ── 紧凑行高（同上：读到的是翻转前的值）────────────────────────── */
+  $('#tw-density').addEventListener('click', () => {
+    const wasOn = $('#tw-density').getAttribute('aria-checked') === 'true';
+    const compact = !wasOn;
+    $$('.row-head').forEach((h) => { h.style.padding = compact ? '6px 10px 6px 6px' : ''; });
+    $$('.row-sub').forEach((s) => { s.style.display = compact ? 'none' : ''; });
+  });
+
+  /* ── Tweaks 开合 ────────────────────────────────────────────────── */
+  const fab = $('#tweaks-fab'), panel = $('#tweaks');
+  fab.addEventListener('click', () => { panel.classList.add('is-open'); fab.style.display = 'none'; });
+  $('#tweaks-close').addEventListener('click', () => { panel.classList.remove('is-open'); fab.style.display = ''; });
+
+  setState('default');
+})();
+</script>
+
+</body>
+</html>

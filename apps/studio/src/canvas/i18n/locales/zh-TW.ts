@@ -556,6 +556,23 @@ export const zhTW: Dict = {
   'mcpClient.storedAt': '儲存於',
   'mcpClient.daemonError': '無法連線到本機 daemon。請確認 Open Design 正在執行，然後重新開啟此面板。',
   'mcpClient.saveFailed': '儲存失敗。請確認 daemon 正在執行後再試一次。',
+  'mcpClient.unsavedChanges': '有變更還沒儲存',
+  'mcpClient.forwardedTo': '已傳給',
+  'mcpClient.notForwardedTo': '沒傳給',
+  'mcpClient.stdioOnly': '僅 stdio',
+  'mcpClient.howToConfigure': '這些怎麼設定？',
+  'mcpClient.notForwardedHelp':
+    '這些智慧體要在它們自己的設定檔裡單獨設定 MCP 伺服器，例如',
+  'mcpClient.acpStdioHelp':
+    '標示「僅 stdio」的智慧體只接收 stdio 類型的伺服器，HTTP 和 SSE 的項目在啟動時會被丟棄。',
+  'mcpClient.rowEnabled': '已開啟',
+  'mcpClient.rowDisabled': '已關閉',
+  'mcpClient.rowMore': '更多操作',
+  'mcpClient.rowMoveUp': '上移',
+  'mcpClient.rowMoveDown': '下移',
+  'mcpClient.rowRemove': '刪除伺服器',
+  'mcpClient.templateHomepage': '範本首頁',
+  'mcpClient.templateTry': '試試：',
   'tasks.comingSoon': '即將推出',
 
   'routines.title': '自動化',
