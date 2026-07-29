@@ -36,6 +36,10 @@ import {
 //   <dir>/skills/<id>/assets/logo.png          ← manifest.interface.logo 指向的文件（可选）
 //   <dir>/skills/<id>/skills/<subid>/SKILL.md  ← 真正喂给 CLI 的技能内容，至少一个
 //   <dir>/plugins/<id>/...                     ← kind=plugin 条目，结构同上
+//   <dir>/templates/<id>/manifest.json         ← kind=template 条目（ppt-creator 版式模板包）
+//   <dir>/templates/<id>/decks/decks_index.json      ← 与内置 skills/ppt-creator/templates/ 同布局
+//   <dir>/templates/<id>/decks/<模板名>/01_cover.svg  ← 包内模板目录名可以是中文
+//                                                （MARKET_SAFE_ID 只约束条目 id，即 <id> 那一层）
 //
 // manifest.json 里的 `name` 字段必须等于目录名 `<id>`（一致性检查，避免
 // 目录名和声明名对不上造成困惑）；`skills` 字段固定 "./skills/"（schema 用
@@ -60,12 +64,18 @@ const dir = arg('dir')
 const generatedAtMs = Number(arg('now'))
 if (!Number.isFinite(generatedAtMs)) throw new Error('--now 必须是毫秒时间戳')
 
-const PREFIX_DIRS = ['skills', 'plugins'] as const
+// 2026-07-29 加入 templates/：ppt-creator 的版式模板包走同一套分发管线
+// （kind='template'，见 packages/contracts 的 MarketEntryKind 注释）。它与
+// 另外两个前缀的唯一差别是「不要求 skills/<subid>/SKILL.md」——模板不是技能，
+// 装完只是磁盘上一组给 ppt-creator 读的 SVG。
+const PREFIX_DIRS = ['skills', 'plugins', 'templates'] as const
 const prefixRoots = PREFIX_DIRS.map((name) => ({ name, path: join(dir, name) })).filter((p) =>
   existsSync(p.path)
 )
 if (prefixRoots.length === 0) {
-  throw new Error(`${join(dir, 'skills')} 与 ${join(dir, 'plugins')} 都不存在——仓库布局应至少有其中一个`)
+  throw new Error(
+    `${PREFIX_DIRS.map((n) => join(dir, n)).join('、')} 都不存在——仓库布局应至少有其中一个`
+  )
 }
 
 /** 构建/缓存产物：不是条目内容，是「作者本机跑过一次脚本」的残留。dotfile
@@ -123,7 +133,7 @@ for (const { name: prefixName, path: prefixRoot } of prefixRoots) {
     if (!ent.isDirectory() || ent.name.startsWith('.')) continue
     const id = ent.name
     if (!MARKET_SAFE_ID.test(id)) throw new Error(`目录名不合法（须匹配 ${MARKET_SAFE_ID}）：${prefixName}/${id}`)
-    if (seenIds.has(id)) throw new Error(`id 重复：${id} 同时出现在 skills/ 与 plugins/ 下`)
+    if (seenIds.has(id)) throw new Error(`id 重复：${id} 同时出现在多个前缀目录下`)
     seenIds.add(id)
     const skillDir = join(prefixRoot, id)
 
@@ -143,7 +153,17 @@ for (const { name: prefixName, path: prefixRoot } of prefixRoots) {
         `${prefixName}/${id}/manifest.json 的 kind（"${manifest.kind}"）应放进 ${marketRemoteDirFor(manifest.kind)}/ 目录，不是 ${prefixName}/`
       )
     }
-    if (!hasAnySkillMd(join(skillDir, 'skills'))) {
+    // 模板条目豁免 SKILL.md（它不喂给 CLI），改为要求至少携带一个
+    // <kind>_index.json——那是 composer 模板选择器读取模板列表的入口，
+    // 缺了它这个包装完在下拉里一个模板都不会出现（静默失效，最难查）。
+    if (manifest.kind === 'template') {
+      const TEMPLATE_INDEX_FILES = ['brands/brands_index.json', 'layouts/layouts_index.json', 'decks/decks_index.json']
+      if (!TEMPLATE_INDEX_FILES.some((rel) => existsSync(join(skillDir, rel)))) {
+        throw new Error(
+          `${prefixName}/${id}/ 下没有任何 ${TEMPLATE_INDEX_FILES.join(' / ')}——这个模板包装完在模板选择器里不会出现任何条目`
+        )
+      }
+    } else if (!hasAnySkillMd(join(skillDir, 'skills'))) {
       throw new Error(`${prefixName}/${id}/skills/ 下没有任何 <subid>/SKILL.md——这个条目装完 CLI 加载不到任何技能`)
     }
     for (const relPath of [manifest.interface.composerIcon, manifest.interface.logo, ...manifest.interface.screenshots]) {
