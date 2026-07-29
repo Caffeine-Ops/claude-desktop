@@ -231,6 +231,16 @@ const PROMPTS_BY_SKILL: Record<string, readonly ScenarioPrompt[]> = {
       text: '帮我改写下面这段文字：\n\n【粘贴原文】\n\n【可选：说明想改的方向，比如更口语、压到 800 字、换成小红书风格；不说就先给我诊断】'
     },
     {
+      // 优化已有作品主入口（设计 2026-07-28）：【文稿文件】是 filePlaceholderPlugin
+      // 的文件槽，「文稿」关键词 → picker 限定 txt/md/markdown/docx/pdf（见
+      // acceptForPlaceholder 的文稿组合映射）。走 workflows/optimize-existing.md：
+      // 先五维体检、再让用户确认修改强度，确认前不改正文。末句「在我确认修改强度
+      // 前，不要改正文」是工作流 ⛔ BLOCKING 硬门在 UI 侧的对齐提醒。一期只上这一
+      // 条主入口；润色/深改两个快捷入口按设计 §14 决策 1 推迟二期。
+      label: '优化已有作品',
+      text: '帮我优化【文稿文件】。请先检查内容、结构、表达、文风和 AI 痕迹，告诉我主要问题，并推荐轻度润色、标准优化或深度改写。在我确认修改强度前，不要改正文。'
+    },
+    {
       label: '学我的文风',
       text: '读一下【我的往期文章文件或目录】，分析我的写作风格，生成一份文风档案，以后写东西都按这个风格来。'
     }
