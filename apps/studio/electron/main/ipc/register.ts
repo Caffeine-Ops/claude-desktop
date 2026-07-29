@@ -167,7 +167,13 @@ import {
   type ProposalImageResult,
   type ProposalImageUploadPayload,
   type BackgroundThemeMeta,
-  type BackgroundThemeDeletePayload
+  type BackgroundThemeDeletePayload,
+  type WritingScanPayload,
+  type WritingScanResultIpc,
+  type WritingReadSectionsPayload,
+  type WritingReadSectionsResultIpc,
+  type WritingWriteSectionPayload,
+  type WritingWriteSectionResultIpc
 } from '../../shared/ipc-channels'
 import { setKbRoot, getKbRoot, readKbIndex, kbOutDir, getKbConfig, setKbRemote, kbStoreDir, setKbMode } from '../core/kbIndexStore'
 import { scanLocalDocs, listLocalDocsDirs, setLocalDocsDir } from '../core/localDocsScan'
@@ -204,6 +210,11 @@ import { appendProposalMetric } from '../core/proposalMetricsStore'
 import { generateImage, editImage, sniffImageExt } from '../services/imageGenService'
 import { submitFeedback } from '../services/feedbackService'
 import { writeProposalImage } from '../services/proposalImageWriter'
+import {
+  scanWritingDoc,
+  readWritingSections,
+  writeWritingSection
+} from '../core/writingProject'
 import {
   importBackgroundThemeFromFile,
   listBackgroundThemes,
@@ -478,6 +489,9 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_GENERATE)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_EDIT)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_UPLOAD)
+  ipcMain.removeHandler(IPC_CHANNELS.WRITING_SCAN)
+  ipcMain.removeHandler(IPC_CHANNELS.WRITING_READ_SECTIONS)
+  ipcMain.removeHandler(IPC_CHANNELS.WRITING_WRITE_SECTION)
   ipcMain.removeHandler(IPC_CHANNELS.BACKGROUND_THEME_IMPORT)
   ipcMain.removeHandler(IPC_CHANNELS.BACKGROUND_THEME_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.BACKGROUND_THEME_DELETE)
@@ -3266,6 +3280,37 @@ export function registerIpcHandlers(): void {
       const path = await writeProposalImage(sessionId, 'uploaded', bytes, ext)
       return { path }
     }
+  )
+
+  // 写作工作区：扫 / 读 / 写。业务逻辑全在 writingProject.ts（可单测），
+  // 这里只做「拿到 payload → 转调 → 原样回传」的薄壳。
+  ipcMain.handle(
+    IPC_CHANNELS.WRITING_SCAN,
+    async (_event, payload: WritingScanPayload): Promise<WritingScanResultIpc> =>
+      scanWritingDoc(payload.source)
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.WRITING_READ_SECTIONS,
+    async (
+      _event,
+      payload: WritingReadSectionsPayload
+    ): Promise<WritingReadSectionsResultIpc> =>
+      readWritingSections(payload.source, Array.isArray(payload.names) ? payload.names : [])
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.WRITING_WRITE_SECTION,
+    async (
+      _event,
+      payload: WritingWriteSectionPayload
+    ): Promise<WritingWriteSectionResultIpc> =>
+      writeWritingSection(
+        payload.source,
+        payload.name,
+        payload.markdown,
+        payload.expectedMtimeMs
+      )
   )
 
   // Engine-to-renderer event forwarding lives in the ChatEngine

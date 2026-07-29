@@ -15,6 +15,7 @@ import type {
   SectionVerification
 } from './proposal'
 import type { ReplayMeta, ReplayTimeline } from './replayTypes'
+import type { WritingDocSource, WritingFileMeta, WritingGenre, WritingSection } from './writing'
 
 /**
  * Central registry of IPC channel names. Main and renderer both import
@@ -1004,6 +1005,19 @@ export const IPC_CHANNELS = {
    * 不同：上传不调出图 API，不受未配置 apiKey 限制。
    */
   PROPOSAL_IMAGE_UPLOAD: 'proposal-image:upload',
+  /**
+   * Renderer → main. 写作工作区轮询入口：回体裁、大纲总节数、节文件元信息。
+   * 【只回元信息不回正文】——每 2s 搬一遍万字正文毫无必要，正文走 WRITING_READ_SECTIONS
+   * 按需拉。同款分工见 PPT_PREVIEW_LIST_SLIDES。
+   */
+  WRITING_SCAN: 'writing:scan',
+  /** Renderer → main. 按名字批量拉节正文；names 为空数组 = 拉全部。 */
+  WRITING_READ_SECTIONS: 'writing:read-sections',
+  /**
+   * Renderer → main. 带乐观锁写回一节。expectedMtimeMs 与盘上不符即拒写、回传盘上最新内容
+   * （AI 可能在润色阶段回头重写该节）。绝不静默覆盖。
+   */
+  WRITING_WRITE_SECTION: 'writing:write-section',
   /**
    * Renderer → main. 语义检索：模糊自然语言 → 混合(向量+BM25)命中片段+出处。供写方案
    * 搜索面板主动用。embedding 在 utilityProcess、不冻 main；模型缺失/stale 降级 BM25。
@@ -2365,6 +2379,38 @@ export interface ReplayListDemosResult {
   demos: ReplayDemoInfo[]
 }
 
+/** Payload for WRITING_SCAN. */
+export interface WritingScanPayload {
+  source: WritingDocSource
+}
+/** Result of WRITING_SCAN. `dirMissing` 供 UI 区分「目录没了」与「读失败」。 */
+export type WritingScanResultIpc =
+  | { ok: true; genre: WritingGenre; outlineTotal: number | null; files: WritingFileMeta[] }
+  | { ok: false; dirMissing?: true; error: string }
+
+/** Payload for WRITING_READ_SECTIONS. `names` 为空数组表示读全部。 */
+export interface WritingReadSectionsPayload {
+  source: WritingDocSource
+  names: string[]
+}
+/** Result of WRITING_READ_SECTIONS. */
+export type WritingReadSectionsResultIpc =
+  | { ok: true; sections: WritingSection[] }
+  | { ok: false; error: string }
+
+/** Payload for WRITING_WRITE_SECTION. */
+export interface WritingWriteSectionPayload {
+  source: WritingDocSource
+  name: string
+  markdown: string
+  expectedMtimeMs: number
+}
+/** Result of WRITING_WRITE_SECTION. `conflict` = 乐观锁拦下，`current` 是盘上最新内容。 */
+export type WritingWriteSectionResultIpc =
+  | { ok: true; mtimeMs: number }
+  | { ok: false; conflict: true; current: { markdown: string; mtimeMs: number } | null }
+  | { ok: false; conflict?: false; error: string }
+
 /** Payload for PROPOSAL_EXPORT. */
 export interface ProposalExportPayload {
   markdown: string
@@ -3532,6 +3578,18 @@ export interface ChatApi {
    * API，不受 apiKey 是否配置影响。
    */
   proposalImageUpload(args: ProposalImageUploadPayload): Promise<ProposalImageResult | null>
+
+  /**
+   * 写作工作区轮询入口：回体裁、大纲总节数、节文件元信息（不含正文，见 WRITING_SCAN 通道注释）。
+   */
+  writingScan(payload: WritingScanPayload): Promise<WritingScanResultIpc>
+  /** 按名字批量拉节正文；names 为空数组 = 拉全部（WRITING_READ_SECTIONS）。 */
+  writingReadSections(payload: WritingReadSectionsPayload): Promise<WritingReadSectionsResultIpc>
+  /**
+   * 带乐观锁写回一节。expectedMtimeMs 与盘上不符即拒写、回传盘上最新内容
+   * （WRITING_WRITE_SECTION 通道注释）。
+   */
+  writingWriteSection(payload: WritingWriteSectionPayload): Promise<WritingWriteSectionResultIpc>
 }
 
 /**

@@ -158,7 +158,13 @@ import {
   type ProposalImageResult,
   type ProposalImageUploadPayload,
   type BackgroundThemeMeta,
-  type BackgroundThemeDeletePayload
+  type BackgroundThemeDeletePayload,
+  type WritingScanPayload,
+  type WritingScanResultIpc,
+  type WritingReadSectionsPayload,
+  type WritingReadSectionsResultIpc,
+  type WritingWriteSectionPayload,
+  type WritingWriteSectionResultIpc
 } from '../shared/ipc-channels'
 import type { ProposalMetricRecord } from '../shared/proposal'
 import type { KbRemoteConfig } from '../shared/kbConfig'
@@ -1116,7 +1122,18 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.PROPOSAL_IMAGE_UPLOAD,
       args
     ) as Promise<ProposalImageResult | null>
-  }
+  },
+
+  writingScan: (payload: WritingScanPayload): Promise<WritingScanResultIpc> =>
+    ipcRenderer.invoke(IPC_CHANNELS.WRITING_SCAN, payload),
+  writingReadSections: (
+    payload: WritingReadSectionsPayload
+  ): Promise<WritingReadSectionsResultIpc> =>
+    ipcRenderer.invoke(IPC_CHANNELS.WRITING_READ_SECTIONS, payload),
+  writingWriteSection: (
+    payload: WritingWriteSectionPayload
+  ): Promise<WritingWriteSectionResultIpc> =>
+    ipcRenderer.invoke(IPC_CHANNELS.WRITING_WRITE_SECTION, payload)
 }
 
 /**
