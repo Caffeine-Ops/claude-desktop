@@ -1824,7 +1824,11 @@ body.desktop-pet-shell .pet-task-item {
   --sans: "Inter", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Hiragino Sans GB", "Source Han Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
-/* --- Arabic & Persian Comfort Pass --- */
+/* --- Arabic & Persian Comfort Pass ---
+ * "Cairo" 在这里只是「装了就用」的机会性首选，**应用不再自带也不再远程拉它**：
+ * globals.css 原本有一条 fonts.googleapis.com 的 @import，因为部分地区访问不到
+ * 已删除。外部样式表是渲染阻塞资源，拿不到时拖的不只是字体而是首帧——对一个
+ * 离线分发的 Electron 应用不划算。所以本栈实际生效的是后面的系统 fallback。 */
 [dir="rtl"] {
   --sans: "Cairo", "Inter", "Vazirmatn", "Noto Sans Arabic", "Segoe UI Arabic", "Tahoma", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
