@@ -1,0 +1,255 @@
+name: Publish runtime components
+
+# 运行时组件（CLI 二进制 / python-runtime）的发布链路。
+#
+# ── 为什么与 app 发版（build.yml）彻底解耦 ──
+# 组件的版本节奏与 app 完全不同：CLI 一个月变一次，app 一周发几次。让每个
+# tag 都重传三平台约 600MB 是纯浪费，还把发版时长和失败面绑上一条跨境链路。
+# 解耦后：app 发版完全不碰组件；换 CLI 版本 / 补一个平台的产物 / 换分发源，
+# 都不需要发 app 版本——客户端靠 components.json 的版本号自己发现。
+#
+# ── 为什么默认 publish=false ──
+# 实测：这台自建服务器**从 GitHub 拉只有 16KB/s**（国际出向被严重限制），
+# 而**从国内开发机上传有 6.4MB/s**。runner 直推大概率同样慢，且
+# /var/www/downloads/ 里现存的安装包属主就是本机 uid——现有大文件本来就是
+# 手工传的，CI 那条 rsync 从没成功跑过。
+# 所以常态路径是：publish=false 只产 artifact → 在国内开发机
+# `gh run download` 取回 → 本机 rsync 推服务器。把跨境大文件传输从「每次发布
+# 的关键路径」挪到「版本变更时的一次性运维动作」。
+# publish=true 那条留着，等哪天 runner→服务器实测够快时可以直接用。
+
+on:
+  workflow_dispatch:
+    inputs:
+      cli_source:
+        description: 'CLI 来源：official（downloads.claude.ai）/ fusion（Caffeine-Ops release）。留空取 repo variable CLI_SOURCE。'
+        type: choice
+        options: ['', 'official', 'fusion']
+        default: ''
+      cli_version:
+        description: 'CLI 版本。official 留空 = 取 downloads.claude.ai/latest；fusion 必填（如 v2.1.90）。'
+        default: ''
+      python_tag:
+        description: 'python-build-standalone 的 release tag'
+        default: '20260510'
+      python_version:
+        description: 'CPython 版本。钉 3.12 是因为 py3.14 无 cp314 wheel，pip 会退化成源码编译（曾卡死）。'
+        default: '3.12.13'
+      publish:
+        description: '是否直接 rsync 到自建服务器（默认否，只产 artifact 供本机取回上传）'
+        type: boolean
+        default: false
+
+env:
+  # 与 build.yml 同源的选择逻辑：手选优先，否则 repo variable，最后兜底 official。
+  # 注意 build.yml 里代码默认值是 'fusion'，而 repo variable 当前设为 'official'
+  # ——两者以 variable 为准，这里显式写出来免得再被那个默认值误导。
+  CLI_SOURCE: ${{ github.event.inputs.cli_source != '' && github.event.inputs.cli_source || vars.CLI_SOURCE || 'official' }}
+
+jobs:
+  # official 的版本必须由一个前置 job 统一解析一次，否则三条矩阵腿各自调
+  # /latest 可能在版本切换的瞬间拿到不同结果，拼出一份自相矛盾的清单。
+  resolve-version:
+    runs-on: ubuntu-latest
+    outputs:
+      cli_version: ${{ steps.pick.outputs.cli_version }}
+      published_at: ${{ steps.pick.outputs.published_at }}
+    steps:
+      - id: pick
+        shell: bash
+        run: |
+          set -euo pipefail
+          V="${{ github.event.inputs.cli_version }}"
+          if [ -z "$V" ]; then
+            if [ "${CLI_SOURCE}" = "official" ]; then
+              V=$(curl -fsSL https://downloads.claude.ai/claude-code-releases/latest)
+            else
+              echo "::error::CLI_SOURCE=fusion 时必须显式给 cli_version（fusion 没有 latest 端点）"
+              exit 1
+            fi
+          fi
+          echo "cli_version=$V" >> "$GITHUB_OUTPUT"
+          # 时间戳由这里统一产出并传给每条腿——发布脚本要求外部传入，好让同一次
+          # 发布的清单可重现（同 publish-ppt-skill.ts 钉 ZIP_EPOCH 的纪律）。
+          echo "published_at=$(date +%s000)" >> "$GITHUB_OUTPUT"
+          echo "CLI_SOURCE=${CLI_SOURCE}  version=$V"
+
+  build:
+    needs: resolve-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 平台维度只是「下哪个资产、贴哪个 key」——组件产物与 runner 架构无关
+          # （我们只是下载并压缩，不编译），所以三条腿都可以跑在 ubuntu 上，
+          # 比 build.yml 那套必须按架构分 runner 的约束宽松得多，也快得多。
+          - platform: darwin-arm64
+            official_binary: claude
+            fusion_asset: fusion-code-darwin-arm64
+            python_dist: aarch64-apple-darwin
+          - platform: darwin-x64
+            official_binary: claude
+            fusion_asset: fusion-code-darwin-x64
+            python_dist: x86_64-apple-darwin
+          - platform: win32-x64
+            official_binary: claude.exe
+            fusion_asset: fusion-code-win32-x64.exe
+            python_dist: x86_64-pc-windows-msvc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Download CLI binary
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.resolve-version.outputs.cli_version }}
+        run: |
+          set -euo pipefail
+          mkdir -p src
+          if [ "${CLI_SOURCE}" = "official" ]; then
+            BASE="https://downloads.claude.ai/claude-code-releases/${VERSION}"
+            curl -fsSL -o src/cli "${BASE}/${{ matrix.platform }}/${{ matrix.official_binary }}"
+            # 官方 manifest 自带 sha256，先对一遍：这是最上游的完整性闸门，
+            # 比我们自己算出来的任何东西都权威。
+            EXPECTED=$(curl -fsSL "${BASE}/manifest.json" \
+              | python3 -c "import json,sys; print(json.load(sys.stdin)['platforms']['${{ matrix.platform }}']['checksum'])")
+            ACTUAL=$(sha256sum src/cli | cut -d' ' -f1)
+            if [ "$EXPECTED" != "$ACTUAL" ]; then
+              echo "::error::官方 CLI 校验和不符：期望 $EXPECTED，实际 $ACTUAL"
+              exit 1
+            fi
+            echo "官方 manifest 校验和比对通过"
+          else
+            gh release download "${VERSION}" \
+              --repo Caffeine-Ops/fusion-code-install \
+              --pattern "${{ matrix.fusion_asset }}" --dir src
+            mv "src/${{ matrix.fusion_asset }}" src/cli
+            # fusion 侧没有 manifest，用 GitHub 记录的 asset size 兜底防截断
+            # （build.yml 里同款闸门，事故背景见那里的注释）。
+            EXPECTED=$(gh release view "${VERSION}" --repo Caffeine-Ops/fusion-code-install \
+              --json assets --jq '.assets[] | select(.name == "${{ matrix.fusion_asset }}") | .size')
+            ACTUAL=$(wc -c < src/cli | tr -d '[:space:]')
+            if [ "$EXPECTED" != "$ACTUAL" ]; then
+              echo "::error::fusion CLI 下载被截断：期望 $EXPECTED 字节，实际 $ACTUAL"
+              exit 1
+            fi
+          fi
+
+      - name: Download python-runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.python_tag }}"
+          VER="${{ github.event.inputs.python_version }}"
+          ASSET="cpython-${VER}+${TAG}-${{ matrix.python_dist }}-install_only.tar.gz"
+          curl -fsSL -o src/python.tar.gz \
+            "https://github.com/astral-sh/python-build-standalone/releases/download/${TAG}/${ASSET}"
+          # 解压后总字节数：客户端拿它做磁盘预检。读 tar 索引而不是真解压，
+          # 省掉一次几百 MB 的落盘。
+          # **刻意用 python 的 tarfile 而不是 `tar -tzv | awk '{s+=$3}'`**：
+          # GNU tar 与 bsdtar 的 -tv 列位不同（size 在第 3 vs 第 5 列），
+          # 靠列号求和换个 runner 就会静默算出 0，而 0 会让客户端的磁盘预检
+          # 形同虚设——这种「不报错、只是悄悄失效」的写法不该进 CI。
+          UNPACKED=$(python3 -c "import tarfile; print(sum(m.size for m in tarfile.open('src/python.tar.gz')))")
+          if [ -z "$UNPACKED" ] || [ "$UNPACKED" -le 0 ]; then
+            echo "::error::python 解压大小算出 $UNPACKED，异常"
+            exit 1
+          fi
+          echo "PY_UNPACKED=${UNPACKED}" >> "$GITHUB_ENV"
+          # 版本断言：钉 3.12 的理由见 workflow inputs 里的说明。
+          case "$ASSET" in
+            *cpython-3.12.*) ;;
+            *) echo "::error::python 资产不是 3.12：$ASSET"; exit 1 ;;
+          esac
+
+      - name: Package
+        shell: bash
+        env:
+          VERSION: ${{ needs.resolve-version.outputs.cli_version }}
+        run: |
+          set -euo pipefail
+          bun scripts/publish-components.ts \
+            --platform "${{ matrix.platform }}" \
+            --out out-components \
+            --cli src/cli \
+            --cli-version "${VERSION}" \
+            --cli-source "${CLI_SOURCE}" \
+            --python src/python.tar.gz \
+            --python-version "${{ github.event.inputs.python_version }}" \
+            --python-unpacked "${PY_UNPACKED}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: components-${{ matrix.platform }}
+          path: out-components/
+          # 14 天而不是 installers 那样的 1 天：artifact 是「本机取回再上传」
+          # 这条常态路径的取件口，得留出人操作的时间。
+          retention-days: 14
+
+  merge:
+    needs: [resolve-version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: components-*
+          path: shards
+          merge-multiple: true
+
+      - name: Merge and self-verify
+        run: |
+          set -euo pipefail
+          bun scripts/publish-components.ts --merge shards \
+            --published-at "${{ needs.resolve-version.outputs.published_at }}"
+          ls -la shards/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: components-all
+          path: shards/
+          retention-days: 14
+
+      # 可选直推。默认不跑（见文件头注释：跨境链路实测 16KB/s）。
+      - name: Sync to self-hosted server
+        if: ${{ github.event.inputs.publish == 'true' }}
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.SELFHOST_SSH_HOST }}
+          SSH_USER: ${{ secrets.SELFHOST_SSH_USER }}
+          SSH_KEY: ${{ secrets.SELFHOST_SSH_KEY }}
+          SSH_PORT: ${{ secrets.SELFHOST_SSH_PORT }}
+          COMPONENTS_PATH: ${{ secrets.SELFHOST_COMPONENTS_PATH }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SSH_HOST}" ] || [ -z "${COMPONENTS_PATH}" ]; then
+            echo "SELFHOST_SSH_HOST / SELFHOST_COMPONENTS_PATH 未配置，跳过同步。"
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "${SSH_KEY}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          PORT="${SSH_PORT:-22}"
+          # --partial --append-verify：跨境链路上一次抖动就是从头再传 600MB，
+          # 没有这两个参数基本传不完。与客户端的 Range 续传是同一个道理。
+          # --chmod：目录 755 / 文件 644 —— 744 会让 nginx 403（实测）。
+          # --temp-dir 同分区 → mv 原子 → 客户端永远读不到半个文件。
+          # **清单最后单独传**，保证不会出现「清单已更新但产物还没到」的窗口。
+          rsync -av --partial --append-verify --chmod=D755,F644 \
+            --temp-dir="${COMPONENTS_PATH}/.tmp" \
+            --exclude 'components.json' \
+            -e "ssh -i ~/.ssh/deploy_key -p ${PORT} -o StrictHostKeyChecking=accept-new" \
+            shards/ "${SSH_USER}@${SSH_HOST}:${COMPONENTS_PATH}/"
+          rsync -av --chmod=F644 \
+            -e "ssh -i ~/.ssh/deploy_key -p ${PORT} -o StrictHostKeyChecking=accept-new" \
+            shards/components.json "${SSH_USER}@${SSH_HOST}:${COMPONENTS_PATH}/"
+          rm -f ~/.ssh/deploy_key
+          echo "已同步组件到 ${SSH_HOST}:${COMPONENTS_PATH}/"
