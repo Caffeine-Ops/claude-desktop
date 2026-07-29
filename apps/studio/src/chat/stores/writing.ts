@@ -3,7 +3,7 @@ import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
 
 import type { WritingDocSource, WritingGenre, WritingSection } from '@desktop-shared/writing'
-import { detectWritingSource, type WritingToolPart } from '../lib/writingDocSource'
+import { detectWritingSource, pickFilePath, type WritingToolPart } from '../lib/writingDocSource'
 import { useChatStore } from './chat'
 
 /** 轮询间隔。2s 是「AI 写完一节到你看见」的上限，对人眼足够；再密只是空转 IPC。 */
@@ -46,16 +46,6 @@ export const useWritingStore = create<WritingState>((set) => ({
 }))
 
 /**
- * 从工具调用参数里摘取文件路径。兼容三种字段名（`file_path`/`filePath`/`path`）——
- * 与 ToolCallCard.tsx 里的 pickFilePath 同源（那边没导出，故本处复刻一份；改一处要改两处）。
- * 只取 `file_path` 会漏掉部分用别名传参的工具调用，导致单文件模式的判定悄悄失效。
- */
-function pickFilePath(args: Record<string, unknown>): string | null {
-  const v = args.file_path ?? args.filePath ?? args.path
-  return typeof v === 'string' && v.length > 0 ? v : null
-}
-
-/**
  * 从当前会话的消息树推导文档源。订阅 messages 会随流式每 delta 重算，故用 useShallow +
  * 把重活关在纯函数里（detectWritingSource 只扫 tool-call、不碰正文文本）。
  */
@@ -94,11 +84,23 @@ export function useWritingWorkspace(): boolean {
 /**
  * 轮询副作用。只在 `active`（面板挂载且当前会话是写作会话）时跑。
  *
- * 两个必须守住的点：
- *  1) **只在元信息变了才拉正文**。scan 回的是文件名+mtime+size，与上一轮签名一致就什么都不做——
- *     否则每 2s 把万字正文搬一遍，长篇会明显卡。
- *  2) **cancelled 闸门**。一轮里有两次 await，期间可能切会话/换文档源；晚到的响应必须丢弃，
- *     不能覆盖新文档的内容（proposal 预览的 objectURL 竞态是同一类问题）。
+ * 三个必须守住的点：
+ *  1) **只在元信息变了才拉正文**。scan 回的是文件名+纳秒 mtime+size，与上一轮签名一致就
+ *     什么都不做——否则每 2s 把万字正文搬一遍，长篇会明显卡。签名用 `mtimeNs`（纳秒精度）
+ *     而不是 `mtimeMs`（毫秒精度）：若改写后新内容长度恰好相同、且两次写入落在同一毫秒内，
+ *     毫秒签名会与上一轮撞车，判定「未变化」而漏刷——静默失效、界面停在旧内容且不报错。
+ *     纳秒精度下「等长改写 + 同一纳秒写入」不可能同时成立，缺口被彻底堵死（不用内容哈希：
+ *     那要求每轮读全部文件内容，等于把「scan 只回元信息、正文按需拉」的设计意义清空）。
+ *  2) **cancelled 闸门**。一轮里有两次 await，期间面板可能卸载/`active` 变 false/文档源切换；
+ *     晚到的响应必须丢弃，不能覆盖新文档的内容（proposal 预览的 objectURL 竞态是同一类问题）。
+ *  3) **世代号（generation）闸门**。`cancelled` 只在 effect 卸载/依赖变化时才置真，同一个
+ *     `active` 窗口内先后触发的两次 `tick()` 之间光靠 `cancelled` 挡不住——轮询间隔固定 2s，
+ *     但单次扫描耗时不固定（网络共享盘、大项目，`writingDocSource.ts` 明确要支持 UNC 路径
+ *     不是假设场景），如果某次 `tick()` 耗时超过 2s、与下一次定时触发的 `tick()` 重叠，
+ *     可能后完成的是较早发出的那次（「后发先至」），会用旧数据反写 `lastSignature.current`
+ *     和 `sections`，把已经刷新的内容「倒退」回旧版本。故每次 `tick()` 进入时领一个自增票号，
+ *     每次 await 之后都要确认「我这一号是不是仍是最新」，不是就丢弃、不写 store 也不写
+ *     `lastSignature`——两轮都属于同一个 effect 生命周期，只能靠世代号而非 cancelled 分辨新旧。
  */
 export function useWritingPoll(active: boolean): void {
   const source = useWritingStore((s) => s.source)
@@ -108,24 +110,26 @@ export function useWritingPoll(active: boolean): void {
     if (!active || !source) return
     lastSignature.current = null
     let cancelled = false
+    let generation = 0
 
     async function tick(): Promise<void> {
       if (!source) return
+      const myGeneration = ++generation
       const scan = await window.chatApi.writingScan({ source })
-      if (cancelled) return
+      if (cancelled || myGeneration !== generation) return
       const st = useWritingStore.getState()
       if (!scan.ok) {
         st.setStatus(scan.dirMissing ? 'missing' : 'error', scan.error)
         return
       }
       st.applyScan({ genre: scan.genre, outlineTotal: scan.outlineTotal })
-      const signature = scan.files.map((f) => `${f.name}:${f.mtimeMs}:${f.size}`).join('|')
+      const signature = scan.files.map((f) => `${f.name}:${f.mtimeNs}:${f.size}`).join('|')
       if (signature === lastSignature.current) {
         st.setStatus('ready')
         return
       }
       const read = await window.chatApi.writingReadSections({ source, names: [] })
-      if (cancelled) return
+      if (cancelled || myGeneration !== generation) return
       if (!read.ok) {
         useWritingStore.getState().setStatus('error', read.error)
         return

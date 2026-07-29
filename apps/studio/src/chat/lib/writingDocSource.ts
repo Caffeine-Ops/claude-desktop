@@ -55,6 +55,30 @@ function isSingleDocPath(p: string): boolean {
 }
 
 /**
+ * 从工具调用参数里摘取文件路径。兼容三种字段名（`file_path`/`filePath`/`path`），
+ * 按此优先级逐个尝试，**每个字段独立判断「是不是非空字符串」，不是就换下一个**——
+ * 与 `ToolCallCard.tsx` 里模块私有的同名函数同源，但那份用 `??` 链
+ * （`obj.file_path ?? obj.filePath ?? obj.path`）：`??` 只在值为 `null`/`undefined`
+ * 时才往下退，若 `file_path` 存在但类型不对（比如误传成数字），`??` 会直接拿到这个
+ * 错值、并不会继续尝试 `filePath`。这份为了同时兜住「字段缺失」与「字段类型错」两种
+ * 脏数据，改成逐字段类型检查——是两份拷贝之间唯一的行为分歧点，其余（三字段优先级、
+ * 空串视为无效、非对象入参返回空值）完全一致。改一处要同步另一处，见 `ToolCallCard.tsx`
+ * 对应函数上的反向注释（该函数未导出、不进 bun test 覆盖范围，无法在这里被直接复用）。
+ *
+ * 返回 `string | null`（`ToolCallCard` 那份返回 `string | undefined`）——只是跟
+ * `WritingToolPart.filePath: string | null` 的类型对齐，不需要调用方再做一次 `?? null`。
+ */
+export function pickFilePath(args: unknown): string | null {
+  if (!args || typeof args !== 'object') return null
+  const obj = args as Record<string, unknown>
+  for (const key of ['file_path', 'filePath', 'path'] as const) {
+    const v = obj[key]
+    if (typeof v === 'string' && v.length > 0) return v
+  }
+  return null
+}
+
+/**
  * 遍历工具调用，判定文档源。**项目模式优先于单文件模式**：主管线会先 init 项目再写文件，
  * 若按出现顺序取最后一个，写第一节时就会被 Write 的路径判定顶掉。两种模式各自取「最后一次」
  * （用户可能在同一会话里开第二个项目 / 写第二篇周报）。都没有则返回 null，会话保持单栏。

@@ -1,4 +1,12 @@
-import { readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import {
+  readFileSync,
+  readdirSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+  type BigIntStats
+} from 'node:fs'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 
@@ -118,9 +126,12 @@ export function scanWritingDoc(source: WritingDocSource): WritingScanResult {
   if (!abs) return { ok: false, error: 'Invalid path (expected absolute).' }
 
   if (source.kind === 'single') {
-    let st: ReturnType<typeof statSync>
+    // { bigint: true } 把 Stats 上所有数值字段（含 mtimeMs/size）都变成 BigInt——
+    // 一次 stat 调用同时拿到毫秒精度（转回 number，兼容既有消费者）和纳秒精度
+    // （mtimeNs 转 string，供轮询签名比对用，见 WritingFileMeta.mtimeNs 顶注）。
+    let st: BigIntStats
     try {
-      st = statSync(abs)
+      st = statSync(abs, { bigint: true })
     } catch {
       return { ok: false, dirMissing: true, error: 'Document not found.' }
     }
@@ -130,7 +141,14 @@ export function scanWritingDoc(source: WritingDocSource): WritingScanResult {
       // 单文件模式没有契约可读，恒走默认档——职场快道 / 去AI化本来就不建 spec_lock。
       genre: 'workplace',
       outlineTotal: null,
-      files: [{ name: basename(abs), mtimeMs: st.mtimeMs, size: st.size }]
+      files: [
+        {
+          name: basename(abs),
+          mtimeMs: Number(st.mtimeMs),
+          size: Number(st.size),
+          mtimeNs: st.mtimeNs.toString()
+        }
+      ]
     }
   }
 
@@ -156,8 +174,16 @@ export function scanWritingDoc(source: WritingDocSource): WritingScanResult {
   const files: WritingFileMeta[] = []
   for (const name of sortSectionNames(names.filter(isSafeSectionName))) {
     try {
-      const st = statSync(join(sectionDir(source), name))
-      if (st.isFile()) files.push({ name, mtimeMs: st.mtimeMs, size: st.size })
+      // 同上：{ bigint: true } 一次拿到毫秒 + 纳秒两种精度，见 single 模式分支的注释。
+      const st = statSync(join(sectionDir(source), name), { bigint: true })
+      if (st.isFile()) {
+        files.push({
+          name,
+          mtimeMs: Number(st.mtimeMs),
+          size: Number(st.size),
+          mtimeNs: st.mtimeNs.toString()
+        })
+      }
     } catch {
       // 扫描与 stat 之间文件消失（AI 正在改名）——跳过，下一轮轮询自会补上。
     }

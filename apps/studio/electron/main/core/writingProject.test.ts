@@ -170,6 +170,46 @@ describe('writeWritingSection · 原子写入', () => {
   })
 })
 
+describe('scanWritingDoc · mtimeNs 纳秒精度（轮询签名专用）', () => {
+  it('project 模式每个文件都带非空、可转 BigInt 的 mtimeNs，且与 mtimeMs 同源', () => {
+    const dir = makeProject({ drafts: { '1-a.md': 'a' } })
+    const r = scanWritingDoc({ kind: 'project', projectDir: dir })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const f = r.files[0]
+    expect(f.mtimeNs.length).toBeGreaterThan(0)
+    expect(() => BigInt(f.mtimeNs)).not.toThrow()
+    // 纳秒换算回毫秒（整数除法截断）应与同一次 stat 得到的 mtimeMs 一致——两者出自
+    // 同一次 statSync({ bigint: true }) 调用，不是分别 stat 两次凑出来的。
+    expect(BigInt(f.mtimeNs) / 1_000_000n).toBe(BigInt(f.mtimeMs))
+  })
+
+  it('single 模式的文件同样带 mtimeNs', () => {
+    const f = join(root, '周报.md')
+    writeFileSync(f, '正文')
+    const r = scanWritingDoc({ kind: 'single', filePath: f })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.files[0].mtimeNs.length).toBeGreaterThan(0)
+    expect(() => BigInt(r.files[0].mtimeNs)).not.toThrow()
+  })
+
+  it('等长改写后 mtimeNs 变化，即便 mtimeMs 恰好撞车也能感知到差异', () => {
+    // 不 mock 时钟去伪造「同一毫秒」——那样会假设 Node/OS 的 stat 实现细节，脆弱且没必要。
+    // 这里只验证契约本身：两次真实写入之间，mtimeNs 至少不会不变（纳秒精度下两次独立的
+    // 系统调用几乎不可能落在同一纳秒），从而佐证「用 mtimeNs 判定变化」比「用 mtimeMs」更细。
+    const dir = makeProject({ drafts: { '1-a.md': '旧正文' } })
+    const before = scanWritingDoc({ kind: 'project', projectDir: dir })
+    expect(before.ok).toBe(true)
+    if (!before.ok) return
+    writeFileSync(join(dir, 'drafts', '1-a.md'), '新正文')
+    const after = scanWritingDoc({ kind: 'project', projectDir: dir })
+    expect(after.ok).toBe(true)
+    if (!after.ok) return
+    expect(after.files[0].mtimeNs).not.toBe(before.files[0].mtimeNs)
+  })
+})
+
 describe('single 模式的 name 约束', () => {
   it('读：只允许读这份文档自己，同目录别的 md 一律拒绝', () => {
     const mine = join(root, '周报.md')

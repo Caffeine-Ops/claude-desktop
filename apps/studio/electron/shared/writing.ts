@@ -22,6 +22,17 @@ export interface WritingFileMeta {
   name: string
   mtimeMs: number
   size: number
+  /**
+   * 纳秒精度的 mtime（`statSync(p, { bigint: true }).mtimeNs` 转成 string——BigInt
+   * 虽然 Electron 的 structured clone 认得，但不该指望它，且绝不能直接过 JSON）。
+   * **轮询判定「文件变没变」专用**：`mtimeMs` 精度不够，若改写后新内容长度恰好与旧内容
+   * 相同、且文件系统在同一毫秒内完成两次写入，`name:mtimeMs:size` 拼出的签名会与上一轮
+   * 一致，判定「未变化」而跳过拉正文——静默漏刷，界面停在旧内容且不报错。纳秒精度下
+   * 「等长改写 + 同一纳秒写入」不可能同时成立，缺口被彻底堵死。**不要用内容哈希替代**：
+   * 那需要每轮读全部文件内容，等于把「scan 只回元信息、正文按需拉」的设计意义清空
+   * （长篇小说每 2 秒读一遍全文）。只用于签名比对，不做数值运算，故存 string 足够。
+   */
+  mtimeNs: string
 }
 
 /** 带正文的一节。mtimeMs 是读取那一刻的值，写回时当乐观锁的比对基准。 */

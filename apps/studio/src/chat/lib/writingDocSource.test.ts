@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { detectWritingSource, type WritingToolPart } from './writingDocSource'
+import { detectWritingSource, pickFilePath, type WritingToolPart } from './writingDocSource'
 
 function bash(resultText: string, commandText = ''): WritingToolPart {
   return { toolName: 'Bash', commandText, resultText, filePath: null }
@@ -108,5 +108,30 @@ describe('detectWritingSource · 命令文本分支', () => {
   it('命令文本与输出都有标记时，取输出里的那个（输出是脚本真实报数）', () => {
     const parts = [bash('WRITING_PROJECT=/a/real\n', 'echo "WRITING_PROJECT=/a/typed"')]
     expect(detectWritingSource(parts)).toEqual({ kind: 'project', projectDir: '/a/real' })
+  })
+})
+
+describe('pickFilePath · 三字段兜底链', () => {
+  it('优先 file_path', () => {
+    expect(pickFilePath({ file_path: '/a.md', filePath: '/b.md', path: '/c.md' })).toBe('/a.md')
+  })
+  it('无 file_path 时退 filePath', () => {
+    expect(pickFilePath({ filePath: '/b.md', path: '/c.md' })).toBe('/b.md')
+  })
+  it('前两个都没有时退 path', () => {
+    expect(pickFilePath({ path: '/c.md' })).toBe('/c.md')
+  })
+  it('空串视为没有，继续往下兜', () => {
+    expect(pickFilePath({ file_path: '', filePath: '/b.md' })).toBe('/b.md')
+  })
+  it('三个都没有返回 null', () => {
+    expect(pickFilePath({ other: 1 })).toBeNull()
+  })
+  it('非对象入参返回 null', () => {
+    expect(pickFilePath(null)).toBeNull()
+    expect(pickFilePath('x')).toBeNull()
+  })
+  it('字段值不是字符串时跳过', () => {
+    expect(pickFilePath({ file_path: 123, filePath: '/b.md' })).toBe('/b.md')
   })
 })
