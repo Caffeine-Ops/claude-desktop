@@ -61,7 +61,8 @@ import {
   shouldPageBreak,
   extractRevisionResult,
   WRITING_REVISION_BEGIN,
-  WRITING_REVISION_END
+  WRITING_REVISION_END,
+  type WritingSection
 } from './writing'
 
 describe('parseWritingGenre', () => {
@@ -130,9 +131,9 @@ describe('sortSectionNames', () => {
 })
 
 describe('joinWritingSections', () => {
-  const secs = [
-    { name: '1-a.md', markdown: '# 第一章\n\n正文一', mtimeMs: 1, size: 0 } as never,
-    { name: '2-b.md', markdown: '# 第二章\n\n正文二', mtimeMs: 2, size: 0 } as never
+  const secs: WritingSection[] = [
+    { name: '1-a.md', markdown: '# 第一章\n\n正文一', mtimeMs: 1 },
+    { name: '2-b.md', markdown: '# 第二章\n\n正文二', mtimeMs: 2 }
   ]
 
   it('不分页时用空行连接', () => {
@@ -1574,8 +1575,14 @@ export function WritingDocPanel(): React.JSX.Element | null {
   )
 
   // 会话消息推导出的源与 store 里的不一致时同步（切会话 / 开了新项目）。
-  const sameSource = JSON.stringify(source) === JSON.stringify(storeSource)
-  if (!sameSource) setSource(source)
+  // 【必须放 useEffect 里】：渲染期间直接调 setState 会触发 React 的
+  // "Cannot update a component while rendering a different component" 警告，
+  // 且在 StrictMode 下会重复执行。用序列化后的字符串当依赖，避免对象引用每帧变化导致死循环。
+  const sourceKey = source ? JSON.stringify(source) : ''
+  const storeSourceKey = storeSource ? JSON.stringify(storeSource) : ''
+  useEffect(() => {
+    if (sourceKey !== storeSourceKey) setSource(source)
+  }, [sourceKey, storeSourceKey, source, setSource])
 
   useWritingPoll(storeSource !== null)
 
