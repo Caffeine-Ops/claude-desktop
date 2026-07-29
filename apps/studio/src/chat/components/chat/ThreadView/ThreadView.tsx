@@ -50,6 +50,8 @@ import {
 } from './WorkflowScriptPanel'
 import { ProposalDocPanel } from '../../workspace/ProposalDocPanel'
 import { useProposalWorkspace } from '../../../stores/proposal'
+import { useWritingWorkspace } from '../../../stores/writing'
+import { WritingDocPanel } from '../../workspace/WritingDocPanel'
 import { SpreadsheetPreviewPanel } from './SpreadsheetPreviewPanel'
 import { ImageEditPanel } from './ImageEditPanel'
 import {
@@ -503,8 +505,12 @@ export function ThreadView(): React.JSX.Element {
   // （激活即接管、leaveMode 即还原——Install-Plan 的原语义）。两者理论上互斥
   // （proposal 由 slash/模式激活的普通会话承载）；若同时为真，proposal 优先。
   const isProposalMode = useProposalWorkspace()
+  // 写作两栏：与 proposal 同为「实时接管」语义（有写作文档源即接管、没有即还原），
+  // 不按会话启动模式标记。三者互斥，优先级 proposal > slides > writing——proposal 由
+  // slash 显式激活、意图最强；writing 是从工具调用推导出来的，最弱。
+  const isWritingMode = useWritingWorkspace() && !isProposalMode && !isSlidesMode
   // 任一分栏模式：chat 列都收窄成固定宽度 rail（共用同一条拖拽宽度）。
-  const isSplitMode = isProposalMode || isSlidesMode
+  const isSplitMode = isProposalMode || isSlidesMode || isWritingMode
   // Workflow 脚本面板（右栏）：AI 正在写 workflow 脚本时自动弹出，或用户
   // 点了某张 Workflow 卡片的脚本入口。slides/proposal 分栏时禁用——右栏
   // 已被工作区占用，再开就是三列（chat 被夹成一线）。此 hook 只订阅稳定
@@ -859,6 +865,12 @@ export function ThreadView(): React.JSX.Element {
           <ChatColumnResizeHandle onResizeStart={onResizeStart} />
           <ProposalDocPanel />
         </>
+      ) : null}
+
+      {isWritingMode ? (
+        <div className="flex min-h-0 flex-1">
+          <WritingDocPanel />
+        </div>
       ) : null}
 
       {/* 表格预览右栏：点成果卡片里的 xlsx/xls/csv 打开，应用内直接看
