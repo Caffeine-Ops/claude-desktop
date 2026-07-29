@@ -5,6 +5,7 @@ import { fileTypeIconPaths, type IconPath } from '../components/chat/FileTypeIco
 import { findSkillChipSpec } from './skillChipRegistry'
 import { autoOpenPreviewPanel, previewPanelKind } from '../runtime/imageAttachmentAdapter'
 import { splitWorkspaceBusyNow } from '../stores/filePreview'
+import { templateKindFromPath, TEMPLATE_MENTION_ICON } from '../lib/mentionDisplay'
 
 /**
  * NodeView for the `slash` / `mention` atom nodes. Renders the same pill
@@ -67,20 +68,6 @@ const PREVIEWABLE_IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp
 function isPreviewableImage(name: string): boolean {
   const dot = name.lastIndexOf('.')
   return dot >= 0 && PREVIEWABLE_IMAGE_EXT.has(name.slice(dot + 1).toLowerCase())
-}
-
-/**
- * 判定一个 mention 的裸路径是不是 TemplateGalleryPopover 写进去的内置模版
- * 引用（`templatePlaceholderPlugin`/`onTemplatePicked` 的产物）——同
- * `pptAssetProtocol.ts` ALLOWED_SEGMENTS 的三个目录片段，渲染侧没有
- * node:path，直接认 `/` 前提（mentionPath 在本文件其它地方也是这个前提）。
- * 命中后 chip 主体可点：重开 TemplateGalleryPopover 换选另一个模版。
- */
-function templateKindFromPath(path: string): 'brand' | 'layout' | 'deck' | null {
-  if (path.includes('/templates/brands/')) return 'brand'
-  if (path.includes('/templates/layouts/')) return 'layout'
-  if (path.includes('/templates/decks/')) return 'deck'
-  return null
 }
 
 /**
@@ -438,6 +425,9 @@ export function createChipNodeView(
 
     const buildRestingIcon = (): SVGSVGElement | HTMLImageElement => {
       if (skill) return buildImgIcon(skill.image)
+      // 内置模版 chip：目录路径没有扩展名，fileTypeIconPaths 会 fallback 成
+      // GENERIC 通用文档图标，认不出这是「模版」——换成专属的模版图标。
+      if (templateKind) return buildImgIcon(TEMPLATE_MENTION_ICON)
       if (variant === 'mention') return buildColorIcon(fileTypeIconPaths(raw.replace(/^@"?|"$/g, '')))
       return buildStrokeIcon(SPARKLE_ICON_PATHS, 13, '1.9')
     }

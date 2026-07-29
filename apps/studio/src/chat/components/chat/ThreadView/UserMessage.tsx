@@ -14,6 +14,8 @@ import { FileTypeIcon } from '../FileTypeIcon'
 import { SkillChipIcon } from '../SkillChipIcon'
 import {
   FILE_MENTION_DISPLAY_RE,
+  TEMPLATE_MENTION_DISPLAY_RE,
+  TEMPLATE_MENTION_ICON,
   basenameOf,
   mentionInnerToPath
 } from '../../../lib/mentionDisplay'
@@ -479,22 +481,51 @@ function ImageEditCard({ meta }: { meta: ImageEditMeta }): React.JSX.Element {
 
 /**
  * Render the user bubble's text, turning `@"/abs/path"` / `@/abs/path`
- * file mentions into inline chips (document glyph + file name) instead
- * of dumping the raw absolute path into the bubble.
+ * file mentions AND bare 内置模版 mentions（`/…/templates/(brands|layouts|
+ * decks)/…`，无 `@` 前缀）into inline chips instead of dumping the raw
+ * absolute path into the bubble.
  *
  * Why here and not upstream: the wire format sent to fusion-code MUST
- * stay `@"path"` (extractAtMentionedFiles parses it), and the chat
- * store keeps that verbatim text so a reload re-renders identically.
- * The chip is a pure *display* transform applied at render time — the
- * stored/sent string is untouched, exactly like the composer's own
- * mention chips (chipNodeView) are a view layer over the same text.
+ * stay `@"path"` / the bare template path (extractAtMentionedFiles parses
+ * the former; ppt-master's SKILL.md Step 3 pattern-matches the latter as a
+ * plain string), and the chat store keeps that verbatim text so a reload
+ * re-renders identically. The chip is a pure *display* transform applied
+ * at render time — the stored/sent string is untouched, exactly like the
+ * composer's own mention chips (chipNodeView) are a view layer over the
+ * same text.
  *
- * Matching lives in lib/mentionDisplay.ts (FILE_MENTION_DISPLAY_RE)，与
- * ChatHeader / 侧栏标题的 condenseFileMentions 同一份规则：quoted 任意
- * 位置命中、bare 允许中文前缀零空格相邻（占位 pill 替换出的 chip 常紧贴
- * 中文），路径体在中文标点处截断（旧 `@\S+` 会把「：【说明…】」整段吞进
- * chip）。email 的 `user@host` 由 lookbehind 拒掉。
+ * Matching lives in lib/mentionDisplay.ts (FILE_MENTION_DISPLAY_RE /
+ * TEMPLATE_MENTION_DISPLAY_RE)，与 ChatHeader / 侧栏标题的
+ * condenseFileMentions 同一份规则：quoted 任意位置命中、bare 允许中文
+ * 前缀零空格相邻（占位 pill 替换出的 chip 常紧贴中文），路径体在中文
+ * 标点处截断（旧 `@\S+` 会把「：【说明…】」整段吞进 chip）。email 的
+ * `user@host` 由 lookbehind 拒掉。两个 regex 各自独立 exec 出全部命中后
+ * 按起始位置归并渲染——它们的匹配串结构不同（前者要求 `@` 前缀、后者要求
+ * 裸路径含 `/templates/…/` 片段），不会重叠。
  */
+
+type MentionSpan =
+  | { kind: 'file'; start: number; end: number; path: string }
+  | { kind: 'template'; start: number; end: number; path: string }
+
+function collectMentionSpans(text: string, from: number): MentionSpan[] {
+  const spans: MentionSpan[] = []
+  let m: RegExpExecArray | null
+  FILE_MENTION_DISPLAY_RE.lastIndex = from
+  while ((m = FILE_MENTION_DISPLAY_RE.exec(text)) !== null) {
+    spans.push({
+      kind: 'file',
+      start: m.index,
+      end: m.index + m[0].length,
+      path: mentionInnerToPath(m[1]!)
+    })
+  }
+  TEMPLATE_MENTION_DISPLAY_RE.lastIndex = from
+  while ((m = TEMPLATE_MENTION_DISPLAY_RE.exec(text)) !== null) {
+    spans.push({ kind: 'template', start: m.index, end: m.index + m[0].length, path: m[0] })
+  }
+  return spans.sort((a, b) => a.start - b.start)
+}
 
 function UserBubbleText({ text }: { text: string }): React.JSX.Element {
   // Split into alternating plain-text / mention segments. We keep the
@@ -526,35 +557,53 @@ function UserBubbleText({ text }: { text: string }): React.JSX.Element {
     last = slashMatch[1]!.length
   }
 
-  let m: RegExpExecArray | null
-  FILE_MENTION_DISPLAY_RE.lastIndex = last
-  while ((m = FILE_MENTION_DISPLAY_RE.exec(text)) !== null) {
-    const token = m[0]
-    const tokenStart = m.index
+  for (const span of collectMentionSpans(text, last)) {
+    if (span.start < last) continue // defensive: spans before the cursor can't happen, but never render backwards
     // Plain text before this mention.
-    if (tokenStart > last) {
-      nodes.push(text.slice(last, tokenStart))
+    if (span.start > last) {
+      nodes.push(text.slice(last, span.start))
     }
-    const path = mentionInnerToPath(m[1]!)
-    nodes.push(
-      <span
-        key={`fm-${key++}`}
-        title={path}
-        // 中性 token 而非半透明白，同上面的技能 chip。
-        className="mx-0.5 inline-flex max-w-[220px] items-center gap-1 rounded-md bg-background px-1.5 py-0.5 align-baseline text-[13px] font-medium ring-1 ring-border"
-      >
-        {/* Per-type glyph, kept un-coloured: 一行文字里嵌三四个各带类型色的
-            小图标会比文字本身还吵，chip 的职责是「这是个文件」而不是「这是
-            哪类文件」。 */}
-        <FileTypeIcon
-          pathOrName={path}
-          size={12}
-          className="shrink-0 text-muted-foreground"
-        />
-        <span className="truncate">{basenameOf(path)}</span>
-      </span>
-    )
-    last = tokenStart + token.length
+    if (span.kind === 'file') {
+      nodes.push(
+        <span
+          key={`fm-${key++}`}
+          title={span.path}
+          // 中性 token 而非半透明白，同上面的技能 chip。
+          className="mx-0.5 inline-flex max-w-[220px] items-center gap-1 rounded-md bg-background px-1.5 py-0.5 align-baseline text-[13px] font-medium ring-1 ring-border"
+        >
+          {/* Per-type glyph, kept un-coloured: 一行文字里嵌三四个各带类型色的
+              小图标会比文字本身还吵，chip 的职责是「这是个文件」而不是「这是
+              哪类文件」。 */}
+          <FileTypeIcon
+            pathOrName={span.path}
+            size={12}
+            className="shrink-0 text-muted-foreground"
+          />
+          <span className="truncate">{basenameOf(span.path)}</span>
+        </span>
+      )
+    } else {
+      nodes.push(
+        <span
+          key={`tm-${key++}`}
+          title={span.path}
+          className="mx-0.5 inline-flex max-w-[220px] items-center gap-1 rounded-md bg-background px-1.5 py-0.5 align-baseline text-[13px] font-medium ring-1 ring-border"
+        >
+          {/* 与 composer 里已插入的模版 chip 同一枚图标（chipNodeView.ts），
+              保持「选模版时看到的」与「发出去后看到的」视觉一致。 */}
+          <img
+            src={TEMPLATE_MENTION_ICON}
+            width={12}
+            height={12}
+            alt=""
+            aria-hidden="true"
+            className="shrink-0"
+          />
+          <span className="truncate">{basenameOf(span.path)}</span>
+        </span>
+      )
+    }
+    last = span.end
   }
   if (last < text.length) {
     nodes.push(text.slice(last))
