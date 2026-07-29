@@ -29,7 +29,7 @@
     "prebundle:kb-model": "node scripts/prebundle-kb-model.mjs",
     "verify:kb-model": "node scripts/verify-kb-model.mjs",
     "generate:bg-presets": "bun scripts/generate-bg-presets.mjs",
-    "test": "bun test electron/ src/chat/lib"
+    "test": "bun test electron/ src/chat/lib src/chat/composer"
   },
   "//note-scripts": "dev = 整个桌面应用（electron-vite dev；main 启动时自动 spawn daemon 与 dev:next）。dev:next / build:next 是 Next 前端的独立入口——openDesignServices.spawnStudioDev 调的就是 dev:next。刻意没有裸 build：两条构建链必须显式指名（root 的 build 转发到 build:electron，root 的 prebuild:resources 转发到 build:next），避免合包前『desktop build=electron、studio build=next』的二义性复活。",
   "//note-port": "Next dev 端口默认 3100（避开 next 默认 3000——被同源 fork 抢占串味的历史坑，见 electron/main/services/openDesignServices.ts WEB_DEV_PORT 注释）。壳 spawn dev:next 时注入 STUDIO_DEV_PORT 保证监听端口与壳侧探活/加载常量恒等；独立 bun run dev:next 时走 3100 默认值。",

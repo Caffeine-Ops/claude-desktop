@@ -36,6 +36,11 @@ export const filePlaceholderKey = new PluginKey<DecorationSet>('filePlaceholder'
  * 这是引导不是安检，用户经「所有格式」强选的文件照样接受，不做二次校验。
  */
 const ACCEPT_BY_KEYWORD: readonly [RegExp, string][] = [
+  // 文稿组合映射（优化已有作品的「【文稿文件】」槽，设计 §5.2）：覆盖
+  // source_to_md.py 能处理的全部文稿格式。放在单格式关键词之前，优先命中；
+  // 刻意不含旧版 .doc（转换脚本不支持，picker 里靠 accept 自动置灰，而不是
+  // 让用户选完再报错）。
+  [/文稿|作品|稿件/i, '.txt,.md,.markdown,.docx,.pdf'],
   [/ppt|幻灯片|演示/i, '.ppt,.pptx'],
   [/excel|xlsx?|csv|表格|明细|台账/i, '.xls,.xlsx,.csv'],
   [/word|docx?(?![a-z])|文档/i, '.doc,.docx'],

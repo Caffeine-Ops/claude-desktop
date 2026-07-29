@@ -56,8 +56,16 @@ import { SkillChipIcon } from '../SkillChipIcon'
  * 锚，是本次重做的两个动因。
  */
 
-/* ───────────────────────── 数据 ───────────────────────── */
-
+/* ───────────────────────── 数据 ─────────────────────────
+ * 2026-07-29 起分类归属与推荐 prompt 已不在本文件，见文件头注释——来自
+ * stores/scenarioCatalog，拉不到时回落 lib/scenarioCatalogDefaults.ts。
+ *
+ * main 上并行的 writing 推荐区改造（合并「改写/体检优化」为「优化 / 改写」+
+ * 新增「职场文档」「去 AI 味」+「文章」改名「干货 / 观点长文」）与本次远端化
+ * 重构在这个文件里冲突——两边都改了同一批硬编码常量，一边删掉整块搬去
+ * scenarioCatalogDefaults.ts，一边在原地新增条目。已把 main 的新增内容原样
+ * 移植进 scenarioCatalogDefaults.ts 的 WRITING_PROMPTS，这里维持删除。
+ */
 const STROKE_ICON_PROPS = {
   width: 15,
   height: 15,
