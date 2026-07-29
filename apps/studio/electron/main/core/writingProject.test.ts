@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, statSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, statSync, readdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { scanWritingDoc, readWritingSections, writeWritingSection } from './writingProject'
@@ -151,5 +151,50 @@ describe('writeWritingSection · 乐观锁', () => {
     const dir = makeProject({ drafts: { '1-a.md': 'a' } })
     const r = writeWritingSection({ kind: 'project', projectDir: dir }, '../evil.md', 'x', 0)
     expect(r.ok).toBe(false)
+  })
+})
+
+describe('writeWritingSection · 原子写入', () => {
+  it('写入后目录里不残留临时文件', () => {
+    const dir = makeProject({ drafts: { '1-a.md': '旧' } })
+    const before = statSync(join(dir, 'drafts', '1-a.md')).mtimeMs
+    writeWritingSection({ kind: 'project', projectDir: dir }, '1-a.md', '新', before)
+    const left = readdirSync(join(dir, 'drafts'))
+    expect(left).toEqual(['1-a.md'])
+  })
+
+  it('冲突拒写时也不残留临时文件', () => {
+    const dir = makeProject({ drafts: { '1-a.md': '旧' } })
+    writeWritingSection({ kind: 'project', projectDir: dir }, '1-a.md', '新', 1)
+    expect(readdirSync(join(dir, 'drafts'))).toEqual(['1-a.md'])
+  })
+})
+
+describe('single 模式的 name 约束', () => {
+  it('读：只允许读这份文档自己，同目录别的 md 一律拒绝', () => {
+    const mine = join(root, '周报.md')
+    const other = join(root, '别人的.md')
+    writeFileSync(mine, '我的周报')
+    writeFileSync(other, '不该被读到')
+    const r = readWritingSections({ kind: 'single', filePath: mine }, ['别人的.md'])
+    expect(r.ok && r.sections).toEqual([])
+  })
+
+  it('写：同目录别的 md 一律拒绝，且那个文件内容不变', () => {
+    const mine = join(root, '周报.md')
+    const other = join(root, '别人的.md')
+    writeFileSync(mine, '我的周报')
+    writeFileSync(other, '原样')
+    const st = statSync(other).mtimeMs
+    const r = writeWritingSection({ kind: 'single', filePath: mine }, '别人的.md', '被篡改', st)
+    expect(r.ok).toBe(false)
+    expect(readFileSync(other, 'utf-8')).toBe('原样')
+  })
+
+  it('读写自己这份文档正常放行', () => {
+    const mine = join(root, '周报.md')
+    writeFileSync(mine, '我的周报')
+    const r = readWritingSections({ kind: 'single', filePath: mine }, ['周报.md'])
+    expect(r.ok && r.sections[0].markdown).toBe('我的周报')
   })
 })

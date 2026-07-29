@@ -1,5 +1,6 @@
-import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join } from 'node:path'
+import { randomBytes } from 'node:crypto'
 
 import {
   parseOutlineTotal,
@@ -69,6 +70,49 @@ function sourceAbsPath(source: WritingDocSource): string | null {
   return typeof p === 'string' && p.length > 0 && isAbsolute(p) ? p : null
 }
 
+/**
+ * name 是否允许被读/写。格式白名单（isSafeSectionName）之外，**single 模式还多一条约束：
+ * name 必须等于文档自身的文件名**。single 模式的语义是「这一个文件就是全部」，但
+ * sectionDir() 对 single 返回的是整个父目录——光靠格式白名单挡不住调用方传同目录下
+ * 另一个 .md 的文件名（哪怕只是笔误），那样就能读/写到这份文档范围之外的文件。
+ * project 模式没有这层限制：drafts/ 目录下任何合法命名的 .md 都是这份文档自己的节。
+ */
+function isAllowedSectionName(source: WritingDocSource, abs: string, name: string): boolean {
+  if (!isSafeSectionName(name)) return false
+  return source.kind === 'single' ? name === basename(abs) : true
+}
+
+/**
+ * 原子写入：先在同目录写临时文件，成功后 rename 到目标路径。**为什么不能直接
+ * writeFileSync(target, data)**——它默认 flag 是 `'w'`，即先截断目标文件再写内容；
+ * 写到一半若失败（磁盘满/权限被中途收回/进程被杀），目标文件已经被截断但新内容
+ * 没写完，原内容和新内容一起丢失，磁盘上留下一份损坏的正文。这条写路径承载的是
+ * 用户和 AI 创作的核心正文，截断即不可逆数据丢失，不能承受。
+ *
+ * 同目录内的 rename 在 POSIX 上是原子操作（不存在「文件已存在但内容是一半」的
+ * 中间态）——**临时文件必须落在与目标同一目录**，落到系统 tmp 目录会因跨设备/
+ * 跨文件系统导致 rename 退化成「拷贝+删除」，原子性随之丢失。临时文件名带
+ * pid + 随机串，避免同一进程内并发写同名节时互相踩踏；写入或 rename 失败时
+ * 尽力清理掉临时文件，不在 drafts/ 目录留下垃圾。
+ */
+function writeFileAtomic(targetPath: string, data: string): void {
+  const tmpPath = join(
+    dirname(targetPath),
+    `.${basename(targetPath)}.tmp-${process.pid}-${randomBytes(6).toString('hex')}`
+  )
+  try {
+    writeFileSync(tmpPath, data, 'utf-8')
+    renameSync(tmpPath, targetPath)
+  } catch (err) {
+    try {
+      unlinkSync(tmpPath)
+    } catch {
+      // 临时文件本就没建成，或 rename 失败前就已消失——两种情况都无需再清理。
+    }
+    throw err
+  }
+}
+
 export function scanWritingDoc(source: WritingDocSource): WritingScanResult {
   const abs = sourceAbsPath(source)
   if (!abs) return { ok: false, error: 'Invalid path (expected absolute).' }
@@ -128,12 +172,15 @@ export function readWritingSections(
   const abs = sourceAbsPath(source)
   if (!abs) return { ok: false, error: 'Invalid path (expected absolute).' }
 
-  // names 为空 = 读全部。先扫一次拿到当前文件清单，避免调用方还得先 scan 再 read。
-  let wanted = names.filter(isSafeSectionName)
+  // names 为空 = 读全部。先扫一次拿到当前文件清单，避免调用方还得先 scan 再 read
+  // ——scanWritingDoc 本身已经只回这份文档范围内的文件，不需要再过一遍 isAllowedSectionName。
+  let wanted: string[]
   if (names.length === 0) {
     const scan = scanWritingDoc(source)
     if (!scan.ok) return { ok: false, error: scan.error }
     wanted = scan.files.map((f) => f.name)
+  } else {
+    wanted = names.filter((name) => isAllowedSectionName(source, abs, name))
   }
 
   const dir = sectionDir(source)
@@ -159,7 +206,7 @@ export function writeWritingSection(
 ): WritingWriteResult {
   const abs = sourceAbsPath(source)
   if (!abs) return { ok: false, error: 'Invalid path (expected absolute).' }
-  if (!isSafeSectionName(name)) return { ok: false, error: 'Invalid section name.' }
+  if (!isAllowedSectionName(source, abs, name)) return { ok: false, error: 'Invalid section name.' }
   if (typeof markdown !== 'string') return { ok: false, error: 'Invalid markdown.' }
 
   const p = join(sectionDir(source), name)
@@ -184,7 +231,7 @@ export function writeWritingSection(
   }
 
   try {
-    writeFileSync(p, markdown, 'utf-8')
+    writeFileAtomic(p, markdown)
     return { ok: true, mtimeMs: statSync(p).mtimeMs }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
