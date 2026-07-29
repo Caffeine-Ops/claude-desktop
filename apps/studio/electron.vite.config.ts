@@ -38,7 +38,19 @@ export default defineConfig({
           // kbBuildWorker 同理：kbBuildRunner 用 utilityProcess.fork('out-electron/main/
           // kbBuildWorker.js') 跑「扫描→转换→向量→写 index.json」。漏配此入口 = 产物不
           // 生成 → fork 找不到文件 → 构建 worker 当场异常退出 → 索引永远建不出、管理页恒空。
-          kbBuildWorker: resolve(__dirname, 'electron/main/workers/kbBuildWorker.ts')
+          kbBuildWorker: resolve(__dirname, 'electron/main/workers/kbBuildWorker.ts'),
+          // pptSkillWorker 同理：ppt-creator skill 压缩 49MB、解压 12167 个
+          // 文件，sha256 与解压全在子进程做，绝不进 main（那会把所有 tab 的
+          // engine 连同 UI 一起冻住几十秒）。pptSkillInstaller 用
+          // utilityProcess.fork('out-electron/main/pptSkillWorker.js') 指向此
+          // 产物——漏配该入口 = fork 找不到文件 → 技能永远装不上、PPT 入口恒卡在下载中。
+          pptSkillWorker: resolve(__dirname, 'electron/main/workers/pptSkillWorker.ts'),
+          // componentWorker 同理：CLI 二进制压缩后 ~80MB、解压后 233MB，
+          // 下载/sha256/gunzip 全在子进程做。componentInstaller 用
+          // utilityProcess.fork('out-electron/main/componentWorker.js') 指向此产物——
+          // 漏配该入口 = fork 找不到文件 → 必需组件永远装不上 → 全屏门永远挡着，
+          // 应用整个不可用（比 pptSkill 那条严重得多，它只挡 PPT 入口）。
+          componentWorker: resolve(__dirname, 'electron/main/workers/componentWorker.ts')
         }
       },
       commonjsOptions: { transformMixedEsModules: true }

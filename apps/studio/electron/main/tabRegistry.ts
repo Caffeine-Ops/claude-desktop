@@ -17,11 +17,14 @@ import { resolveStudioTabUrl } from './services/openDesignServices'
 import {
   IPC_CHANNELS,
   type AuthState,
+  type ScenarioCatalog,
   type ShellMenuAction,
   type TabDescriptor,
   type UpdaterState
 } from '../shared/ipc-channels'
 import type { KbSyncStatus } from '../shared/kbSyncStatus'
+import type { PptSkillStatus } from '../shared/pptSkillStatus'
+import type { RuntimeComponentsState } from '../shared/runtimeComponents'
 import type { KbCatalogStatusPayload } from '../shared/ipc-channels'
 import type { KbBuildStatus } from '../shared/kbBuildStatus'
 
@@ -954,6 +957,53 @@ export function broadcastUpdaterState(state: UpdaterState): void {
     const wc = ctx.view.webContents
     if (wc.isDestroyed()) continue
     wc.send(IPC_CHANNELS.UPDATER_STATE_CHANGED, state)
+  }
+}
+
+/**
+ * Push ppt-creator skill 的安装进度到每个 renderer。下载 49MB + 解压 12167
+ * 个文件 + 建 venv 期间会高频广播（worker 侧已按 100ms 节流），web tab 跳过。
+ */
+export function broadcastPptSkillStatus(payload: PptSkillStatus): void {
+  if (shellWindow && !shellWindow.isDestroyed()) {
+    shellWindow.webContents.send(IPC_CHANNELS.PPT_SKILL_STATUS, payload)
+  }
+  for (const ctx of tabs.values()) {
+    if (ctx.kind === 'web') continue
+    const wc = ctx.view.webContents
+    if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.PPT_SKILL_STATUS, payload)
+  }
+}
+
+/**
+ * 运行时组件整表状态推送。形状同 broadcastPptSkillStatus：整体替换、不拼装，
+ * web tab 跳过（它们没有 chatApi）。
+ */
+export function broadcastRuntimeComponentsState(payload: RuntimeComponentsState): void {
+  if (shellWindow && !shellWindow.isDestroyed()) {
+    shellWindow.webContents.send(IPC_CHANNELS.RUNTIME_COMPONENTS_STATE, payload)
+  }
+  for (const ctx of tabs.values()) {
+    if (ctx.kind === 'web') continue
+    const wc = ctx.view.webContents
+    if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.RUNTIME_COMPONENTS_STATE, payload)
+  }
+}
+
+/**
+ * Push the refreshed scenario catalog to every renderer. 同
+ * broadcastAuthState：整体替换、无 skip-the-writer（刷新一律源自 main 的
+ * 后台拉取，没有「发起方 renderer」这回事）。web tab 跳过——它们没有
+ * preload，也没有空态 rail 要更新。
+ */
+export function broadcastScenarioCatalog(catalog: ScenarioCatalog): void {
+  if (shellWindow && !shellWindow.isDestroyed()) {
+    shellWindow.webContents.send(IPC_CHANNELS.SCENARIO_CATALOG_CHANGED, catalog)
+  }
+  for (const ctx of tabs.values()) {
+    if (ctx.kind === 'web') continue
+    const wc = ctx.view.webContents
+    if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.SCENARIO_CATALOG_CHANGED, catalog)
   }
 }
 
