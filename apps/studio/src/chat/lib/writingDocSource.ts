@@ -113,3 +113,40 @@ export function detectWritingSource(parts: WritingToolPart[]): WritingDocSource 
   if (singleFile) return { kind: 'single', filePath: singleFile }
   return null
 }
+
+/** 反斜杠归一成正斜杠，供路径比较用（与 isSingleDocPath 同规则，Windows 路径要认）。 */
+function normalizeSlashes(p: string): string {
+  return p.replace(/\\/g, '/')
+}
+
+/**
+ * 这一轮 AI 是不是在写「当前这篇稿子」。
+ *
+ * 为什么不能直接用会话级的 streaming：streaming 在一轮 assistant 消息的 'start' 置真、
+ * 'end' 才置假，中间无论 AI 在跑 shell、在回答问题、还是真在写正文，它都是真。写作工作区
+ * 一旦接管就常驻，于是「全文写完后用户提个问题」也会让纸面底部冒出「正在写第 6 节 · 共 5 节」——
+ * 用户会以为 AI 还在写，其实早写完了。
+ *
+ * 判据改成：这一轮里存在一个**写入到当前文档源目录下**的文件工具调用。这直接对应
+ * 「AI 正在往这篇稿子里落字」，AI 干别的事时自然为假。
+ *
+ * **`parts` 必须只喂当前这一轮**（调用方只取最后一条 assistant 消息的 parts）——喂全部
+ * 历史的话，写完的稿子会因为「第一节 Write 过 drafts/」这条历史记录而一直判为「正在写」。
+ */
+export function isWritingInProgress(
+  parts: WritingToolPart[],
+  source: WritingDocSource | null
+): boolean {
+  if (!source) return false
+  for (const p of parts) {
+    if (!p.filePath) continue
+    const norm = normalizeSlashes(p.filePath)
+    if (source.kind === 'project') {
+      const dir = normalizeSlashes(source.projectDir).replace(/\/$/, '')
+      if (norm.startsWith(`${dir}/drafts/`) && norm.toLowerCase().endsWith('.md')) return true
+    } else {
+      if (norm === normalizeSlashes(source.filePath)) return true
+    }
+  }
+  return false
+}

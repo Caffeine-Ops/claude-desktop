@@ -3,7 +3,12 @@ import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
 
 import type { WritingDocSource, WritingGenre, WritingSection } from '@desktop-shared/writing'
-import { detectWritingSource, pickFilePath, type WritingToolPart } from '../lib/writingDocSource'
+import {
+  detectWritingSource,
+  isWritingInProgress,
+  pickFilePath,
+  type WritingToolPart
+} from '../lib/writingDocSource'
 import { useChatStore } from './chat'
 
 /** 轮询间隔。2s 是「AI 写完一节到你看见」的上限，对人眼足够；再密只是空转 IPC。 */
@@ -46,6 +51,32 @@ export const useWritingStore = create<WritingState>((set) => ({
 }))
 
 /**
+ * 从一条消息的 content 里摘出 tool-call 摘要，喂给 writingDocSource.ts 的纯函数判定用。
+ * `useWritingSource`（扫全部历史消息）与 `useWritingInProgress`（只扫最后一条）共用同一套
+ * 摘取逻辑，避免两处各写一份、字段映射漂移。
+ */
+function toolPartsOf(content: unknown): WritingToolPart[] {
+  if (!Array.isArray(content)) return []
+  const parts: WritingToolPart[] = []
+  for (const p of content as {
+    type: string
+    toolName?: string
+    args?: Record<string, unknown>
+    result?: unknown
+  }[]) {
+    if (p.type !== 'tool-call' || !p.toolName) continue
+    const args = p.args ?? {}
+    parts.push({
+      toolName: p.toolName,
+      commandText: typeof args.command === 'string' ? args.command : '',
+      resultText: typeof p.result === 'string' ? p.result : JSON.stringify(p.result ?? ''),
+      filePath: pickFilePath(args)
+    })
+  }
+  return parts
+}
+
+/**
  * 从当前会话的消息树推导文档源。订阅 messages 会随流式每 delta 重算，故用 useShallow +
  * 把重活关在纯函数里（detectWritingSource 只扫 tool-call、不碰正文文本）。
  */
@@ -53,24 +84,7 @@ export function useWritingSource(): WritingDocSource | null {
   return useChatStore(
     useShallow((s): WritingDocSource | null => {
       const parts: WritingToolPart[] = []
-      for (const m of s.messages) {
-        if (!Array.isArray(m.content)) continue
-        for (const p of m.content as unknown as {
-          type: string
-          toolName?: string
-          args?: Record<string, unknown>
-          result?: unknown
-        }[]) {
-          if (p.type !== 'tool-call' || !p.toolName) continue
-          const args = p.args ?? {}
-          parts.push({
-            toolName: p.toolName,
-            commandText: typeof args.command === 'string' ? args.command : '',
-            resultText: typeof p.result === 'string' ? p.result : JSON.stringify(p.result ?? ''),
-            filePath: pickFilePath(args)
-          })
-        }
-      }
+      for (const m of s.messages) parts.push(...toolPartsOf(m.content))
       return detectWritingSource(parts)
     })
   )
@@ -79,6 +93,23 @@ export function useWritingSource(): WritingDocSource | null {
 /** 右栏门控：有文档源即接管。与 proposal / slides 的互斥在 ThreadView 里裁决。 */
 export function useWritingWorkspace(): boolean {
   return useWritingStore((s) => s.source !== null)
+}
+
+/**
+ * 这一轮 AI 是不是正在往当前文档源里落字（供纸面底部的进度骨架用）。
+ *
+ * **只扫最后一条消息**，不是全部历史——每条 assistant 消息对应一轮（同 messageId 的增量
+ * 都合并进同一条，见 chat.ts 的 appendAssistantDelta），故「最后一条」= 当前/刚结束的这一轮。
+ * 全文写完后用户另起一轮提问，会话级 `streaming` 依然会在这轮变真，但这轮的 parts 里没有
+ * 写 drafts/ 的文件调用，isWritingInProgress 判定为 false——骨架不会再误挂着「正在写第 N 节」。
+ */
+export function useWritingInProgress(): boolean {
+  const source = useWritingStore((s) => s.source)
+  return useChatStore((s) => {
+    const last = s.messages[s.messages.length - 1] as { role?: string; content?: unknown } | undefined
+    if (!last || last.role !== 'assistant') return false
+    return isWritingInProgress(toolPartsOf(last.content), source)
+  })
 }
 
 /**

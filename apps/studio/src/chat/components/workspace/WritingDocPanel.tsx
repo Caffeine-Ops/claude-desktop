@@ -2,8 +2,12 @@ import { useEffect, useState } from 'react'
 
 import { Button } from '@/src/components/ui/button'
 import { cn } from '@/src/lib/utils'
-import { useChatStore } from '../../stores/chat'
-import { useWritingPoll, useWritingSource, useWritingStore } from '../../stores/writing'
+import {
+  useWritingInProgress,
+  useWritingPoll,
+  useWritingSource,
+  useWritingStore
+} from '../../stores/writing'
 import { WritingPaper } from './WritingPaper'
 
 /**
@@ -17,10 +21,9 @@ export function WritingDocPanel(): React.JSX.Element | null {
   const setSource = useWritingStore((s) => s.setSource)
   const storeSource = useWritingStore((s) => s.source)
   const [tab, setTab] = useState<'doc' | 'preview'>('doc')
-  const sessionId = useChatStore((s) => s.sessionId)
-  const streaming = useChatStore((s) =>
-    sessionId ? (s.perSession[sessionId]?.streaming ?? false) : false
-  )
+  // 「这一轮在写这篇稿子」而非会话级 streaming——见 useWritingInProgress 头注释，
+  // 避免全文写完后用户提问还挂着「正在写第 N 节」的骨架。
+  const writing = useWritingInProgress()
 
   // 会话消息推导出的源与 store 里的不一致时同步（切会话 / 开了新项目）。
   // 【必须放 useEffect 里】：渲染期间直接调 setState 会触发 React 的
@@ -37,7 +40,7 @@ export function WritingDocPanel(): React.JSX.Element | null {
   if (!storeSource) return null
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col border-l border-border bg-background">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col border-l border-border bg-background">
       <div className="flex items-center gap-1 border-b border-border px-3 py-2">
         <Button
           variant={tab === 'doc' ? 'secondary' : 'ghost'}
@@ -56,7 +59,7 @@ export function WritingDocPanel(): React.JSX.Element | null {
       </div>
 
       <div className={cn('flex min-h-0 flex-1 flex-col', tab === 'doc' ? '' : 'hidden')}>
-        <WritingPaper streaming={streaming} />
+        <WritingPaper writing={writing} />
       </div>
       {/* 打印预览在 Task 8 接入；此处先占位，避免切过去是一片空白无解释。 */}
       <div className={cn('grid flex-1 place-items-center', tab === 'preview' ? '' : 'hidden')}>

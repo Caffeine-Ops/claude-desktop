@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'bun:test'
-import { detectWritingSource, pickFilePath, type WritingToolPart } from './writingDocSource'
+import {
+  detectWritingSource,
+  isWritingInProgress,
+  pickFilePath,
+  type WritingToolPart
+} from './writingDocSource'
 
 function bash(resultText: string, commandText = ''): WritingToolPart {
   return { toolName: 'Bash', commandText, resultText, filePath: null }
@@ -133,5 +138,47 @@ describe('pickFilePath · 三字段兜底链', () => {
   })
   it('字段值不是字符串时跳过', () => {
     expect(pickFilePath({ file_path: 123, filePath: '/b.md' })).toBe('/b.md')
+  })
+})
+
+describe('isWritingInProgress', () => {
+  const proj = { kind: 'project', projectDir: '/a/proj' } as const
+  const single = { kind: 'single', filePath: '/a/写作/周报.md' } as const
+
+  it('source 为 null 时恒为 false', () => {
+    expect(isWritingInProgress([write('/a/proj/drafts/1.md')], null)).toBe(false)
+  })
+
+  it('project 模式：写入 drafts 下的 md → true', () => {
+    expect(isWritingInProgress([write('/a/proj/drafts/1-开场.md')], proj)).toBe(true)
+  })
+
+  it('project 模式：写入项目里别的目录（如 reviews/）→ false', () => {
+    expect(isWritingInProgress([write('/a/proj/reviews/质检.md')], proj)).toBe(false)
+  })
+
+  it('project 模式：写入别的项目的 drafts → false', () => {
+    expect(isWritingInProgress([write('/b/other/drafts/1.md')], proj)).toBe(false)
+  })
+
+  it('single 模式：写入这份文档本身 → true', () => {
+    expect(isWritingInProgress([write('/a/写作/周报.md')], single)).toBe(true)
+  })
+
+  it('single 模式：写入同目录另一份 md → false', () => {
+    expect(isWritingInProgress([write('/a/写作/别的.md')], single)).toBe(false)
+  })
+
+  it('只有非文件工具调用（跑 shell、回答问题）→ false', () => {
+    expect(isWritingInProgress([bash('ls -la')], proj)).toBe(false)
+  })
+
+  it('空数组 → false', () => {
+    expect(isWritingInProgress([], proj)).toBe(false)
+  })
+
+  it('Windows 反斜杠路径同样认', () => {
+    const winProj = { kind: 'project', projectDir: 'C:\\a\\proj' } as const
+    expect(isWritingInProgress([write('C:\\a\\proj\\drafts\\1.md')], winProj)).toBe(true)
   })
 })

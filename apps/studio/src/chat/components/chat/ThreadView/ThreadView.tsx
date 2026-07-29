@@ -867,10 +867,14 @@ export function ThreadView(): React.JSX.Element {
         </>
       ) : null}
 
+      {/* 写作右栏：结构与 isProposalMode 同构（拖拽手柄 + 面板直接落在 ThreadView 上，
+          flex-1 长在面板自己根节点，不额外包一层 div）——三种分栏在这一点上保持一致，
+          用户在写作分栏下同样能拖动 chat 列宽度。 */}
       {isWritingMode ? (
-        <div className="flex min-h-0 flex-1">
+        <>
+          <ChatColumnResizeHandle onResizeStart={onResizeStart} />
           <WritingDocPanel />
-        </div>
+        </>
       ) : null}
 
       {/* 表格预览右栏：点成果卡片里的 xlsx/xls/csv 打开，应用内直接看
