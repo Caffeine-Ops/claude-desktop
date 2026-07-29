@@ -15,7 +15,13 @@ import type {
 } from '../../shared/ipc-channels'
 import { broadcastAuthState } from '../tabRegistry'
 import { applyClientEnvConfig } from './clientEnvConfigService'
-import { sub2apiGet, sub2apiPost, sub2apiPut } from './sub2apiClient'
+import {
+  sub2apiGet,
+  sub2apiPost,
+  sub2apiPut,
+  type AuthedGet,
+  type Sub2ApiResult
+} from './sub2apiClient'
 
 /**
  * 登录/账号服务（用户管理 + 套餐系统的地基）。对接的是 sub2api 后端
@@ -68,8 +74,13 @@ function authPath(): string {
 /**
  * 冷启动读回上次登录态。只认结构完整的记录——字段缺损（手改文件 /
  * 旧版本形状，含改造前的邮箱登录记录）按未登录处理并不删文件，让用户
- * 重新登录后自然覆盖。不做 token 过期校验：目前没有其它功能会用这个
- * token 发起请求，冷启动阶段验它属于「为不存在的场景加校验」。
+ * 重新登录后自然覆盖。
+ *
+ * 这里刻意不做 token 过期校验，但理由跟最初那版不一样了：盘上的 access
+ * token 过期（24h TTL，冷启动时多半已经过期）是**常态而非登录失效**，
+ * 由 {@link ensureFreshAccessToken} 在第一次真正发请求时用 refresh token
+ * 续上即可。在 load() 里判过期然后按未登录处理，会把每天第一次开 app
+ * 的用户全踢回登录页——那才是真的错。
  */
 function load(): void {
   if (loaded) return
@@ -128,6 +139,17 @@ function persist(user: AuthUser, tokenPair: TokenPair): void {
   }
 }
 
+/** 删盘上凭据。主动 {@link logout} 与被动 {@link invalidateSession} 共用——
+ * 两条路径必须清得一模一样，否则「被踢下线」会留下半份凭据。 */
+function clearStoredAuth(): void {
+  try {
+    rmSync(authPath(), { force: true })
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException
+    console.error('[auth] remove auth.json failed', { path: authPath(), message: e.message })
+  }
+}
+
 let profileRefreshedThisSession = false
 
 export function getAuthState(): AuthState {
@@ -144,42 +166,282 @@ export function getAuthState(): AuthState {
   return { ...state }
 }
 
-/** login() 之外的第二个刷新入口（冷启动路径），逻辑见 {@link getAuthState}。 */
+/**
+ * login() 之外的第二个刷新入口（冷启动路径），逻辑见 {@link getAuthState}。
+ *
+ * 这里是 access token 过期的**主战场**：盘上那份多半是上一次开 app 时签发
+ * 的，24h TTL 早过了。三个请求（client-config / profile / 订阅）全走
+ * {@link authedGet}，第一个发现过期的触发续期，其余的等同一次刷新（单飞），
+ * 用户对整个过程无感。
+ */
 async function refreshProfileInBackground(): Promise<void> {
   if (!tokens) return
   // 与 profile 刷新并行、互不阻塞：client-config 失败不该连累 profile 展示，
   // 反之亦然——两者是正交的两份数据，各自 best-effort（见各自函数内部的
   // 错误处理）。
-  void applyClientEnvConfig(tokens.accessToken).catch((err) => {
+  void applyClientEnvConfig(authedGet).catch((err) => {
     console.error('[auth] apply client env config failed', {
       message: err instanceof Error ? err.message : String(err)
     })
   })
-  const refreshed = await fetchProfile(tokens.accessToken)
-  // state.status 可能在这次网络请求期间因为用户手动登出而变化——刷新
-  // 结果这时应当丢弃，不能把一份「迟到」的登录态重新写回去。
-  if (!refreshed || state.status !== 'signedIn') return
+  const refreshed = await fetchProfile(authedGet)
+  // state.status / tokens 都可能在这次网络请求期间变化——用户手动登出，
+  // 或续期失败触发了 invalidateSession。刷新结果这时应当丢弃，不能把一份
+  // 「迟到」的登录态重新写回去。注意 tokens 也要重新判空：它可能已经被
+  // 续期换成了新的一对（那正是要落盘的值），也可能已经被清成 null。
+  if (!refreshed || state.status !== 'signedIn' || !tokens) return
   persist(refreshed, tokens)
   setState({ status: 'signedIn', user: refreshed })
 }
 
 /**
  * 当前登录用户的 sub2api access token，main-only（同 {@link getAuthState}
- * 的读接口对称）；未登录时为 null。给将来对接 sub2api 其它接口（套餐/
- * 额度等）的 service 用，本次改造暂无消费方。
+ * 的读接口对称）；未登录时为 null。
+ *
+ * ⚠️ 这个函数**不保证 token 没过期**（access token 只有 24h），拿它直接
+ * 发请求会在过期后一路 401。除非你只是想判断「有没有登录」，否则一律走
+ * {@link callWithAuth} / {@link authedGet} 系列——它们负责续期与重放。
  */
 export function getAccessToken(): string | null {
   load()
   return tokens?.accessToken ?? null
 }
 
+/* ─────────────────────────── token 续期 ───────────────────────────
+ * sub2api 的 access token TTL 是 24 小时，refresh token 则是「一次性 +
+ * 轮转」的：每次 `POST /api/v1/auth/refresh` 会立刻删掉旧的、签发新的一
+ * 对，并对旧 token 的二次使用做重用检测（REFRESH_TOKEN_REUSED 会连坐撤销
+ * 整个会话家族）。这两条约束直接决定了下面的设计：
+ *
+ *  1. 刷新必须**单飞**（{@link refreshTokens}）——冷启动时 profile、订阅、
+ *     client-config、usage 面板可能同时发现 token 过期，各刷各的就会拿同
+ *     一个旧 refresh token 打并发，第二个之后全部判重用，整条会话被撤销。
+ *  2. 拿到新 token 必须**立刻落盘**——旧的那份在服务端已经失效了，进程
+ *     这时崩掉而盘上还留着旧值，下次冷启动就会撞重用检测。
+ *  3. 网络失败**绝不能**当成登录失效（见 {@link performTokenRefresh}）。
+ *
+ * 已知限制：同一台机器上同时跑两个实例（比如 dev 版和安装版）会共享同
+ * 一份 auth.json，却各自持有内存里的 token——先刷新的那个把 refresh token
+ * 轮转掉，后刷新的那个拿着已失效的旧值去刷，撞重用检测后两边一起被踢
+ * 下线。要根治得给刷新加跨进程锁（文件锁/单例代理），本轮不做；日常
+ * 「同时只开一个实例」的用法不受影响。
+ */
+
+/**
+ * 剩余寿命低于这个阈值就提前刷新。60s 用来覆盖「刚检查完还没发出去就
+ * 过期」的窗口，同时吸收客户端与服务端之间的时钟漂移。
+ */
+const TOKEN_REFRESH_SKEW_MS = 60_000
+
+/** access token 过期但会话本身还在——刷一次就能救回来。 */
+const REFRESHABLE_REASONS = new Set(['TOKEN_EXPIRED', 'ACCESS_TOKEN_EXPIRED'])
+
+/**
+ * 会话已被服务端作废，刷新也救不回来（refresh 端点会以同样的理由拒绝），
+ * 只能重新登录。取自 sub2api 的 jwt_auth.go（请求路径）与 auth_service.go
+ * 的 RefreshTokenPair（刷新路径）。注意 `INVALID_TOKEN` 之类**不在**这张
+ * 表里——那更像客户端把 token 传坏了，宁可原样报错也别贸然登出。
+ */
+const FATAL_AUTH_REASONS = new Set([
+  'TOKEN_REVOKED', // 改密后 token_version 前进，旧 token 全作废
+  'SESSION_BINDING_MISMATCH', // IP/UA 变了，整个会话家族被撤销
+  'USER_INACTIVE',
+  'USER_NOT_ACTIVE',
+  'USER_NOT_FOUND',
+  'REFRESH_TOKEN_INVALID',
+  'REFRESH_TOKEN_EXPIRED',
+  'REFRESH_TOKEN_REUSED'
+])
+
+/** 本模块自造的 reason（不来自后端），给 {@link translateError} 认。 */
+const NOT_SIGNED_IN = 'NOT_SIGNED_IN'
+
+/** RefreshTokenResponse（见 auth_handler.go:734）。 */
+interface RefreshTokenData {
+  access_token: string
+  refresh_token: string
+  /** Access Token 有效期（秒）。 */
+  expires_in: number
+  token_type?: string
+}
+
+/** 见 {@link refreshTokens} 的单飞说明。 */
+let refreshInFlight: Promise<boolean> | null = null
+
+/**
+ * 刷新 token 对。并发调用共享同一次请求（单飞）——原因见本节开头的第 1
+ * 条：并发刷新会撞上后端的 refresh token 重用检测。
+ */
+function refreshTokens(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = performTokenRefresh().finally(() => {
+      refreshInFlight = null
+    })
+  }
+  return refreshInFlight
+}
+
+/** 真正干活的那半，只经 {@link refreshTokens} 调用（否则绕过单飞）。 */
+async function performTokenRefresh(): Promise<boolean> {
+  load()
+  const refreshToken = tokens?.refreshToken
+  if (!refreshToken) {
+    // 登录响应没带 refresh token（后端老版本 / 异常响应）——没有续期材料，
+    // access token 过期就是会话终点，直接进登录页比让用户对着一串 401 猜
+    // 要诚实。
+    invalidateSession('no refresh token stored')
+    return false
+  }
+
+  const result = await sub2apiPost<RefreshTokenData>('/api/v1/auth/refresh', {
+    refresh_token: refreshToken
+  })
+  if (!result.ok) {
+    // reason === null 是网络/解析层失败（离线、后端没起来、代理抽风）。
+    // 把这种情况当「登录失效」踢下线是最糟的体验——保留登录态，等下一次
+    // 请求自然重试。未知 reason 同样保守处理。
+    if (result.reason === null || !FATAL_AUTH_REASONS.has(result.reason)) {
+      console.error('[auth] token refresh failed — keeping session', {
+        reason: result.reason,
+        message: result.message
+      })
+      return false
+    }
+    invalidateSession(`refresh rejected: ${result.reason}`)
+    return false
+  }
+
+  const data = result.data
+  const next: TokenPair = {
+    accessToken: data.access_token,
+    // 轮转后的新 refresh token；后端理论上必给，真没给就沿用旧的（旧的
+    // 已经被删了，下次刷新会失败并走 invalidateSession，不会静默死循环）。
+    refreshToken: data.refresh_token || refreshToken,
+    expiresAt: typeof data.expires_in === 'number' ? Date.now() + data.expires_in * 1000 : null
+  }
+  tokens = next
+  // 立刻落盘，理由见本节开头第 2 条。state.user 理论上必然存在（tokens 与
+  // signedIn 由 load/login/logout 成对维护），真没有就只留内存态——盘上那份
+  // 旧 refresh token 已经失效，写不进去也不会更坏。
+  if (state.status === 'signedIn' && state.user) {
+    persist(state.user, next)
+  } else {
+    console.warn('[auth] refreshed tokens but no signedIn user to persist with')
+  }
+  console.log('[auth] token refreshed', { expiresAt: next.expiresAt })
+  return true
+}
+
+/**
+ * 会话被服务端作废时的**被动**登出（改密 / 会话绑定变化 / refresh token
+ * 失效）。清理动作与用户主动 {@link logout} 完全一致——删盘上凭据、清内存
+ * 态、广播 signedOut 让 AuthGate 弹回登录页——区别只在那条 warn 日志：它是
+ * 事后排查「怎么突然要我重新登录」的唯一线索。
+ */
+function invalidateSession(reason: string): void {
+  if (state.status === 'signedOut' && !tokens) return // 幂等
+  console.warn('[auth] session invalidated — signing out', { reason })
+  clearStoredAuth()
+  tokens = null
+  setState({ status: 'signedOut', user: null })
+}
+
+/**
+ * 取一份「尽量新鲜」的 access token：本地记录显示已过期或即将过期就先
+ * 续期。刷新失败但会话没被作废（网络问题）时仍返回手里这份过期的——让
+ * 请求自己去撞 401，由 {@link callWithAuth} 的重放路径兜底，不在这里替
+ * 调用方判死刑。
+ */
+async function ensureFreshAccessToken(): Promise<string | null> {
+  load()
+  if (!tokens) return null
+  const { expiresAt } = tokens
+  if (expiresAt !== null && expiresAt - Date.now() <= TOKEN_REFRESH_SKEW_MS) {
+    // 刷新失败若是致命原因，invalidateSession 已经把 tokens 清成 null，
+    // 下面这行自然返回 null（= 未登录），不需要看返回值。
+    await refreshTokens()
+  }
+  return tokens?.accessToken ?? null
+}
+
+/**
+ * 所有用户态 sub2api 请求的统一入口：续期 → 执行 → （被判过期就）刷新
+ * 后**重放一次**。
+ *
+ * 为什么本地 expiresAt 已经查过了还要留重放这条路：服务端可以在 TTL 之前
+ * 单方面让 token 失效（改密、会话撤销），老记录的 expiresAt 也可能是 null
+ * （后端没回 expires_in 时当长期有效）。重放只做一次——刷新后仍被判过期
+ * 说明问题不在 token 新鲜度上，再转圈只会把 401 变成死循环。
+ */
+export async function callWithAuth<T>(
+  run: (accessToken: string) => Promise<Sub2ApiResult<T>>
+): Promise<Sub2ApiResult<T>> {
+  const token = await ensureFreshAccessToken()
+  if (!token) return { ok: false, reason: NOT_SIGNED_IN, message: '请先登录' }
+
+  const first = await run(token)
+  if (first.ok) return first
+
+  const reason = first.reason ?? ''
+  if (FATAL_AUTH_REASONS.has(reason)) {
+    invalidateSession(`request rejected: ${reason}`)
+    return first
+  }
+  if (!REFRESHABLE_REASONS.has(reason)) return first
+  if (!(await refreshTokens())) {
+    // 续期没成功。会话被作废的话 tokens 已经清空，原样返回 first——它的
+    // reason 翻出来就是「请重新登录」，正合适；tokens 还在则说明失败在
+    // 网络/服务端临时故障上，别把「连不上」说成「登录过期」让用户白跑
+    // 一趟重新登录。
+    if (tokens) return { ok: false, reason: null, message: '网络异常，请稍后重试' }
+    return first
+  }
+  const refreshedToken = tokens?.accessToken
+  if (!refreshedToken) return first
+  return run(refreshedToken)
+}
+
+/** {@link callWithAuth} 的三个便捷包装，签名与 sub2apiGet/Post/Put 对齐（少了手传 token 那一位）。 */
+export function authedGet<T>(path: string): Promise<Sub2ApiResult<T>> {
+  return callWithAuth<T>((token) => sub2apiGet<T>(path, token))
+}
+
+export function authedPost<T>(path: string, body: unknown): Promise<Sub2ApiResult<T>> {
+  return callWithAuth<T>((token) => sub2apiPost<T>(path, body, token))
+}
+
+export function authedPut<T>(path: string, body: unknown): Promise<Sub2ApiResult<T>> {
+  return callWithAuth<T>((token) => sub2apiPut<T>(path, body, token))
+}
+
 /**
  * 把 sub2api 的错误 reason code（见 backend/internal/service/sms_service.go
  * 与 auth_service.go 的 infraerrors.* 常量）翻成中文。未知 reason 落回
  * message 本身（多半是英文），message 也没有则给通用兜底文案。
+ *
+ * 认证类 reason 是**兜底**：正常情况下 {@link callWithAuth} 已经把过期
+ * token 续上了，用户不该看到它们；真漏到 UI 说明续期也失败了（那时会话
+ * 已被 {@link invalidateSession} 清掉，登录页正在弹），所以文案一律指向
+ * 「重新登录」而不是「稍后重试」。在这张表补全之前，账号页会把后端原样
+ * 的英文 "Token has expired" 直接显示给用户（2026-07-28 实测）。
  */
-function translateError(reason: string | null, message: string, fallback: string): string {
+export function translateError(reason: string | null, message: string, fallback: string): string {
   switch (reason) {
+    case NOT_SIGNED_IN:
+      return '请先登录'
+    case 'TOKEN_EXPIRED':
+    case 'ACCESS_TOKEN_EXPIRED':
+    case 'REFRESH_TOKEN_EXPIRED':
+    case 'REFRESH_TOKEN_INVALID':
+    case 'REFRESH_TOKEN_REUSED':
+      return '登录已过期，请重新登录'
+    case 'TOKEN_REVOKED':
+      return '账号密码已变更，请重新登录'
+    case 'SESSION_BINDING_MISMATCH':
+      return '网络环境已变化，出于安全考虑请重新登录'
+    case 'INVALID_TOKEN':
+    case 'UNAUTHORIZED':
+      return '登录状态异常，请重新登录'
     case 'PHONE_LOGIN_DISABLED':
       return '手机号登录尚未开启，请联系管理员'
     case 'INVALID_PHONE_NUMBER':
@@ -195,7 +457,10 @@ function translateError(reason: string | null, message: string, fallback: string
     case 'TURNSTILE_NOT_CONFIGURED':
       return '人机验证服务未配置，请联系管理员'
     case 'USER_NOT_ACTIVE':
+    case 'USER_INACTIVE':
       return '账号已被禁用，请联系管理员'
+    case 'USER_NOT_FOUND':
+      return '账号不存在，请重新登录'
     default:
       return message?.trim() ? message : fallback
   }
@@ -308,11 +573,17 @@ interface Sub2ApiSubscription {
  * 两个接口任一网络失败都不阻塞——profile 拿不到就返回 null（调用方回落
  * 已有数据），订阅拿不到就当作「无生效订阅」处理（宁可套餐名暂时保守，
  * 不能让一次订阅查询失败连累整个登录/刷新流程报错）。
+ *
+ * `get` 由调用方注入而不是内部固定走 {@link authedGet}，是因为两条调用
+ * 路径手里的 token 状态不同：login() 刚拿到崭新的 token（此时 module 里的
+ * `tokens` 还没赋值，走 authedGet 会读到旧值），冷启动刷新则拿的是盘上
+ * 那份可能已经过期的（必须走续期路径）。两个请求并发都撞过期时，单飞
+ * 保证只刷一次。
  */
-async function fetchProfile(accessToken: string): Promise<AuthUser | null> {
+async function fetchProfile(get: AuthedGet): Promise<AuthUser | null> {
   const [profileResult, subsResult] = await Promise.all([
-    sub2apiGet<Sub2ApiProfile>('/api/v1/user/profile', accessToken),
-    sub2apiGet<Sub2ApiSubscription[]>('/api/v1/subscriptions/active', accessToken)
+    get<Sub2ApiProfile>('/api/v1/user/profile'),
+    get<Sub2ApiSubscription[]>('/api/v1/subscriptions/active')
   ])
   if (!profileResult.ok) {
     console.error('[auth] fetch profile failed', {
@@ -344,9 +615,7 @@ async function fetchProfile(accessToken: string): Promise<AuthUser | null> {
  * 时间——AuthUser 精简版没有这些字段）。
  */
 export async function getAccountProfile(): Promise<AccountProfileResult> {
-  load()
-  if (!tokens) return { ok: false, error: '请先登录' }
-  const result = await sub2apiGet<Sub2ApiProfile>('/api/v1/user/profile', tokens.accessToken)
+  const result = await authedGet<Sub2ApiProfile>('/api/v1/user/profile')
   if (!result.ok) {
     return { ok: false, error: translateError(result.reason, result.message, '获取账户信息失败，请稍后重试') }
   }
@@ -361,12 +630,10 @@ export async function getAccountProfile(): Promise<AccountProfileResult> {
 export async function updateAccountProfile(
   payload: AccountUpdatePayload
 ): Promise<AccountUpdateResult> {
-  load()
-  if (!tokens) return { ok: false, error: '请先登录' }
   const body: Record<string, string> = {}
   if (payload.username !== undefined) body.username = payload.username
   if (payload.avatarDataUrl !== undefined) body.avatar_url = payload.avatarDataUrl
-  const result = await sub2apiPut<Sub2ApiProfile>('/api/v1/user', body, tokens.accessToken)
+  const result = await authedPut<Sub2ApiProfile>('/api/v1/user', body)
   if (!result.ok) {
     return { ok: false, error: translateError(result.reason, result.message, '保存失败，请稍后重试') }
   }
@@ -374,8 +641,10 @@ export async function updateAccountProfile(
   // AuthUser.name/avatarUrl 跟着 username/头像变化同步——rail 账户 chip
   // 立刻跟上，不必等下次登录/冷启动刷新。phone/id 不会因为这次更新变化，
   // plan 保留当前 state 里已有的值（这个接口不返回套餐信息，不能拿
-  // 「没有套餐信息」误判成「套餐没了」）。
-  if (state.status === 'signedIn' && state.user) {
+  // 「没有套餐信息」误判成「套餐没了」）。tokens 也要判：请求飞在路上时
+  // 用户可能已经登出（或续期失败被 invalidateSession 清了），这时不该把
+  // 一份「迟到」的登录态重新写回盘上。
+  if (state.status === 'signedIn' && state.user && tokens) {
     const updatedUser: AuthUser = {
       ...state.user,
       name: profile.username || profile.phone,
@@ -441,14 +710,18 @@ export async function login(payload: AuthLoginPayload): Promise<AuthLoginResult>
   const result = await verifyCredentials(payload)
   if (!result.ok) return result
 
-  const user = (await fetchProfile(result.tokens.accessToken)) ?? result.user
+  // 刚签发的 token 不需要续期，直接用它发请求（此时 module 里的 `tokens`
+  // 还是上一次会话的旧值 / null，走 authedGet 反而会读错）。
+  const freshGet: AuthedGet = <T,>(path: string) =>
+    sub2apiGet<T>(path, result.tokens.accessToken)
+  const user = (await fetchProfile(freshGet)) ?? result.user
   persist(user, result.tokens)
   tokens = result.tokens
   // 换掉 env.json 里写死的共享 ANTHROPIC_AUTH_TOKEN/OPENAI_API_KEY/
   // GEMINI_API_KEY——每个刚登录的用户都要立刻拿到自己名下的网关配置，而
   // 不是等下次冷启动的后台刷新才生效。fire-and-forget：网络失败不该挡登录
   // 本身，失败时沿用 env.json 的旧值，下次成功的调用自然覆盖过去。
-  void applyClientEnvConfig(result.tokens.accessToken).catch((err) => {
+  void applyClientEnvConfig(freshGet).catch((err) => {
     console.error('[auth] apply client env config failed', {
       message: err instanceof Error ? err.message : String(err)
     })
@@ -464,15 +737,7 @@ export async function login(payload: AuthLoginPayload): Promise<AuthLoginResult>
 /** 退出登录：删盘上凭据 + 清内存态 + 广播。幂等。 */
 export function logout(): void {
   load()
-  try {
-    rmSync(authPath(), { force: true })
-  } catch (err) {
-    const e = err as NodeJS.ErrnoException
-    console.error('[auth] remove auth.json failed', {
-      path: authPath(),
-      message: e.message
-    })
-  }
+  clearStoredAuth()
   tokens = null
   setState({ status: 'signedOut', user: null })
 }

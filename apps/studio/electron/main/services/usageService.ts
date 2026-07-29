@@ -18,19 +18,19 @@ import type {
   UsageStatsResult,
   UsageTrendPoint
 } from '../../shared/ipc-channels'
-import { getAccessToken } from './authService'
-import { sub2apiGet } from './sub2apiClient'
+import { authedGet, translateError } from './authService'
 
 /**
- * 使用记录页（对接 sub2api `/api/v1/usage*`）的数据层——只做「拿 token →
- * 拼 query → 调 sub2apiGet → snake_case 转 camelCase」，不含任何 UI 状态
- * （筛选器/分页态全在 renderer 的 UsageScreen 里）。五个接口分工见各自
- * 导出函数的注释；字段树对齐调研时核对过的 sub2api handler json tag。
+ * 使用记录页（对接 sub2api `/api/v1/usage*`）的数据层——只做「拼 query →
+ * 调 authedGet → snake_case 转 camelCase」，不含任何 UI 状态（筛选器/分页
+ * 态全在 renderer 的 UsageScreen 里）。五个接口分工见各自导出函数的注释；
+ * 字段树对齐调研时核对过的 sub2api handler json tag。
  *
- * 统一未登录处理：这一页只有登录后才可达（入口在账户菜单），但 IPC
- * handler 到 service 的路径上任何一环都可能在拿到 token 前被并发调用
- * （比如登出瞬间还有一个请求在飞），所以每个导出函数都独立兜底
- * `{ ok: false, error: '请先登录' }`，不假设调用方已经检查过登录态。
+ * 认证一律交给 {@link authedGet}：它负责 access token 续期（24h TTL，这一页
+ * 常在冷启动后第一个被打开）、401 重放、以及未登录时统一回
+ * `{ ok: false, reason: 'NOT_SIGNED_IN' }`——所以这里不再自己取 token 判空，
+ * 错误文案统一过 {@link translateError}（曾经直出 `result.message`，token
+ * 过期时用户看到的是后端原样的英文 "Token has expired"）。
  */
 
 /** 把 UsageQueryFilters 的可选字段拼进 query，跳过 undefined。 */
@@ -248,15 +248,15 @@ function mapUsageLog(r: RawUsageLog): UsageLogItem {
 
 /** 筛选器下拉数据源：API 密钥（取前 100 条）+ 全部可用分组。 */
 export async function getUsageFilterOptions(): Promise<UsageFilterOptionsResult> {
-  const accessToken = getAccessToken()
-  if (!accessToken) return { ok: false, error: '请先登录' }
-
   const [keysResult, groupsResult] = await Promise.all([
-    sub2apiGet<{ items: RawApiKey[] }>('/api/v1/keys?page=1&page_size=100', accessToken),
-    sub2apiGet<RawGroup[]>('/api/v1/groups/available', accessToken)
+    authedGet<{ items: RawApiKey[] }>('/api/v1/keys?page=1&page_size=100'),
+    authedGet<RawGroup[]>('/api/v1/groups/available')
   ])
   if (!keysResult.ok) {
-    return { ok: false, error: keysResult.message || '加载 API 密钥列表失败' }
+    return {
+      ok: false,
+      error: translateError(keysResult.reason, keysResult.message, '加载 API 密钥列表失败')
+    }
   }
   const data: UsageFilterOptions = {
     apiKeys: keysResult.data.items.map((k) => ({ id: k.id, name: k.name })),
@@ -269,13 +269,12 @@ export async function getUsageFilterOptions(): Promise<UsageFilterOptionsResult>
 
 /** 统计卡片 + 端点分布（sub2api `GET /usage/stats`）。 */
 export async function getUsageStats(filters: UsageQueryFilters): Promise<UsageStatsResult> {
-  const accessToken = getAccessToken()
-  if (!accessToken) return { ok: false, error: '请先登录' }
-
   const params = new URLSearchParams()
   appendFilters(params, filters)
-  const result = await sub2apiGet<RawUsageStats>(`/api/v1/usage/stats?${params}`, accessToken)
-  if (!result.ok) return { ok: false, error: result.message || '加载统计数据失败' }
+  const result = await authedGet<RawUsageStats>(`/api/v1/usage/stats?${params}`)
+  if (!result.ok) {
+    return { ok: false, error: translateError(result.reason, result.message, '加载统计数据失败') }
+  }
 
   const r = result.data
   const stats: UsageStats = {
@@ -295,16 +294,12 @@ export async function getUsageStats(filters: UsageQueryFilters): Promise<UsageSt
 
 /** 「模型分布」图表数据（sub2api `GET /usage/dashboard/models`）。 */
 export async function getUsageModels(filters: UsageQueryFilters): Promise<UsageModelsResult> {
-  const accessToken = getAccessToken()
-  if (!accessToken) return { ok: false, error: '请先登录' }
-
   const params = new URLSearchParams()
   appendFilters(params, filters)
-  const result = await sub2apiGet<RawModelsData>(
-    `/api/v1/usage/dashboard/models?${params}`,
-    accessToken
-  )
-  if (!result.ok) return { ok: false, error: result.message || '加载模型分布失败' }
+  const result = await authedGet<RawModelsData>(`/api/v1/usage/dashboard/models?${params}`)
+  if (!result.ok) {
+    return { ok: false, error: translateError(result.reason, result.message, '加载模型分布失败') }
+  }
 
   const data: UsageModelsData = {
     models: result.data.models.map(mapModelStat),
@@ -323,20 +318,16 @@ export async function getUsageSnapshot(
   filters: UsageQueryFilters,
   granularity: 'day' | 'hour'
 ): Promise<UsageSnapshotResult> {
-  const accessToken = getAccessToken()
-  if (!accessToken) return { ok: false, error: '请先登录' }
-
   const params = new URLSearchParams()
   appendFilters(params, filters)
   params.set('granularity', granularity)
   params.set('include_trend', 'true')
   params.set('include_model_stats', 'false')
   params.set('include_group_stats', 'true')
-  const result = await sub2apiGet<RawSnapshot>(
-    `/api/v1/usage/dashboard/snapshot-v2?${params}`,
-    accessToken
-  )
-  if (!result.ok) return { ok: false, error: result.message || '加载趋势数据失败' }
+  const result = await authedGet<RawSnapshot>(`/api/v1/usage/dashboard/snapshot-v2?${params}`)
+  if (!result.ok) {
+    return { ok: false, error: translateError(result.reason, result.message, '加载趋势数据失败') }
+  }
 
   const r = result.data
   const snapshot: UsageSnapshot = {
@@ -351,17 +342,16 @@ export async function getUsageSnapshot(
 
 /** 分页明细表（sub2api `GET /usage`）；CSV 导出复用这一个函数循环翻页拉全量。 */
 export async function getUsageList(query: UsageListQuery): Promise<UsageListResult> {
-  const accessToken = getAccessToken()
-  if (!accessToken) return { ok: false, error: '请先登录' }
-
   const params = new URLSearchParams()
   appendFilters(params, query)
   params.set('page', String(query.page))
   params.set('page_size', String(query.pageSize))
   if (query.sortBy) params.set('sort_by', query.sortBy)
   if (query.sortOrder) params.set('sort_order', query.sortOrder)
-  const result = await sub2apiGet<RawListData>(`/api/v1/usage?${params}`, accessToken)
-  if (!result.ok) return { ok: false, error: result.message || '加载明细列表失败' }
+  const result = await authedGet<RawListData>(`/api/v1/usage?${params}`)
+  if (!result.ok) {
+    return { ok: false, error: translateError(result.reason, result.message, '加载明细列表失败') }
+  }
 
   const r = result.data
   const data: UsageListData = {

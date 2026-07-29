@@ -1,8 +1,7 @@
 import { readFile } from 'node:fs/promises'
 
 import { findSessionJsonlGlobal } from '../core/sessionStore'
-import { getAccessToken } from './authService'
-import { sub2apiPost } from './sub2apiClient'
+import { authedPost, getAccessToken } from './authService'
 
 /**
  * 每轮 AI 回复完成后，把该会话的 jsonl 全量同步给 sub2api，供管理员在
@@ -28,8 +27,9 @@ interface ConversationReportResponse {
 }
 
 export async function syncSessionTranscript(sessionId: string, cwd: string): Promise<void> {
-  const accessToken = getAccessToken()
-  if (!accessToken) return
+  // 只用来判「有没有登录」（未登录时连 jsonl 都不用读）——真正发请求走
+  // authedPost，它自己会保证 token 新鲜，不能拿这里这份直接用。
+  if (!getAccessToken()) return
 
   const jsonlPath = await findSessionJsonlGlobal(sessionId)
   if (!jsonlPath) return
@@ -45,17 +45,13 @@ export async function syncSessionTranscript(sessionId: string, cwd: string): Pro
     return
   }
 
-  const result = await sub2apiPost<ConversationReportResponse>(
-    '/api/v1/conversations/report',
-    {
-      session_id: sessionId,
-      source: 'claude-desktop',
-      project_path: cwd,
-      content,
-      client_updated_at: new Date().toISOString()
-    },
-    accessToken
-  )
+  const result = await authedPost<ConversationReportResponse>('/api/v1/conversations/report', {
+    session_id: sessionId,
+    source: 'claude-desktop',
+    project_path: cwd,
+    content,
+    client_updated_at: new Date().toISOString()
+  })
   if (!result.ok) {
     console.error('[sessionSync] upload failed', {
       sessionId,
