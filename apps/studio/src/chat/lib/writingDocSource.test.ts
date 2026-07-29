@@ -71,4 +71,42 @@ describe('detectWritingSource · 优先级与兜底', () => {
   it('空数组返回 null', () => {
     expect(detectWritingSource([])).toBeNull()
   })
+
+  it('「我的写作笔记」这类含「写作」二字的目录不误命中', () => {
+    expect(detectWritingSource([write('/Users/k/我的写作笔记/x.md')])).toBeNull()
+  })
+})
+
+describe('detectWritingSource · Windows 路径', () => {
+  it('认盘符绝对路径', () => {
+    expect(detectWritingSource([write('C:\\Users\\k\\写作\\周报.md')])).toEqual({
+      kind: 'single',
+      filePath: 'C:\\Users\\k\\写作\\周报.md'
+    })
+  })
+
+  it('认 UNC 路径（网络共享盘）', () => {
+    const p = '\\\\server\\share\\写作\\周报.md'
+    expect(detectWritingSource([write(p)])).toEqual({ kind: 'single', filePath: p })
+  })
+
+  it('项目标记也认 UNC 路径', () => {
+    const parts = [bash('WRITING_PROJECT=\\\\server\\share\\proj_2026-07-29\n')]
+    expect(detectWritingSource(parts)).toEqual({
+      kind: 'project',
+      projectDir: '\\\\server\\share\\proj_2026-07-29'
+    })
+  })
+})
+
+describe('detectWritingSource · 命令文本分支', () => {
+  it('标记出现在 Bash 命令文本里也认（用户手敲 echo 调试）', () => {
+    const parts = [bash('', 'echo "WRITING_PROJECT=/a/proj"')]
+    expect(detectWritingSource(parts)).toEqual({ kind: 'project', projectDir: '/a/proj' })
+  })
+
+  it('命令文本与输出都有标记时，取输出里的那个（输出是脚本真实报数）', () => {
+    const parts = [bash('WRITING_PROJECT=/a/real\n', 'echo "WRITING_PROJECT=/a/typed"')]
+    expect(detectWritingSource(parts)).toEqual({ kind: 'project', projectDir: '/a/real' })
+  })
 })

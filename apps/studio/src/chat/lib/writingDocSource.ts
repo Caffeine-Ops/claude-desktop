@@ -30,9 +30,21 @@ export interface WritingToolPart {
 // 标记行：取到行尾，两侧 trim。用 [^\r\n]+ 而非 \S+ 是因为路径可能含空格。
 const PROJECT_LINE = new RegExp(`${WRITING_PROJECT_MARKER}([^\\r\\n]+)`, 'g')
 
-/** 只认绝对路径：main 侧的路径守卫会拒相对路径，这里先挡住省一次无谓 IPC。 */
+// 用户手敲 echo 调试时常见形态：`echo "WRITING_PROJECT=/a/proj"`——marker 落在引号内，
+// 贪婪匹配到行尾会把收尾的引号也吞进捕获组。真实路径不会以引号结尾，脱一层尾随的单/双
+// 引号是安全的；不去脱首尾配对（只脱尾）是因为开引号在 marker 之前，不在捕获范围内。
+const TRAILING_QUOTE = /["']$/
+
+/**
+ * 只认绝对路径：main 侧的路径守卫会拒相对路径，这里先挡住省一次无谓 IPC。
+ * 三种绝对路径形态都要认：POSIX（`/...`）、Windows 盘符（`C:\...`），以及
+ * **UNC 网络共享路径**（`\\server\share\...`）——UNC 在 Windows 上同样是合法的绝对路径，
+ * 漏判它不会报错，只会让共享盘上的写作目录悄悄判成"不是写作"，会话保持单栏、
+ * 功能表现为"偶尔不生效"，这类静默失败最难排查（CI 矩阵含 windows-latest，
+ * 是真实构建目标，不是假设性场景）。
+ */
 function isAbsolutePath(p: string): boolean {
-  return p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p)
+  return p.startsWith('/') || p.startsWith('\\\\') || /^[A-Za-z]:[\\/]/.test(p)
 }
 
 /** 路径是否落在「写作」目录下且是 .md。用分隔符包夹匹配，防止 `我的写作笔记/` 这类误命中。 */
@@ -53,14 +65,16 @@ export function detectWritingSource(parts: WritingToolPart[]): WritingDocSource 
 
   for (const p of parts) {
     if (p.toolName === 'Bash') {
-      // 标记可能出现在命令输出里（正常路径），也可能在命令文本里（用户手敲 echo 调试）。
-      // 两处都扫，取最后一次命中。
+      // 标记可能出现在命令输出里（正常路径：脚本 stdout 真实报数），也可能在命令文本里
+      // （用户手敲 echo 调试，字面量不可信）。两处都扫，取最后一次命中；**顺序故意是
+      // [commandText, resultText]**——同一个 part 里若两处都命中，后扫的 resultText
+      // 覆盖先扫的 commandText，让"脚本报数"赢过"用户手敲"，不是任意选的顺序。
       for (const hay of [p.commandText, p.resultText]) {
         if (!hay) continue
         PROJECT_LINE.lastIndex = 0
         let m: RegExpExecArray | null
         while ((m = PROJECT_LINE.exec(hay)) !== null) {
-          const dir = m[1].trim()
+          const dir = m[1].trim().replace(TRAILING_QUOTE, '')
           if (dir && isAbsolutePath(dir)) projectDir = dir
         }
       }
