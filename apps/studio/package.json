@@ -19,9 +19,10 @@
     "build:icons": "bash scripts/build-icons.sh",
     "prebundle:daemon": "bun scripts/prebundle-daemon.mjs",
     "verify:fusion": "bun scripts/verify-fusion-bin.mjs",
-    "build:mac": "bun run verify:fusion && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --mac dmg:${EB_MAC_ARCH_NAME:-arm64} zip:${EB_MAC_ARCH_NAME:-arm64} --publish never",
-    "build:win": "bun run verify:fusion win && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --win --publish never",
-    "build:linux": "bun run verify:fusion && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --linux --publish never",
+    "//note-verify-fusion": "verify:fusion 已从 build:* 链里摘掉——CLI 二进制不再随包，打包时 fusion-bin/ 根本不参与，跑它只会因为目录为空而误报。它的走查逻辑没有退役，而是搬去了两个更该在的地方：发布脚本 publish-components.ts（算 sha256 之前，挡住把截断产物连同它自己的 sha 一起发出去）与下载 worker（原子落位之前）。这个 script 保留，供本地手工检查 fusion-bin/ 里的副本。",
+    "build:mac": "bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --mac dmg:${EB_MAC_ARCH_NAME:-arm64} zip:${EB_MAC_ARCH_NAME:-arm64} --publish never",
+    "build:win": "bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --win --publish never",
+    "build:linux": "bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --linux --publish never",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
     "start": "electron-vite preview",
     "postinstall": "electron-builder install-app-deps",
@@ -83,18 +84,11 @@
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
+      "//note-runtime-components": "CLI 二进制(233MB) 与 python-runtime(70MB) 曾经在这里随包分发，2026-07-29 起改为首次启动按需下载（见 electron/main/services/componentInstaller.ts 与 docs/runtime-components-deploy.md）。搬走的理由：它们占安装包体积的绝大部分，且版本节奏与 app 完全不同（CLI 一个月变一次、app 一周几次）——随包意味着换个 CLI 版本就得重发一次 app。运行时解析仍保留 resourcesPath 候选（cliDetect.ts），所以老包升级上来照常能用。",
       "extraResources": [
-        {
-          "from": "fusion-bin/fusion-code-cli",
-          "to": "fusion-code-cli"
-        },
         {
           "from": "prebundled",
           "to": "prebundled"
-        },
-        {
-          "from": "python-runtime/mac",
-          "to": "python-runtime"
         },
         {
           "from": "demo-replays",
@@ -117,18 +111,11 @@
           ]
         }
       ],
+      "//note-runtime-components": "同 mac：CLI 与 python-runtime 已改为按需下载，见上面 mac 段的说明。",
       "extraResources": [
-        {
-          "from": "fusion-bin/fusion-code-cli.exe",
-          "to": "fusion-code-cli.exe"
-        },
         {
           "from": "prebundled",
           "to": "prebundled"
-        },
-        {
-          "from": "python-runtime/win",
-          "to": "python-runtime"
         },
         {
           "from": "demo-replays",
