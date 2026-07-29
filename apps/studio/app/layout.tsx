@@ -4,6 +4,7 @@ import { AuthGate } from '@/src/components/AuthGate'
 import { RailShell } from '@/src/components/RailShell'
 import { SurfaceHost } from '@/src/components/SurfaceHost'
 import { UpgradeScreen } from '@/src/components/UpgradeScreen'
+import { ComponentGate } from '@/src/components/ComponentGate'
 import { TooltipProvider } from '@/src/components/ui/tooltip'
 import './globals.css'
 // canvas（迁移自 apps/web）的两个样式入口，沿用 web 原版 layout.tsx 的
@@ -152,6 +153,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
            * 开关在 src/stores/upgrade.ts。挂在 AuthGate 之前——登出时
            * 登录墙（z-9999 + DOM 更靠后）必须盖得住它。 */}
           <UpgradeScreen />
+          {/* 运行时组件门（z-9990）：AI 引擎不随安装包发布，缺失时全屏挡住并
+           * 下载。挂在 UpgradeScreen 之后（买不了一个还用不了的东西）、AuthGate
+           * 之前——未登录该先看到登录页，且组件源地址的远端下发要登录后才拉得到。 */}
+          <ComponentGate />
           {/* 登录墙：body 最后一个子元素——未登录时全屏盖住 rail + 舞台
            * （两棵树照常挂载，墙只是视觉+交互门禁，见 AuthGate 头注释）。 */}
           <AuthGate />
