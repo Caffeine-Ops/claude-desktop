@@ -231,6 +231,13 @@ const PROMPTS_BY_SKILL: Record<string, readonly ScenarioPrompt[]> = {
       text: '帮我改写下面这段文字：\n\n【粘贴原文】\n\n【可选：说明想改的方向，比如更口语、压到 800 字、换成小红书风格；不说就先给我诊断】'
     },
     {
+      // 去AI化走 workflows/de-ai.md：轻量快道，只擦 AI 痕迹、保留原意与
+      // 结构（不提质、不改结构，那是「优化已有作品」的活）。贴文字即走，
+      // 与「改写这段文字」同为 inline 贴文的轻量操作，故紧邻其后。
+      label: '去 AI 味',
+      text: '帮我把下面这段文字去AI化，只擦掉 AI 痕迹、保留原意和结构：\n\n【粘贴原文】'
+    },
+    {
       // 优化已有作品主入口（设计 2026-07-28）：【文稿文件】是 filePlaceholderPlugin
       // 的文件槽，「文稿」关键词 → picker 限定 txt/md/markdown/docx/pdf（见
       // acceptForPlaceholder 的文稿组合映射）。走 workflows/optimize-existing.md：
