@@ -11,7 +11,19 @@
 
 ---
 
-## 0. 第一原则：结构均匀度
+## 语言路由（中文稿 / 英文稿各读哪些节）
+
+本文件中英双语。**先看稿子是什么语言，再决定读哪些节**：
+
+- **中文稿** → §0 + §1–§5（§6 是人机分工，脚本仅覆盖中文）。
+- **英文稿** → §0 + §7（英文稿去 AI 味）+ §4–§5。**英文不跑打分脚本**，靠 §7 人工改写 + §5 的纪律兜底。
+- **中英混排** → 两套都读。
+
+**§0 结构均匀度是跨语言通用的第一杠杆**——中英文 AI 稿都栽在「节奏太齐」。§1–§3（套话 / AI 句式 / 书面词）是中文专属；§4（三维度揉进）、§5（改味纪律）跨语言通用。
+
+---
+
+## 0. 第一原则：结构均匀度（通用 · 中英适用）
 
 ### 为什么参差度比用词更重要
 
@@ -64,7 +76,7 @@ AI 反过来。它倾向于把每句话拉到差不多长（20~30 字），每�
 
 ---
 
-## 1. 套话库
+## 1. 套话库（中文）
 
 套话 = 命中即 🔴 的高危词。它们本身没有信息量，只是把话「填满」，AI 特别爱用来撑结构、显得客观。四组，改的时候整组一起想（往往一处有，附近就还有）。**词表在 `banned_words.txt`，这里教怎么改。**
 
@@ -112,7 +124,7 @@ AI 反过来。它倾向于把每句话拉到差不多长（20~30 字），每�
 
 ---
 
-## 2. AI 句式库
+## 2. AI 句式库（中文）
 
 有 10 种句式，一出现就有 AI 味——不是因为语法错，而是因为 AI 用得太滥、太成套。**正则在 `ai_patterns.txt`，命中即 🔴，这里给每种的 ❌原句 / ✅改法。**
 
@@ -135,7 +147,7 @@ AI 反过来。它倾向于把每句话拉到差不多长（20~30 字），每�
 
 ---
 
-## 3. 书面词替换库
+## 3. 书面词替换库（中文）
 
 书面腔 = 命中即 🟡（不如套话严重，但读着「端着、不像人说话」）。核心毛病是**动词名词化**（把一个动作说成「进行 X」）和**互联网黑话**。**词表在 `bookish_words.txt`，这里给替换表。**
 
@@ -177,7 +189,7 @@ AI 反过来。它倾向于把每句话拉到差不多长（20~30 字），每�
 
 ---
 
-## 4. 三维度揉进（叙事类专用）
+## 4. 三维度揉进（叙事类专用 · 通用）
 
 写故事/场景时，一个动作其实含三层：**发生**（客观发生了什么）、**感知**（人物看到/听到/感到什么）、**反应**（人物心里/身体的回应）。AI 的通病是把这三层**分层堆叠**，一层写完写下一层，像填表格，读着假。人写的时候是**揉在一起**、交错推进的。
 
@@ -197,7 +209,7 @@ AI 反过来。它倾向于把每句话拉到差不多长（20~30 字），每�
 
 ---
 
-## 5. 改味纪律
+## 5. 改味纪律（通用）
 
 改味不是把文章推倒重写，是**外科手术**。四条纪律：
 
@@ -235,7 +247,7 @@ AI 反过来。它倾向于把每句话拉到差不多长（20~30 字），每�
 
 ---
 
-## 6. 与脚本的分工
+## 6. 与脚本的分工（通用 · 脚本仅覆盖中文）
 
 去 AI 味是**人机协作**：脚本干量化的脏活，人/模型干需要判断的活。搞清边界，别指望脚本包办，也别人肉去数方差。
 
@@ -255,3 +267,36 @@ AI 反过来。它倾向于把每句话拉到差不多长（20~30 字），每�
 - **三维度揉得够不够（§4）**、**Show 的档位选得对不对（§5.4）**：这些是文学判断，脚本完全不懂，纯靠人。
 
 > 一句话分工：**脚本负责「哪里有问题、问题多严重」，人负责「这到底是不是问题、该怎么改才好」。** 脚本报的每一条都是「疑似」，最终采不采纳，人说了算。
+
+---
+
+## 7. 英文稿去 AI 味（English de-AI）
+
+> **英文稿走本节 + §0（结构均匀是跨语言通用的第一杠杆）+ §4–§5。** 词表脚本（`ai_slop_checker.py`）只覆盖中文，英文稿不跑脚本，靠本节人工改写 + §5 的 self-critique 兜底。
+> 本节吸收自 [blader/humanizer](https://github.com/blader/humanizer)（维基「Signs of AI writing」33 条），只收能落地的，分「通用」与「英文专属」两类。
+
+### 7.1 通用破绽（跨语言，中英都适用；中文对应见 §1–§3）
+
+| 破绽 | 为什么露馅 | ❌ | ✅ |
+|---|---|---|---|
+| 意义拔高（significance inflation） | AI 爱把普通事说成划时代 | This tool represents a groundbreaking milestone in productivity. | It's a to-do app that syncs across devices. |
+| 营销腔（promotional language） | 形容词堆砌、无证据的最高级 | Our seamless, cutting-edge platform delivers unparalleled value. | It loads fast and rarely crashes — here's the benchmark. |
+| 模糊出处（vague attribution） | 「有研究表明」却不给来源 | Studies show that users prefer dark mode. | A 2023 Nielsen survey (n=2,000) found 62% preferred dark mode. |
+| 虚假并列 / 排比（false parallelism） | 三点式对仗撑结构 | It's fast, it's simple, and it's powerful. | It's fast. Setup takes about a minute — that's the main thing. |
+| 谄媚语气（sycophancy） | 对话残留、讨好读者 | Great question! I'd be happy to help you explore this. | （删掉，直接进正文） |
+| 空洞收尾金句（manufactured punchline） | 强行升华的结尾 | In the end, it's not about the tool — it's about the journey. | （删掉，或用一句具体的下一步收尾） |
+
+### 7.2 英文专属破绽
+
+| 破绽 | 为什么露馅 | ❌ | ✅ |
+|---|---|---|---|
+| em dash 泛滥 | AI 每段都甩 — 插入语 | The result — surprisingly — was clear. | The result was clear, which surprised us. |
+| 标题 Title Case | 每个词首字母大写 | How To Improve Your Writing Today | How to improve your writing today |
+| emoji 装点 | 小标题 / 要点前挂 emoji | 🚀 Boost Your Productivity | Boost your productivity |
+| 系动词回避（copula avoidance） | 用 serves as / stands as 替 is | This serves as a testament to good design. | This is good design. |
+| AI 高频词 | testament / landscape / tapestry / realm / delve | We must delve into the evolving landscape of... | Let's look at how X is changing. |
+| hyphenated pairs 套话 | ever-evolving / fast-paced 连字符词组 | In today's fast-paced, ever-evolving world... | These days... |
+| false ranges（from X to Y） | 假穷举显得全面 | Everything from strategy to execution to iteration. | Strategy and execution, mostly. |
+| 过度加粗 | 满屏 **bold** 抢重点 | **Every** other phrase is **bold**. | 只给真正的关键词加粗，一段最多一处。 |
+
+> 改法逻辑与中文同源（见 §5）：**优先删，其次换，最后才小范围重写**；打破对称、去掉装点、把拔高的话落回具体。§0 的节奏均匀对英文一样致命——改完务必回看句长 / 段长是否还像用尺子量过。

@@ -5,7 +5,7 @@ description: >
   短篇小说（悬疑 / 言情 / 科幻 / 脑洞 / 治愈 / 搞笑）、文章（行业观察 / 产品评测 /
   方法论 / 技术科普）三大体裁的从零创作与改写。四角色流水线（策划 → 写手 → 审校 →
   润色）+ 写作契约（spec_lock）防长文漂移 + AI 味量化检测。Use when the user asks to
-  写文案 / 写小说 / 写文章 / 写公众号 / 改写 / 润色 / 去 AI 味 / 优化已有作品 / 作品体检, or mentions "writing".
+  写文案 / 写小说 / 写文章 / 写公众号 / 改写 / 润色 / 去 AI 味 / 去AI化 / humanize / 优化已有作品 / 作品体检, or mentions "writing".
 ---
 
 # Writing Skill · 工程化中文写作
@@ -97,15 +97,16 @@ description: >
 
 ## 独立工作流索引（前向引用 —— 这些文件由 Task 17 提供）
 
-主管线之外的八条独立工作流，各有自己的触发条件与入口。**下列 `workflows/*.md` 由后续任务补齐，此处先登记引用**；触发时按对应文件走：
+主管线之外的九条独立工作流，各有自己的触发条件与入口。**下列 `workflows/*.md` 由后续任务补齐，此处先登记引用**；触发时按对应文件走：
 
 | 工作流 | 路径 | 触发条件 |
 |---|---|---|
 | 文风学习 | `workflows/style-learn.md` | 用户提供往期文章、想让新稿贴合本人文风（Step 3 详走此处） |
 | 查资料 | `workflows/topic-research.md` | 体裁=文章且手头论据不足、或用户只给了题目没给素材（Step 5 详走此处） |
 | 优化已有作品 | `workflows/optimize-existing.md` | 用户上传完整文稿（文章/小说/文案）要「优化 / 体检」，先五维诊断、分三档强度，再路由到润色 / 改写 |
+| 去AI化 | `workflows/de-ai.md` | 用户给一段成稿要「去AI化 / 去 AI 味 / humanize / 让这段不像 AI 写的 / 擦掉 AI 痕迹」；轻量快道，只擦 AI 痕迹（保留原意/事实/结构），中英双语 |
 | 改写 | `workflows/rewrite.md` | 用户给一篇已有稿要「改写 / 换个说法 / 换体裁重写」 |
-| 只润色 | `workflows/polish-only.md` | 用户给成稿只要「润色 / 去 AI 味」，不重新策划创作 |
+| 只润色 | `workflows/polish-only.md` | 用户给成稿只要「纯文学润色 / 顺一遍文字」（顺句 / 节奏 / 修辞），不重新策划创作。去 AI 味请走「去AI化」 |
 | 续写 | `workflows/resume-writing.md` | 已有前几节初稿，换窗口 / 隔天继续往下写 |
 | 一稿多平台 | `workflows/serialize.md` | 一篇成稿要发到多个平台（公众号 / 小红书 / 知乎…），按各平台 `PLATFORM_RULES` 改造，每平台独立文件 |
 | 批量起标题 | `workflows/batch-titles.md` | 一篇成稿要一批候选标题供挑选 |
