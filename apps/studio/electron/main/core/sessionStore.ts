@@ -1189,7 +1189,7 @@ function cleanUserCommandText(text: string): string {
   }
 
   // `<command-name>` already includes the leading slash (and any plugin
-  // prefix like `claude-desktop:ppt-master`). Fall back to the bare
+  // prefix like `claude-desktop:ppt-creator`). Fall back to the bare
   // `<command-message>` label if the name tag is somehow missing.
   const name = tag('command-name') ?? tag('command-message')
   if (!name) return text

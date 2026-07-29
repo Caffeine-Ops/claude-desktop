@@ -60,7 +60,7 @@ const CANVAS_TAB_ICONS: Record<CanvasTab, React.ReactNode> = {
 /**
  * Right-hand canvas workspace, shown beside the chat in slides mode. All
  * five tabs (预览幻灯片/大纲/文件/图片/问题) are always present (2026-07-18
- * redesign — calling ppt-master should give a stable shell from the first
+ * redesign — calling ppt-creator should give a stable shell from the first
  * turn, not one that pops tabs in and out); a tab with nothing to show yet
  * renders EmptyTabState instead of disappearing. 「问题」still auto-focuses
  * the moment this session has a pending AskUserQuestion and hosts the
@@ -97,7 +97,7 @@ export function SlidesWorkspace(): React.JSX.Element {
   const hasQuestions = isReplay
     ? replayActivePanel === 'questionnaire'
     : pendingAsk !== null || streamingArgs !== null
-  // Active ppt-master surface (kind + project dir) when one is up, else null.
+  // Active ppt-creator surface (kind + project dir) when one is up, else null.
   // Two phases:
   //   - kind 'confirm' → the Eight-Confirmations page, rendered NATIVELY in
   //     the 「问题」tab (CanvasConfirm).
@@ -141,7 +141,7 @@ export function SlidesWorkspace(): React.JSX.Element {
     ? (replayDeck?.ready.length ?? 0) > 0
     : hasPreview && !projectGone
   // The .pptx path named in this session's first user message, if any — the
-  // signal the user handed ppt-master an EXISTING deck to work from
+  // signal the user handed ppt-creator an EXISTING deck to work from
   // (beautify/modify). While showSlidesTab is false (no live-preview session
   // yet — the AI hasn't produced any svg_output/ pages), 预览幻灯片 shows
   // THIS source file's own pages instead (SourceDeckViewer, converted
@@ -190,7 +190,7 @@ export function SlidesWorkspace(): React.JSX.Element {
   // entry wins (useWrittenFiles dedupes by path, keeping content fresh).
   const designSpec =
     writtenFiles.find((f) => /^design_spec\.md$/i.test(f.name)) ?? null
-  // ppt-master image acquisition runs — AI generation (`image_gen.py
+  // ppt-creator image acquisition runs — AI generation (`image_gen.py
   // --manifest`) and/or web download (`image_search.py --batch`). Each feed
   // names the worklist JSON to poll and whether that run is still in flight.
   // Drives the 「图片」tab's content (empty state vs panels) and auto-focus
@@ -350,7 +350,7 @@ export function SlidesWorkspace(): React.JSX.Element {
   const readiness = usePreviewReadinessStore((s) => s.readiness)
 
   // The four content tabs are always present (2026-07-18 redesign) — calling
-  // ppt-master should give a stable, predictable workspace shell from the
+  // ppt-creator should give a stable, predictable workspace shell from the
   // first turn, not one that pops tabs in and out as signals arrive. What
   // used to gate EXISTENCE (showSlidesTab / hasImages) now only gates
   // CONTENT vs. empty state (see the body switch and EmptyTabState below).
@@ -504,7 +504,7 @@ export function SlidesWorkspace(): React.JSX.Element {
         />
       ) : tab === 'slides' && showSlidesTab && isReplay && replayDeck ? (
         // 回放：静态幻灯片查看器，数据 = 录像包里的 svg 资产（LivePreviewEditor
-        // 依赖的 ppt-master server 回放时早已不在）。见 ReplaySlidesViewer。
+        // 依赖的 ppt-creator server 回放时早已不在）。见 ReplaySlidesViewer。
         <ReplaySlidesViewer deck={replayDeck} />
       ) : tab === 'slides' && showSlidesTab && server ? (
         // Live-preview phase: the native editor (replaces the old read-only
@@ -530,7 +530,7 @@ export function SlidesWorkspace(): React.JSX.Element {
         <SourceDeckViewer key={exportedPptx.path} pptxPath={exportedPptx.path} variant="exported" />
       ) : tab === 'slides' && !showSlidesTab && sourcePptx ? (
         // Source-preview phase: no live-preview session yet (the AI hasn't
-        // written any svg_output/ pages), but the user handed ppt-master an
+        // written any svg_output/ pages), but the user handed ppt-creator an
         // EXISTING deck to work from — show that deck's own pages so 预览幻灯片
         // isn't empty while the AI is still reading/planning. Yields to the
         // branch above the moment a live-preview session starts (the two

@@ -10,7 +10,7 @@ import { persist } from 'zustand/middleware'
  * mode 单例连同 setMode/ComposerModeId 一并删除，恢复从 git 历史。
  *
  * 现在只剩 `slidesSessions` —— "slides 会话" 的 id 集合：首条消息以
- * ppt-master 斜杠开头的会话在发送时被打上标记（onNew），ThreadView 的
+ * ppt-creator 斜杠开头的会话在发送时被打上标记（onNew），ThreadView 的
  * 双分栏工作台 gate 在这个 per-session 标记上，与用户后来在 composer 里
  * 选什么无关；切会话时按各自标记翻单/双栏。
  *

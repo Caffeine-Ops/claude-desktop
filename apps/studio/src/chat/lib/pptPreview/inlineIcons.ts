@@ -1,10 +1,10 @@
 /**
  * PPT-master live preview — icon inlining.
  *
- * Port of skills/ppt-master/scripts/svg_finalize/embed_icons.py's element
+ * Port of skills/ppt-creator/scripts/svg_finalize/embed_icons.py's element
  * extraction/geometry math plus svg_editor/server.py's `_inline_icons`
  * orchestration (both now gone — the Python side's offline equivalent lives
- * in skills/ppt-master/scripts/svg_editor/slide_preview.py, which
+ * in skills/ppt-creator/scripts/svg_editor/slide_preview.py, which
  * visual_review.py uses; this file is the renderer's copy of the SAME
  * algorithm, so a deck looks identical in the live preview and in a
  * visual-review screenshot).

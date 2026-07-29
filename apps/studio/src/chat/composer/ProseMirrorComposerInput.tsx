@@ -109,7 +109,7 @@ export interface ProseMirrorComposerInputHandle {
    *
    * Why not `runtime.setText(`${slash} ${text}`)`: the external-sync
    * rebuild goes through `parseText`, whose TOKEN_RE doesn't accept `:` —
-   * a namespaced command (`/claude-desktop:ppt-master`) would come back as
+   * a namespaced command (`/claude-desktop:spreadsheets`) would come back as
    * a broken half-chip. Direct doc surgery sidesteps the tokenizer.
    */
   fillBody: (text: string) => void
@@ -553,7 +553,7 @@ export const ProseMirrorComposerInput = forwardRef<ProseMirrorComposerInputHandl
   // extractAtMentionedFiles 读取文件内容）换成 `entry.dirAbsPath` 裸路径
   // （不带 `@` 前缀）。
   //
-  // 为什么不走真正的 `@` mention 语义：ppt-master SKILL.md Step 3 只要求
+  // 为什么不走真正的 `@` mention 语义：ppt-creator SKILL.md Step 3 只要求
   // 用户消息里出现一个显式目录路径字面量就会触发模版分发，不需要、也不
   // 应该让 fusion-code 把这个目录当"要读内容的附件"去处理（`@` 前缀会被
   // 其 extractAtMentionedFiles 正则命中，对目录路径的行为不可控）。裸路径

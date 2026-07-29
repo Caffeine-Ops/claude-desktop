@@ -67,7 +67,7 @@ function relTime(mtimeMs: number, zh: boolean): string {
  *
  *   - Prose mentions (AssistantDeliverables' contract): any assistant text
  *     matching DELIVERABLE_PATH_RE — the "here are your files" moment at the
- *     end of a ppt-master / spreadsheets run.
+ *     end of a ppt-creator / spreadsheets run.
  *   - Generated images (ImageGenCard's contract): imagegen/gpt-image-2 Bash
  *     calls, whose result stdout carries the output paths — these rarely get
  *     re-mentioned in prose, so the text scan alone would miss them.

@@ -7,7 +7,7 @@ import { SCENARIO_SLASH_SPECS } from '../lib/scenarioSlash'
  * Every slash chip renders as the same bordered pill (see
  * `chipNodeView.ts`) — icon + label, hover reveals a × to delete. A
  * handful of *known* skills get a bespoke icon + friendly label instead
- * of the generic glyph + raw command name (e.g. `/ppt-master` → PPT
+ * of the generic glyph + raw command name (e.g. `/ppt-creator` → PPT
  * icon + 「制作PPT」) — so the composer reads as a product surface
  * rather than a raw CLI prompt.
  *
@@ -32,7 +32,7 @@ import { SCENARIO_SLASH_SPECS } from '../lib/scenarioSlash'
  */
 
 export interface SkillChipSpec {
-  /** Literal chip value to match, e.g. `/ppt-master`. */
+  /** Literal chip value to match, e.g. `/ppt-creator`. */
   match: string
   /** Public URL of the colour icon, e.g. `/skill-icons/ppt.png`. */
   image: string
@@ -51,10 +51,26 @@ export interface SkillChipSpec {
  * Add new skills here; the NodeView picks them up automatically.
  */
 export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
-  // ppt-master — both the plugin-namespaced value (bundled fusion-code
-  // exposes it as `claude-desktop:ppt-master`, so the chip value is
-  // `/claude-desktop:ppt-master`) and the bare name (other backends /
-  // user-installed copies surface it without the namespace).
+  // ppt-creator — 2026-07-29 起这个 skill 不再随安装包发布，改为按需下载安装到
+  // `~/.cowork/plugins/`（见 electron/main/services/pptSkillInstaller.ts），因此
+  // 正式命令是 `/cowork:ppt-creator`；裸名 `/ppt-creator` 覆盖用户自装的同名副本。
+  //
+  // **旧名 ppt-master 必须继续注册**：历史会话里存的 chip value 就是
+  // `/claude-desktop:ppt-master`，而 chip 存的是 wire 格式、绝不追溯改写。
+  // 少了这两条，老会话里的「制作PPT」会退化成灰色的原始命令文本，用户会以为
+  // 自己的历史记录坏了。它们只是显示别名——新会话不会再产生这两个 value。
+  {
+    match: '/cowork:ppt-creator',
+    image: '/skill-icons/ppt.png',
+    label: '制作PPT',
+    description: '生成、编辑幻灯片演示文稿'
+  },
+  {
+    match: '/ppt-creator',
+    image: '/skill-icons/ppt.png',
+    label: '制作PPT',
+    description: '生成、编辑幻灯片演示文稿'
+  },
   {
     match: '/claude-desktop:ppt-master',
     image: '/skill-icons/ppt.png',
@@ -67,7 +83,7 @@ export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
     label: '制作PPT',
     description: '生成、编辑幻灯片演示文稿'
   },
-  // imagegen — 生成图片。namespaced + 裸名双注册，理由同 ppt-master。
+  // imagegen — 生成图片。namespaced + 裸名双注册，理由同 ppt-creator。
   // 2026-07-09：「生成图片」按钮从 gpt-image-2 换绑到 imagegen（imagegen 已
   // 改造为纯标准库走同一 OpenAI 兼容网关，见 skills/imagegen/scripts/image_gen.py）。
   // gpt-image-2 skill 仍在仓库、仍可手动 /gpt-image-2 调用，只是不再是这个
@@ -84,7 +100,7 @@ export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
     label: '生成图片',
     description: 'AI 图片生成与编辑'
   },
-  // spreadsheets — 处理表格。namespaced + 裸名双注册，理由同 ppt-master。
+  // spreadsheets — 处理表格。namespaced + 裸名双注册，理由同 ppt-creator。
   {
     match: '/claude-desktop:spreadsheets',
     image: '/skill-icons/sheet.png',
@@ -97,7 +113,7 @@ export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
     label: '处理表格',
     description: '生成、编辑 Excel 表格'
   },
-  // remotion — 制作视频。namespaced + 裸名双注册，理由同 ppt-master。
+  // remotion — 制作视频。namespaced + 裸名双注册，理由同 ppt-creator。
   {
     match: '/claude-desktop:remotion',
     image: '/skill-icons/video.png',
@@ -110,7 +126,7 @@ export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
     label: '制作视频',
     description: '用 React 生成动画短视频'
   },
-  // writing — 写作。namespaced + 裸名双注册，理由同 ppt-master。
+  // writing — 写作。namespaced + 裸名双注册，理由同 ppt-creator。
   // 与 proposal-writer（写方案）的分工：那个写商业方案/售前文档、有方案模式
   // 的双栏工作台并走客户端拦截；这个是通用内容写作（文案/小说/文章），是普通
   // skill，命令原样发给 CLI 不拦截。图标也刻意不同，两者会同时出现在斜杠菜单。
@@ -126,7 +142,7 @@ export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
     label: '写作',
     description: '公众号文案、小说、文章的创作与改写'
   },
-  // proposal-writer — 写方案。namespaced + 裸名双注册，理由同 ppt-master。
+  // proposal-writer — 写方案。namespaced + 裸名双注册，理由同 ppt-creator。
   // 注意：这个命令不会发给 fusion-code——FusionRuntimeProvider.onNew 会拦截它、
   // 激活方案模式（见 matchProposalSlash）。chip 只是让斜杠菜单里它长得像个产品功能。
   // 命令名从 PROPOSAL_WRITER_SLASH_NAMES 派生而非在此重写字面量：拦截识别集与
@@ -155,15 +171,62 @@ export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
   )
 ]
 
-const BY_VALUE = new Map(SKILL_CHIP_SPECS.map((s) => [s.match, s]))
+const BUILTIN_BY_VALUE = new Map(SKILL_CHIP_SPECS.map((s) => [s.match, s]))
 
-/** Look up a bespoke chip spec by its literal value, or `null`. */
-export function findSkillChipSpec(value: string): SkillChipSpec | null {
-  return BY_VALUE.get(value) ?? null
+/**
+ * 远端场景目录带来的 chip 外观覆盖层（2026-07-29）。后台在 sub2api 里配好
+ * 的分类/技能条目携带 label + icon，经 `stores/scenarioCatalog.ts` 灌进来，
+ * 于是「改一个 chip 的文案或图标」不再需要发版。
+ *
+ * 为什么是模块级可变量而不是 React state / context：这张表的消费方里有
+ * `chipNodeView.ts`——ProseMirror 的 imperative NodeView，不在 React 树里，
+ * 拿不到 hook。做成模块级查询函数，两类消费方（React 的 SkillChipIcon /
+ * ScenarioRail，与 imperative 的 NodeView）继续共用同一个 `findSkillChipSpec`，
+ * 谁都不用改调用方式。
+ *
+ * 已知取舍：**已经画在编辑器里的 chip 不会因为这次覆盖而重绘**（NodeView
+ * 只在 mount/update 时读一次）。远端配置的到达时机是登录后/冷启动，那时
+ * composer 里通常是空的；即便真有一个陈旧 chip，它的 value（wire 格式）
+ * 仍然正确，只是文案还是旧的，下次插入即刷新。为此去给 NodeView 加一套
+ * 订阅重绘不值当。
+ *
+ * 覆盖是**整表替换**而不是逐字段 merge：远端条目给了什么就是什么，没给的
+ * 字段回落内置表里同 value 的那条（见 findSkillChipSpec 的查找顺序）。
+ */
+let remoteByValue: ReadonlyMap<string, SkillChipSpec> = new Map()
+
+/** 灌入远端覆盖层（整表替换）。传空数组即恢复到纯内置表。 */
+export function applyRemoteSkillChipSpecs(specs: readonly SkillChipSpec[]): void {
+  remoteByValue = new Map(specs.map((s) => [s.match, s]))
 }
 
 /**
- * A leading slash command, e.g. `/claude-desktop:ppt-master rest...`. Only
+ * 只查内置表，**绕过远端覆盖**。构造覆盖层本身时要用它：远端条目没配
+ * `icon` 时要回落到内置图标，此时若走 findSkillChipSpec 会读到上一轮的
+ * 覆盖结果，几次刷新后图标就漂了。
+ */
+export function findBuiltinSkillChipSpec(value: string): SkillChipSpec | null {
+  return BUILTIN_BY_VALUE.get(value) ?? null
+}
+
+/**
+ * 远端条目既没配 `icon`、内置表里也查不到时的兜底图标——后台新加一个
+ * 技能却忘了配图标，chip 也得画得出来（渲染不出图标的 chip 会被
+ * ScenarioRail 整条跳过，等于「配了个看不见的技能」，那才是最难排查的）。
+ */
+export const FALLBACK_SKILL_ICON = '/skill-icons/petal.png'
+
+/**
+ * Look up a bespoke chip spec by its literal value, or `null`.
+ * 远端覆盖优先，内置表兜底——远端没配过的技能（用户自己装的 skill、
+ * proposal-writer 这类客户端拦截命令）照常走内置注册。
+ */
+export function findSkillChipSpec(value: string): SkillChipSpec | null {
+  return remoteByValue.get(value) ?? BUILTIN_BY_VALUE.get(value) ?? null
+}
+
+/**
+ * A leading slash command, e.g. `/claude-desktop:spreadsheets rest...`. Only
  * the command token at the very start is matched — a `/` mid-text is left
  * alone. The command may carry a plugin namespace (`claude-desktop:`) and
  * hyphens. Shared by every consumer that recovers "which skill did this

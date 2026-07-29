@@ -35,7 +35,7 @@ export function basenameOf(path: string): string {
 
 /**
  * 内置模版 mention 的裸路径识别（2026-07-22 起，无 `@` 前缀——理由见
- * ProseMirrorComposerInput.tsx 的 onTemplatePicked 注释：ppt-master 只要
+ * ProseMirrorComposerInput.tsx 的 onTemplatePicked 注释：ppt-creator 只要
  * 目录路径字面量出现在消息里就触发分发，`@` 前缀会让 fusion-code 的
  * extractAtMentionedFiles 把目录当"要读内容的附件"处理，行为不可控）。
  * chipNodeView（composer 内实时渲染）与本文件的展示层识别（气泡/标题

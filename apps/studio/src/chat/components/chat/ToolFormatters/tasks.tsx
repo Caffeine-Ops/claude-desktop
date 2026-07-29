@@ -4,7 +4,7 @@ import type { FormatterCtx, FriendlyView } from './types'
 
 /* ───────────── workflow-task tools (TaskCreate / TaskUpdate / …) ─────────────
  *
- * fusion-code tracks long jobs (ppt-master especially) through these
+ * fusion-code tracks long jobs (ppt-creator especially) through these
  * tools, so a slides run shows a steady stream of them. Their raw JSON
  * args are pure plumbing to a regular user — `subject` IS the human
  * line, `activeForm` / IDs / "Task #2 created successfully" boilerplate

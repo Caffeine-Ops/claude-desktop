@@ -1,6 +1,6 @@
 /**
  * 本地资产自定义协议的公共实现——kbasset://（只读 KB 镜像）、proposalasset://（草稿产出图）、
- * pptasset://（ppt-master 项目产物：SVG/图片/图标）。此前是逐行克隆的双胞胎 handler（评审发现）：
+ * pptasset://（ppt-creator 项目产物：SVG/图片/图标）。此前是逐行克隆的双胞胎 handler（评审发现）：
  * 任何安全加固（symlink realpath、Windows 大小写前缀、Range 支持…）只会修到其中一个 scheme，
  * 另一个静默保持可穿越/损坏且无任何报警。收口成一个工厂后加固单点生效。
  *
@@ -32,7 +32,7 @@ export function isPathInsideRoot(absPath: string, root: string): boolean {
  * resolveRoot 每请求调用（惰性），根目录依赖 app.getPath 的场景无需预热。
  *
  * `validate`（可选）：当调用方没有单一固定根目录可守——pptasset:// 服务的是任意会话的
- * ppt-master 项目目录，main 无法枚举「所有项目根」——传入一个扩展名+路径片段白名单判定
+ * ppt-creator 项目目录，main 无法枚举「所有项目根」——传入一个扩展名+路径片段白名单判定
  * 函数，它替代（不是叠加）resolveRoot 的单根检查。三个既有 scheme（kbasset/proposalasset/
  * bgasset）都不传，行为不变。
  */

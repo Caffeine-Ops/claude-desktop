@@ -487,7 +487,7 @@ function ImageEditCard({ meta }: { meta: ImageEditMeta }): React.JSX.Element {
  *
  * Why here and not upstream: the wire format sent to fusion-code MUST
  * stay `@"path"` / the bare template path (extractAtMentionedFiles parses
- * the former; ppt-master's SKILL.md Step 3 pattern-matches the latter as a
+ * the former; ppt-creator's SKILL.md Step 3 pattern-matches the latter as a
  * plain string), and the chat store keeps that verbatim text so a reload
  * re-renders identically. The chip is a pure *display* transform applied
  * at render time — the stored/sent string is untouched, exactly like the

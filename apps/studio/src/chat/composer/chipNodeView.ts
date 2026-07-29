@@ -320,7 +320,7 @@ function buildImgIcon(src: string, size = 14): HTMLImageElement {
  * palette + icon; the raw value comes from `node.attrs.value`.
  *
  * `opts.onTemplateChipClick`（mention 专属，2026-07-22）：当这个 mention 的
- * 裸路径落在 ppt-master 内置模版目录下（`templateKindFromPath` 命中）时，
+ * 裸路径落在 ppt-creator 内置模版目录下（`templateKindFromPath` 命中）时，
  * chip 主体可点——回调把 `getPos()` 精确捕获的位置 + chip 的
  * `getBoundingClientRect()` 交给上层，上层重开 TemplateGalleryPopover 让
  * 用户换选另一个模版，选中后原子替换这个位置的节点（见
@@ -333,7 +333,7 @@ export function createChipNodeView(
   return (node: PMNode, view: EditorView, getPos: () => number | undefined): NodeView => {
     const raw = (node.attrs.value as string) ?? ''
 
-    // A known slash skill (e.g. `/ppt-master`) swaps the glyph for its
+    // A known slash skill (e.g. `/ppt-creator`) swaps the glyph for its
     // coloured Icons8 icon and gives the pill a friendly label. Everything
     // else — and all mentions — keeps the neutral sparkle/file glyph.
     // Lookup is by the verbatim `value`, so this is purely visual;
@@ -550,7 +550,7 @@ export function createChipNodeView(
       // `resetWithSlashCommand` 的整段替换走进「同位置同类型」的 update
       // 路径——DOM 保留旧技能的图标/标签/data-pm-slash，而 doc/store 已是
       // 新技能，ScenarioRail（订 composer.text）随之显示与可见 chip 错位的
-      // 推荐行。真机 CDP 实锤：store=spreadsheets、DOM chip=ppt-master。
+      // 推荐行。真机 CDP 实锤：store=spreadsheets、DOM chip=ppt-creator。
       update: (updated) =>
         updated.type === node.type && (updated.attrs.value as string) === raw,
       // 兜底收起预览：× 删除走 mousedown 直接删节点，mouseleave 未必触发；
