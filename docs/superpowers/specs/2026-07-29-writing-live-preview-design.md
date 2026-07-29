@@ -138,13 +138,21 @@ result:
   | { ok: false; conflict: true; current: { markdown: string; mtimeMs: number } }
   | { ok: false; conflict?: false; error: string }
 
-// WRITING_WECHAT_STYLE — 'writing:wechat-style'
-// 读 skill 的导出样式 JSON。main 用现成的 skillsDir() 定位（dev 与打包路径都覆盖）
-payload: { name: 'wechat-default' | 'wechat-serif' }
-result: { ok: true; style: Record<string, string> } | { ok: false; error: string }
+// WRITING_WECHAT_HTML — 'writing:wechat-html'
+// markdown → 公众号内联样式 HTML。样式 JSON 在 skill 目录里，只有 main 能用现成的
+// skillsDir() 定位（dev 与打包路径都覆盖）；且【预览与「复制」共用这同一份 HTML 字符串】，
+// 两者天然一致，不会出现「预览好看、粘出去变样」。HTML 从 markdown 行结构自己生成、
+// 只输出白名单标签且正文转义，不透传原始 HTML。
+// styleFallback=true 表示样式 JSON 没读到、用了内置兜底，UI 据此角标提示——降级要看得见。
+payload: { markdown: string; styleName: 'wechat-default' | 'wechat-serif' }
+result: { ok: true; html: string; styleFallback: boolean } | { ok: false; error: string }
 
-// WRITING_EXPORT / WRITING_EXPORT_PDF — 'writing:export' / 'writing:export-pdf'
-// 薄壳，内部转调 proposalExport.ts 的同一套 markdown→bytes 实现
+// WRITING_EXPORT_DOCX / WRITING_EXPORT_PDF — 'writing:export-docx' / 'writing:export-pdf'
+// 拆两条而非合一：docx 由 main 从 markdown 生成，PDF 的字节由渲染层经 printToPDF 出、
+// main 只管保存框与写盘。生成方不同，塞进一条通道会让 payload 出现互斥字段。
+payload(docx): { markdown: string; style: ProposalStyleConfig; defaultBaseName: string }
+payload(pdf):  { bytes: Uint8Array; defaultBaseName: string }
+result（两者共用）: { path: string | null }   // null = 用户取消保存框，不是错误
 ```
 
 > **为什么不直接复用 `PROPOSAL_EXPORT`**：通道名带业务语义，写作复用它会让日志与
@@ -177,7 +185,8 @@ iframe 滚动位置跳回第一页——AI 每写完一节跳一次，长篇不�
 > 默认档不只覆盖单文件模式：职场快道的**长稿**会 `project_manager.py init` 建项目，
 > 但快道刻意不建 `spec_lock.md`（不走八项确认）。这类项目也落进默认档。
 
-微信样式**不在前端复刻**，而是读 skill 里那两个 JSON——单一真相源。仓库有过
+微信样式**不在前端复刻**，而是由 main 读 skill 里那两个 JSON、直接生成内联 HTML 回给
+渲染层——单一真相源，且预览与「复制公众号 HTML」拿到的是同一份字符串。仓库有过
 「两处各写一份 token、静默失效零报错」的事故（2026-07-03 `--accent` 三元组被覆盖），
 同类错误不再犯。
 
