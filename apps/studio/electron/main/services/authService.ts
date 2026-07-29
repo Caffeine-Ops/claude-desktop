@@ -15,6 +15,7 @@ import type {
 } from '../../shared/ipc-channels'
 import { broadcastAuthState } from '../tabRegistry'
 import { applyClientEnvConfig } from './clientEnvConfigService'
+import { refreshScenarioCatalog } from './scenarioCatalogService'
 import {
   sub2apiGet,
   sub2apiPost,
@@ -181,6 +182,13 @@ async function refreshProfileInBackground(): Promise<void> {
   // 错误处理）。
   void applyClientEnvConfig(authedGet).catch((err) => {
     console.error('[auth] apply client env config failed', {
+      message: err instanceof Error ? err.message : String(err)
+    })
+  })
+  // 场景目录同理：与另外两个请求并行，各自 best-effort。版本没变时它连
+  // 广播都不会发，冷启动对已经画好的 rail 完全无感。
+  void refreshScenarioCatalog(authedGet).catch((err) => {
+    console.error('[auth] refresh scenario catalog failed', {
       message: err instanceof Error ? err.message : String(err)
     })
   })
@@ -723,6 +731,13 @@ export async function login(payload: AuthLoginPayload): Promise<AuthLoginResult>
   // 本身，失败时沿用 env.json 的旧值，下次成功的调用自然覆盖过去。
   void applyClientEnvConfig(freshGet).catch((err) => {
     console.error('[auth] apply client env config failed', {
+      message: err instanceof Error ? err.message : String(err)
+    })
+  })
+  // 空态场景导航的远端配置，与 client-config 同一节奏、同样 fire-and-forget：
+  // 拉到了就广播刷新 rail，拉不到渲染层继续用上一次的缓存/内置默认表。
+  void refreshScenarioCatalog(freshGet).catch((err) => {
+    console.error('[auth] refresh scenario catalog failed', {
       message: err instanceof Error ? err.message : String(err)
     })
   })
