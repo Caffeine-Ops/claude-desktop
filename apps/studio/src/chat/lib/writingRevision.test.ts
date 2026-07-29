@@ -27,9 +27,21 @@ describe('buildRevisionMessage', () => {
     expect(msg).toContain(WRITING_REVISION_END)
   })
 
-  it('明确要求 AI 不要自己改文件——落地由用户点应用后前端执行', () => {
+  it('首尾双写「不要调用文件修改工具」的禁令 —— 单条尾部禁令会被长上文冲淡', () => {
     const msg = buildRevisionMessage({ sectionMarkdown: SECTION, target, instruction: 'x' })
-    expect(msg).toContain('不要修改任何文件')
+    expect(msg).not.toBeNull()
+    const hits = (msg as string).split('不要调用').length - 1
+    expect(hits).toBeGreaterThanOrEqual(2)
+  })
+
+  it('明确排除「把整节重写后塞进哨兵」的解读 —— 那会在选段处插入一份重复整节', () => {
+    const msg = buildRevisionMessage({ sectionMarkdown: SECTION, target, instruction: 'x' })
+    expect(msg).toContain('不要放整节全文')
+  })
+
+  it('哨兵内的占位行自带「不要保留这行」的自指说明 —— 防止被字面照抄', () => {
+    const msg = buildRevisionMessage({ sectionMarkdown: SECTION, target, instruction: 'x' })
+    expect(msg).toContain('不要保留这行说明文字')
   })
 
   it('空指令返回 null（不发一轮没有诉求的请求）', () => {

@@ -32,29 +32,43 @@ export function buildRevisionMessage(input: {
 
   const blocks = splitBlocks(input.sectionMarkdown)
   const { start, end } = input.target.range
+  // NaN 防护：NaN 参与的比较全为 false（NaN<0、NaN>=n、NaN<start 都不成立），会让下面这行
+  // 越界检查整体失效、静默切出错误区间。上游理论上不该传 NaN，但这里是最后一道闸，不能省。
+  if (!Number.isInteger(start) || !Number.isInteger(end)) return null
   if (start < 0 || start >= blocks.length || end < start || end >= blocks.length) return null
   const selected = blocks.slice(start, end + 1).join('\n\n')
+  // 这条防御目前打不到：splitBlocks 保证每个块 trim 后非空，join 出的 selected 不可能是空白。
+  // 保留它是防止「splitBlocks 非空块」这条不变量将来被改动时，这里跟着静默出错——别当死代码删掉。
   if (!selected.trim()) return null
 
   return [
+    // 禁令放在最前面，且在结尾再重复一次：AI 手上有 Edit/Write 工具，而「先对照再应用」
+    // 的全部保护都建立在「AI 不自己改盘」这个前提上——它一旦擅自落地，用户点「放弃」时
+    // 内容已被覆盖、无法挽回。单条位于长消息尾部的禁令会被上文冲淡，故首尾双写。
+    '【最高优先级】这一轮不要调用 Edit、Write 或任何会修改文件的工具。',
+    '改写结果由用户在界面上确认后才落地；你若擅自改盘，用户选择「放弃」时内容已经被覆盖，无法挽回。',
+    '',
     '请按我的要求改写下面这段文字。',
     '',
-    '【本节全文（供你把握上下文与前后衔接，不要改动选中范围之外的内容）】',
+    '【本节全文（仅供你把握上下文与前后衔接，不要改动选中范围之外的内容）】',
     input.sectionMarkdown,
     '',
-    '【要改的那一段】',
+    '【要改的那一段（只改这一段）】',
     selected,
     '',
     '【我的要求】',
     instruction,
     '',
     '【输出格式（必须严格遵守）】',
-    `把改写后的文字包在下面这对标记之间，标记各占一行，中间只放正文，不要解释、不要加标题：`,
+    '把「要改的那一段」改写后的结果包在下面这对标记之间，标记各占一行。',
+    // 显式排除「整节重写」这种解读：若 AI 把整节全文塞进哨兵，落地时会被当作选中块的替换内容
+    // 整体插进选段位置，结果是「选段处凭空多出一份重复的整节」——这是会真正损坏正文的误解。
+    '标记之间只放这一段的改写结果 —— 不要放整节全文，不要加标题，不要写解释。',
     WRITING_REVISION_BEGIN,
-    '（改写后的正文）',
+    '（把这行替换成你改写后的正文，不要保留这行说明文字）',
     WRITING_REVISION_END,
     '',
-    '【重要】不要修改任何文件。改写结果由我确认后再落地。'
+    '【再次强调】不要调用任何会修改文件的工具，只把结果放进上面那对标记里。'
   ].join('\n')
 }
 
