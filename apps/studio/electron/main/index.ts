@@ -50,6 +50,8 @@ import {
 import { APP_SCHEME, registerAppProtocol } from './services/appProtocol'
 import { checkForUpdatesInteractive, initAppUpdater } from './services/appUpdater'
 import { cleanReplayCache } from './replay/replayPackage'
+import { warmPptSkillInBackground } from './services/pptSkillInstaller'
+import { ensureRuntimeComponentsInBackground } from './services/componentInstaller'
 import { KB_ASSET_SCHEME, registerKbAssetProtocol } from './services/kbAssetProtocol'
 import {
   PROPOSAL_ASSET_SCHEME,
@@ -116,7 +118,7 @@ protocol.registerSchemesAsPrivileged([
       stream: true
     }
   },
-  // pptasset:// = ppt-master 项目产物（svg_output/ 引用的图片、图标库源文件），
+  // pptasset:// = ppt-creator 项目产物（svg_output/ 引用的图片、图标库源文件），
   // 供原生 LivePreviewEditor/SourceDeckViewer 直接 <img src>/<use href> 加载，
   // 不必逐个搬字节过 IPC。同上：privileged 声明必须在 ready 前、只能一次。
   {
@@ -372,6 +374,24 @@ app.whenReady().then(async () => {
   // 回放录像解包缓存的后台清理（>14 天未用的目录）。失败静默、不阻塞启动；
   // 被清掉的包重开时自动重新解包，无功能损失。
   void cleanReplayCache()
+
+  // ppt-creator skill 的后台预热：它不再随安装包发布（99MB / 12167 文件），
+  // 首次需要时才下载。**刻意不挡启动**——应用照常秒开，只有 PPT 入口在未
+  // 就绪时才挡（用户拍板 2026-07-29）；在这里先跑一遍，让「点进去时已经好了」
+  // 成为常态。全程在 utilityProcess 里做，不占 main 主线程。
+  warmPptSkillInBackground()
+
+  // 运行时组件（AI 引擎 / Python 环境）的按需安装。与上一行 PPT 的后台预热
+  // **刻意相反**：AI 引擎是必需品，缺了整个应用不能聊天，所以渲染层那道门是
+  // 挡住的、不可关闭的。
+  //
+  // 但这里仍然 fire-and-forget、不 await —— 挡的是门，不是 whenReady。splash
+  // 照常走完、studio 首帧照常出，门在 studio 里立起来。这样即使要下一两分钟，
+  // 用户看到的也是一个正常窗口 + 说明清楚的进度层，而不是一个卡在闪屏上的死壳
+  // （骨架屏那类「越需要越跑不动」的反模式，errors/ 里有同族记录）。
+  //
+  // 必须在 registerIpcHandlers() 之后——广播要有落点。
+  ensureRuntimeComponentsInBackground()
 
   // 自动更新：打包形态才真正初始化（dev 下降级为 supported:false 只读态），
   // 内部自带 15s 延迟首查，不跟冷启动抢资源。

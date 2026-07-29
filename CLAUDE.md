@@ -72,6 +72,7 @@ bun run build:mac    # 只打 Electron 壳：verify:fusion + build:icons + prebu
 
 - 注释密度很高，且专门解释「为什么这样而不是那样」。沿用这个风格——改不变量时把理由写进注释，别只写做了什么。
 - **组件文件超 ~1500 行就拆同名目录 + index 重导出**（对外 import 路径不变，moduleResolution: bundler 解析目录 index）；canvas/components 按 feature 子目录分组（home/ plugins/ settings/ files/ project/ chat/ …），新组件放进对应组。canvas 样式按节拆在 `src/canvas/styles/`，`index.css` 是纯 @import 清单——**顺序即级联，别乱动**。
-- CI（`.github/workflows/build.yml`）在 `v*` tag（或手动 workflow_dispatch）触发：下载 fusion-code CLI → typecheck → 打包 → 发 GitHub Release。fusion-code 版本钉在 workflow 的 `FUSION_CODE_VERSION`。
+- CI（`.github/workflows/build.yml`）在 `v*` tag（或手动 workflow_dispatch）触发：typecheck → 打包 → 发 GitHub Release。**它只打壳**——CLI 二进制与 python-runtime 已于 2026-07-29 搬出安装包，改由客户端首次启动时按需下载。
+- **运行时组件（CLI 二进制 / python-runtime）不随包发布**：客户端首启检测缺失则从自建源下载（`electron/main/services/componentInstaller.ts` + `workers/componentWorker.ts`，全屏门在 `src/components/ComponentGate.tsx`）。发布走独立的 `.github/workflows/publish-components.yml` + `scripts/publish-components.ts`，**与 app 发版彻底解耦**——换 CLI 版本不用发 app 版本。`CLI_SOURCE`（fusion / official，当前 repo variable 是 official）现在决定的是「发布哪个到服务器」而不是「打包进哪个」。清单契约在 `electron/shared/runtimeComponents.ts`，**平台相关字段（binName / readyProbe）必须挂在 artifact 而不是 entry 上**（放 entry 层会在合并三平台时互相覆盖，Windows 会拿到 mac 的文件名）。完整运维流程与踩坑见 `docs/runtime-components-deploy.md`。
 - 项目已索引进 codebase-memory-mcp（图检索协议由 SessionStart hook 注入，不在此重复）；大规模移动/重命名文件后索引会陈旧，重跑 `index_repository` 再查。
 - 修了 bug 或踩了坑，按全局 CLAUDE.md 规范写进 Obsidian vault 的 errors/ 和 sessions/，并互相加双链。

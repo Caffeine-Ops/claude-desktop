@@ -121,13 +121,13 @@ const UNTITLED_LABEL = '新对话'
  *  1. **XML 包裹的命令**（`<command-name>/x</command-name>
  *     <command-args>参数</command-args>`）——这是 fusion-code 落盘 slash
  *     命令 user turn 的原始格式，会话【进行中或 SDK 尚未归一化】时 firstPrompt
- *     就是这段 XML（2026-07-05：ppt-master 会话跑起来但 rail 只显示一堆
+ *     就是这段 XML（2026-07-05：ppt-creator 会话跑起来但 rail 只显示一堆
  *     `<command-message>…` 标签甚至空白的根因——旧逻辑的正则只认裸 `/` 开头，
  *     不认 `<` 开头的 XML，直接把整段标签原样返回）。这里抽出
  *     `<command-args>`（有参数用参数）或 `<command-name>` 的命令短名。
- *  2. **裸 slash 命令**（SDK 归一化后的 `/claude-desktop:ppt-master 武汉…`）：
- *     `/claude-desktop:ppt-master 武汉大学PPT` → `武汉大学PPT`；纯命令无参数
- *     → 命令短名 `ppt-master`。
+ *  2. **裸 slash 命令**（SDK 归一化后的 `/claude-desktop:ppt-creator 武汉…`）：
+ *     `/claude-desktop:ppt-creator 武汉大学PPT` → `武汉大学PPT`；纯命令无参数
+ *     → 命令短名 `ppt-creator`。
  *  3. 其它纯文本原样返回。
  *
  * 任何一步产出空串都兜底到「新对话」，绝不让 rail 出现无名行。只影响 rail

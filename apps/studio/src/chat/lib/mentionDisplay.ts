@@ -34,13 +34,43 @@ export function basenameOf(path: string): string {
 }
 
 /**
- * 标题级压缩：把文本里的文件 mention 换成 basename 纯文本——会话标题
- * （ChatHeader、侧栏行）容不下一整条绝对路径。`String.replace` 自管 /g
- * 的 lastIndex，与气泡的 exec 循环共用一个 RE 对象互不串扰（同步渲染，
- * 两者不会交错执行）。
+ * 内置模版 mention 的裸路径识别（2026-07-22 起，无 `@` 前缀——理由见
+ * ProseMirrorComposerInput.tsx 的 onTemplatePicked 注释：ppt-creator 只要
+ * 目录路径字面量出现在消息里就触发分发，`@` 前缀会让 fusion-code 的
+ * extractAtMentionedFiles 把目录当"要读内容的附件"处理，行为不可控）。
+ * chipNodeView（composer 内实时渲染）与本文件的展示层识别（气泡/标题
+ * 重新解析已发送文本）共用同一份判定，单一定义。
+ */
+export type TemplateMentionKind = 'brand' | 'layout' | 'deck'
+export function templateKindFromPath(path: string): TemplateMentionKind | null {
+  if (path.includes('/templates/brands/')) return 'brand'
+  if (path.includes('/templates/layouts/')) return 'layout'
+  if (path.includes('/templates/decks/')) return 'deck'
+  return null
+}
+
+/**
+ * 裸路径（无 `@` 前缀）形式的内置模版 mention 展示正则——与
+ * FILE_MENTION_DISPLAY_RE 同一套边界/截断规则（词首 lookbehind、常见中文
+ * 标点截断路径体），只是匹配目标换成"路径里含 /templates/(brands|layouts|
+ * decks)/ 片段的绝对路径"。没有 `@` 可用来标记 mention 意图，靠目录片段
+ * 本身识别。
+ */
+export const TEMPLATE_MENTION_DISPLAY_RE =
+  /(?<![\w"])\/[^\s，。：:；;、！？（）【】「」"']*\/templates\/(?:brands|layouts|decks)\/[^\s，。：:；;、！？（）【】「」"']+/g
+
+/** 内置模版 mention 的专属图标（public/skill-icons/，同 skill chip 一套渲染）。 */
+export const TEMPLATE_MENTION_ICON = '/skill-icons/template.png'
+
+/**
+ * 标题级压缩：把文本里的文件 mention / 内置模版 mention 都换成 basename
+ * 纯文本——会话标题（ChatHeader、侧栏行）容不下一整条绝对路径。两个
+ * regex 各自 `String.replace`，互不依赖顺序（文件 mention 要求 `@` 前缀、
+ * 模版 mention 要求裸路径，两者的匹配串不可能重叠）。
  */
 export function condenseFileMentions(text: string): string {
-  return text.replace(FILE_MENTION_DISPLAY_RE, (_m, inner: string) =>
+  const withFileMentions = text.replace(FILE_MENTION_DISPLAY_RE, (_m, inner: string) =>
     basenameOf(mentionInnerToPath(inner))
   )
+  return withFileMentions.replace(TEMPLATE_MENTION_DISPLAY_RE, (m) => basenameOf(m))
 }

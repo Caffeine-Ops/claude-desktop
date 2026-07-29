@@ -56,7 +56,7 @@ const MAX_IMAGES_PER_FILE = 12
  *
  * 读不到就抛错（而不是回退空串）：方案会话没有纪律注入就等于放任编造——客户会
  * 据方案做采购决策，宁可当轮发送失败也不静默降级。这一依赖面与 skills plugin
- * 挂载、ppt-master 相同：skills 目录缺失时它们同样已经坏了。
+ * 挂载、ppt-creator 相同：skills 目录缺失时它们同样已经坏了。
  *
  * 缓存策略（终审 finding #10）：warm-spawn 的方案会话（spawnedWithProposal 恒
  * false）每轮消息都走 grounding 补偿调到这里，「每次全量重读」会让 20~50 轮的

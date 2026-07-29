@@ -49,7 +49,7 @@ const CLIENT_COMMANDS: readonly ClientCommand[] = [
 
 export function buildSlashAdapter(sessionMeta: SessionMeta | null): SuggestionAdapter {
   // Collect into two buckets so the 「技能」 group (commands with a bespoke chip
-  // icon — gpt-image-2 / ppt-master) floats to the top, and everything else
+  // icon — gpt-image-2 / ppt-creator) floats to the top, and everything else
   // falls under 「命令」. The popover draws a heading whenever `group` changes
   // between consecutive items, so same-group entries MUST stay contiguous —
   // hence concatenating skills first, commands second.

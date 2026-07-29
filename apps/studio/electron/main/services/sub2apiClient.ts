@@ -23,6 +23,14 @@ export type Sub2ApiResult<T> =
   | { ok: true; data: T }
   | { ok: false; reason: string | null; message: string }
 
+/**
+ * 「带认证的 GET」执行器形状——实现在 authService 的 `authedGet`（自动
+ * 续期 access token + 401 重放）。需要它的 service 用参数注入拿到这个
+ * 函数，而不是自己 import authService：authService 本来就要 import 它们
+ * （login 成功后调 applyClientEnvConfig），反向 import 会构成循环依赖。
+ */
+export type AuthedGet = <T>(path: string) => Promise<Sub2ApiResult<T>>
+
 async function sub2apiRequest<T>(
   method: 'GET' | 'POST' | 'PUT',
   path: string,

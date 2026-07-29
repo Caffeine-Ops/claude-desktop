@@ -1,8 +1,3 @@
-/* 外部字体必须是整条 import 链里的第一条规则（CSS 规范：@import 前不得有
- * 其它规则）。原本在 canvas/index.css 首行，但那个文件被嵌套 import 进本文件
- * 后展开位置在 chat 链规则之后，Turbopack 直接拒绝解析——所以提升到这里。 */
-@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700&display=swap');
-
 /* studio 全局样式入口。
  *
  * Tailwind entry 不在这里——src/chat/styles/index.css（从 desktop renderer

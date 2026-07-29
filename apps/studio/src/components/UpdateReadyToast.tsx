@@ -10,6 +10,11 @@
  * app 级事件，不属于任何一个面。数据经 window.chatApi 订阅 main 的
  * appUpdater 状态流。
  *
+ * z-[10000]（2026-07-27 起，此前与 AuthGate/UpgradeScreen 同为 z-[9999]）：
+ * 更新就绪与登录态正交——用户没登录/正看订阅页时同样应该能看到「有新版」
+ * 并一键重启安装，不该被登录墙/升级页（AuthGate z-9999、UpgradeScreen
+ * z-9980）盖住。刻意比它们都高一档，其余浮层语义不变。
+ *
  * 时机（用户 2026-07-05 要求「发现新版就提示」）：不再等下载完，phase 进入
  * available/downloading 就浮现「发现新版本 + 后台下载中（进度）」；下载完
  * （ready）切成「已就绪 + 立即重启更新」。
@@ -296,7 +301,7 @@ export function UpdateReadyToast() {
         onMouseEnter={pauseLife}
         onMouseLeave={resumeLife}
         className={cn(
-          'group fixed bottom-4 left-4 z-[9999] flex max-w-[336px] items-center gap-[11px] overflow-hidden rounded-[13px] bg-card py-3 pl-3 pr-4',
+          'group fixed bottom-4 left-4 z-[10000] flex max-w-[336px] items-center gap-[11px] overflow-hidden rounded-[13px] bg-card py-3 pl-3 pr-4',
           TOAST_SHADOW,
           feedbackLeaving ? 'od-toast-leave' : 'od-toast-enter'
         )}
@@ -381,7 +386,7 @@ export function UpdateReadyToast() {
     <div
       role="status"
       className={cn(
-        'od-toast-enter fixed bottom-4 left-4 z-[9999] flex w-[336px] items-start gap-3 rounded-[14px] bg-card p-4',
+        'od-toast-enter fixed bottom-4 left-4 z-[10000] flex w-[336px] items-start gap-3 rounded-[14px] bg-card p-4',
         TOAST_SHADOW
       )}
     >

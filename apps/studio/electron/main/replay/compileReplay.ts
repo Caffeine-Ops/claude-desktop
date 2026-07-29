@@ -476,7 +476,7 @@ function buildAskQuestionPerformance(
   return finalizeUiSteps(steps, start, windowMs)
 }
 
-/* ─────────────────── UI 轨：ppt-master 八项确认表演 ─────────────────── */
+/* ─────────────────── UI 轨：ppt-creator 八项确认表演 ─────────────────── */
 
 /**
  * 从 Bash 工具的 result 文本里判定这次调用是否命中了

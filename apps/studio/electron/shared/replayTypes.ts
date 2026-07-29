@@ -60,14 +60,14 @@ export interface ReplayMeta {
   /**
    * mode='slides' 时的【权威】幻灯片清单（导出机 svg_output 目录的最终
    * 状态，按文件名数字序）。为什么不能让播放端从消息里扫 svg 路径自推：
-   * ① 消息里混着 ppt-master 的模板参考图（templates/charts/*.svg），会把
+   * ① 消息里混着 ppt-creator 的模板参考图（templates/charts/*.svg），会把
    * 13 页扫成 17 页；② 导入时路径被重写成 assets/<sha1>.svg，按文件名
    * 排序退化成按哈希排序，页序全靠运气。清单在导出时落定（deriveSlides，
    * 见 replayPackage.ts），播放端只用消息扫描做「播到第几页」的揭示判定。
    */
   slides?: ReplaySlideEntry[]
   /**
-   * ppt-master 八项确认（confirm_ui）的选择快照，按命中顺序排列——tier1
+   * ppt-creator 八项确认（confirm_ui）的选择快照，按命中顺序排列——tier1
    * 一份、final（tier2）一份，同一轮 confirm 流程正常产出两份。落定在导出
    * 时刻（collectConfirmSnapshots，见 replayPackage.ts），不是播放时去读
    * 项目目录：confirm_ui/recommendations.json 会被 tier2 原地覆盖、项目目
@@ -214,7 +214,7 @@ export type ReplayChatItem = ReplayItemBase &
  * （2026-07-13 第二批）：
  * - askQuestion.*：从 AskUserQuestion 这个 tool-call 的 args（问题列表）+
  *   result（{answers}}，两者本来就在 transcript 里）反推，数据总是齐全。
- * - confirm.*：ppt-master 八项确认的选择只落盘到 result.json、从不进
+ * - confirm.*：ppt-creator 八项确认的选择只落盘到 result.json、从不进
  *   transcript，编译器只能从 confirm_ui/server.py 新打的
  *   `[[confirm-result]]{...}` 日志行（该 Bash 工具调用的 tool result 里）
  *   反推——**在此改动前录制的旧回放包没有这行日志，反推不出选择内容，
@@ -267,7 +267,7 @@ export type ReplayUiItem = ReplayItemBase &
         durMs: number
       }
     | { track: 'ui'; op: 'askQuestion.submit' }
-    /* ── ppt-master 八项确认表演（问题 tab，tier1 → tier2 两段） ── */
+    /* ── ppt-creator 八项确认表演（问题 tab，tier1 → tier2 两段） ── */
     | {
         track: 'ui'
         op: 'confirm.open'

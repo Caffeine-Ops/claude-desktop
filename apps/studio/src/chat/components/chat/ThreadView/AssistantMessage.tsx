@@ -63,7 +63,7 @@ import { spliceBlocks } from '@desktop-shared/proposalBlocks'
  * turn: absolute or `~/`-prefixed, ending in a "deliverable" extension.
  * Source artifacts the pipeline churns through (`.svg` pages, `.html`
  * prototypes, `.json` manifests…) are deliberately NOT matched — a
- * ppt-master deck would otherwise spam 15 svg cards under every report.
+ * ppt-creator deck would otherwise spam 15 svg cards under every report.
  * Bracket/quote characters are excluded so a markdown link `[x](/a/b.pptx)`
  * or a quoted path scrapes to just the path.
  */
@@ -393,7 +393,7 @@ function DeliverableCard({
  * paths from the message's text parts, verify them against the real disk
  * via SHELL_STAT_FILES (paths the model merely *mentioned* get no card),
  * and render the survivors as openable cards — the "here are your files"
- * moment a ppt-master run ends on.
+ * moment a ppt-creator run ends on.
  *
  * Runs only once the message stops streaming: a half-streamed path would
  * stat as missing and flicker in later. Historical messages (no status)

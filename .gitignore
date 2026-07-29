@@ -18,23 +18,27 @@ apps/studio/build/*
 *.log
 .DS_Store
 
-# fusion-code CLI 二进制 (~35M)：由 CI 在构建时下载（版本钉在
-# .github/workflows/build.yml 的 FUSION_CODE_VERSION），不是源码，不入库。
+# CLI 二进制（~233MB/平台）：**不再随包发布**（2026-07-29 起改为客户端首启按需
+# 下载，见 docs/runtime-components-deploy.md）。这个目录现在只是本地开发/发布时
+# 放副本的暂存处，不是源码，不入库。版本钉的事实源是服务器上的 components.json。
 apps/studio/fusion-bin/
 
 # (移除 2026-07-15) 自带 Node runtime：daemon 已改用 node:sqlite（无 native 依赖），
 # 直接跑 Electron 自带 node，不再打包独立 Node runtime。
 
-# 自带 Python 3.12 runtime (~40-50M/平台)：CI 从 astral-sh/python-build-standalone
-# 下载（版本钉在 build.yml 的 PYTHON_STANDALONE_TAG/VERSION），打进包给 ppt-master
-# skill 的 ensure-python 脚本当 venv base 用，不是源码，不入库。
+# Python 3.12 runtime（~72MB/平台解压后）：同上，**不再随包发布**，改为按需下载后
+# 落在 userData 下。这个目录只在本地 dev 场景里可能被填（cliDetect 仍留着这条
+# dev 候选），不是源码，不入库。
 apps/studio/python-runtime/
 
 # skill 的运行时产物（本机跑 skill 时生成，非源码）：
 # ppt-master/projects/ 是生成的 PPT 工程；__pycache__/ 是 Python 字节码缓存
 # （gpt-image-2 移植成 Python 后也会产生，统一按所有 skill 忽略）。
+# skills-src/ 是 ppt-creator 改按需下载后的源码位置（原 skills/ppt-master/ 已
+# 迁走，见 publish-ppt-skill.ts 头注释）——两条规则都留着，覆盖新旧两个位置。
 skills/ppt-master/projects/
 skills/**/__pycache__/
+skills-src/**/__pycache__/
 
 # prebundle 打包产物 (~160M)：scripts/prebundle-daemon.mjs 生成（每次先 rm 重建），
 # 内容全是从 repo 别处复制来的（daemon bundle + apps/web/out + skills/

@@ -47,10 +47,20 @@ export const MARKET_SAFE_ID = /^[a-z0-9][a-z0-9._-]*$/;
 
 /** manifest 内文件路径必须是 POSIX 相对路径：拒绝 `..`、绝对路径、反斜杠、
  * 空段与点目录段。parse 期整份拒收（沿用 kbManifest 的防御哲学：坏清单
- * 不进入任何下游逻辑，而不是逐文件跳过）。 */
+ * 不进入任何下游逻辑，而不是逐文件跳过）。
+ *
+ * **2026-07-29 放宽空格**：ppt-creator 的真实模板资源里就有 `大型 logo.png`
+ * 这种文件名，而 SVG 内部用 `<image href="大型 logo.png">` 引用它——改名要
+ * 同步改模板内容，侵入性远大于收益。空格本身不构成路径安全问题（穿越靠
+ * `..`/绝对路径，那两条仍然拒收），它当初被拒只是因为下载 URL 是裸拼接的；
+ * 现在 fetchOneFile 按段 encodeURIComponent，空格与中文都被显式编码，不再
+ * 依赖 fetch 实现的隐式行为。控制字符仍然拒收（它们在 URL 与文件系统里都
+ * 是麻烦制造者）。 */
 export function isSafeMarketRelPath(p: string): boolean {
   if (typeof p !== 'string' || p.length === 0 || p.length > 512) return false;
-  if (p.includes('\\') || p.startsWith('/') || p.includes(' ')) return false;
+  if (p.includes('\\') || p.startsWith('/')) return false;
+  // eslint-disable-next-line no-control-regex -- 明确要拒的就是控制字符
+  if (/[\x00-\x1f\x7f]/.test(p)) return false;
   const segs = p.split('/');
   return segs.every((s) => s.length > 0 && s !== '.' && s !== '..');
 }
@@ -63,15 +73,30 @@ export const MarketFileSchema = z.object({
 });
 export type MarketFile = z.infer<typeof MarketFileSchema>;
 
-export const MarketEntryKindSchema = z.enum(['plugin', 'skill']);
+/**
+ * 2026-07-29 加入 `template`：ppt-creator 的版式模板库走同一套下载/校验/落盘
+ * 管线分发（复用 installSkill 的 sha256 逐文件校验 + 原子换名 + 增量更新），
+ * 但**它不是给 CLI 加载的技能**——装完只是磁盘上一个目录，由 composer 的
+ * 模板选择器把它的绝对路径填进 chip，ppt-creator 运行时读那个路径。
+ *
+ * 因此 template 与另外两种 kind 有三处行为差异，散落在下面各处，改动时务必
+ * 一起看：
+ *   1. 不写 `.claude-plugin/plugin.json`（它不是插件，写了只会误导）；
+ *   2. 文件清单里**没有** `skills/<subid>/SKILL.md`（见 parseMarketRegistry
+ *      的豁免分支）；
+ *   3. 安装根是 `~/.cowork/ppt-templates`（见 daemon 的 rootFor）。
+ */
+export const MarketEntryKindSchema = z.enum(['plugin', 'skill', 'template']);
 export type MarketEntryKind = z.infer<typeof MarketEntryKindSchema>;
 
 /** 单一映射源：kind → 远端仓库前缀目录名 == 本地安装根的子目录名。daemon
  * （下载 URL 拼接、本地安装根选择）与发布脚本（扫源目录、校验 kind 与
  * 所在前缀目录一致）共用这一个函数，禁止在别处重复写 'skills'/'plugins'
  * 字面量——两处硬编码迟早漂移。 */
-export function marketRemoteDirFor(kind: MarketEntryKind): 'skills' | 'plugins' {
-  return kind === 'plugin' ? 'plugins' : 'skills';
+export function marketRemoteDirFor(kind: MarketEntryKind): 'skills' | 'plugins' | 'templates' {
+  if (kind === 'plugin') return 'plugins';
+  if (kind === 'template') return 'templates';
+  return 'skills';
 }
 
 /** author 三件套，逐字段照抄 Codex manifest 的 `author` 形状 */
@@ -124,8 +149,11 @@ export const SkillManifestSchema = z.object({
   license: z.string().max(100).optional(),
   keywords: z.array(z.string().max(64)).default([]),
   /** 恒为 "./skills/"（约定，发布脚本会校验并强制写成这个值）；kind 是本项目
-   * 相对 Codex 原版新增的字段——他们的世界里没有 skill/plugin 之分。 */
-  skills: z.literal('./skills/'),
+   * 相对 Codex 原版新增的字段——他们的世界里没有 skill/plugin 之分。
+   *
+   * kind='template' 的条目**可以省略**它：模板目录里没有 skills/ 子目录，
+   * 逼作者写一个指向不存在目录的字段只会让人困惑。 */
+  skills: z.literal('./skills/').optional(),
   kind: MarketEntryKindSchema.default('skill'),
   /** 精选：额外出现在市场首屏的"精选"分区（不影响 interface.category 的常规分区） */
   featured: z.boolean().default(false),
@@ -193,7 +221,13 @@ export type MarketRegistry = z.infer<typeof MarketRegistrySchema>;
 
 /** 防御解析：schema 校验 + 条目 id 去重 + 文件清单里必须至少有一个
  * `skills/<subid>/SKILL.md`（否则装完 CLI 也加载不到任何东西，视为坏条目）。
- * 任一条不满足返回 null（坏清单整份拒收，不做部分接受）。 */
+ * 任一条不满足返回 null（坏清单整份拒收，不做部分接受）。
+ *
+ * **kind='template' 豁免 SKILL.md**：模板不是给 CLI 加载的技能，它的文件清单
+ * 是一堆 SVG/JSON，本来就不该有 SKILL.md。这个豁免必须存在——否则清单里只要
+ * 混进一个模板条目，**整份 registry 被拒**，连技能市场一起打不开（坏清单整份
+ * 拒收的策略在这里会放大成全站故障）。模板改判为「至少要有一个文件」，即
+ * schema 层 files.min(1) 已保证，无需额外检查。 */
 export function parseMarketRegistry(raw: unknown): MarketRegistry | null {
   const parsed = MarketRegistrySchema.safeParse(raw);
   if (!parsed.success) return null;
@@ -201,6 +235,7 @@ export function parseMarketRegistry(raw: unknown): MarketRegistry | null {
   for (const entry of parsed.data.entries) {
     if (seen.has(entry.id)) return null;
     seen.add(entry.id);
+    if (entry.kind === 'template') continue;
     if (!entry.files.some((f) => /^skills\/[^/]+\/SKILL\.md$/.test(f.path))) return null;
   }
   return parsed.data;

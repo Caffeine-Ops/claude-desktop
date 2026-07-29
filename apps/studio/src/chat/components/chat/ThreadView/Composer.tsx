@@ -54,6 +54,8 @@ import {
   useSplitWorkspaceBusy
 } from '../../../stores/filePreview'
 import { useKbStore } from '../../../stores/kb'
+import { ensurePptSkillReady, isPptSkillCommand } from '../../../stores/pptSkill'
+import { PptSkillGate } from '../PptSkillGate'
 
 /* ───────────────────── Composer ────────────────────────────── */
 
@@ -517,6 +519,9 @@ export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero'
 
   return (
     <div className="mx-auto w-full max-w-4xl">
+      {/* PPT 组件下载进度层。挂在这里而不是 hero 分支内：它 portal 到 body，
+          且 dock 态（variant='default'）同样可能触发下载，两个 variant 都要有。 */}
+      <PptSkillGate />
       {/* Two-row composer (per docs/ui-prototype-composer.html): a large
           multi-line input on top, then a dedicated toolbar row below. The
           PermissionModePicker moved OUT of a strip above the card and INTO
@@ -535,7 +540,13 @@ export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero'
         // 出组件边界，联动状态（composer.text）走 assistant-ui store。
         <div className="mb-4">
           <ScenarioRail
-            onInsertSkill={(value) => composerInputRef.current?.resetWithSlashCommand(value)}
+            onInsertSkill={(value) => {
+              // PPT 技能不再随安装包发布，首次点它要先下载（见 stores/pptSkill）。
+              // 未就绪时弹进度层并中止本次插入——装好后进度层自动关闭，用户再
+              // 点一次；不替他自动执行，免得几分钟后被动跳进一个已经忘了的流程。
+              if (isPptSkillCommand(value) && !ensurePptSkillReady()) return
+              composerInputRef.current?.resetWithSlashCommand(value)
+            }}
             onFillPrompt={(text) => composerInputRef.current?.fillBody(text)}
             snapshotDraft={() => composerInputRef.current?.snapshotDoc() ?? null}
             restoreDraft={(snapshot) => composerInputRef.current?.restoreDoc(snapshot)}

@@ -17,7 +17,7 @@ import { resolveBundledSkillsPluginDir, resolveCoworkPluginEntries } from './cli
  *                   option). Its `.claude-plugin/plugin.json` has
  *                   `"name": "claude-desktop"`, so fusion-code exposes each
  *                   `<dir>/<name>/SKILL.md` as `claude-desktop:<name>`. This
- *                   is where gpt-image-2 / ppt-master live — the bucket that
+ *                   is where gpt-image-2 / ppt-creator live — the bucket that
  *                   was previously missing, which is why the `/` popover was
  *                   empty until the first turn.
  *   4. Other plugins: read `~/.claude/plugins/installed_plugins.json`,

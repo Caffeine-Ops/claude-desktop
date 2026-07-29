@@ -102,6 +102,8 @@ import {
   type AuthLoginResult,
   type AuthSendSmsCodeResult,
   type AuthState,
+  type ScenarioCatalog,
+  type ScenarioCatalogResult,
   type UsageQueryFilters,
   type UsageListQuery,
   type UsageExportCsvPayload,
@@ -163,6 +165,8 @@ import {
 import type { ProposalMetricRecord } from '../shared/proposal'
 import type { KbRemoteConfig } from '../shared/kbConfig'
 import type { KbSyncStatus } from '../shared/kbSyncStatus'
+import type { PptSkillStatus } from '../shared/pptSkillStatus'
+import type { RuntimeComponentsState } from '../shared/runtimeComponents'
 import type { KbCatalog, KbCatalogStatus } from '../shared/kbCatalog'
 import type { KbBuildStatus } from '../shared/kbBuildStatus'
 import type {
@@ -776,6 +780,60 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.ACCOUNT_UPDATE_PROFILE,
       payload
     ) as Promise<AccountUpdateResult>
+  },
+
+  getPptSkillStatus(): Promise<PptSkillStatus> {
+    return ipcRenderer.invoke(IPC_CHANNELS.PPT_SKILL_GET_STATUS) as Promise<PptSkillStatus>
+  },
+
+  ensurePptSkill(force?: boolean): Promise<PptSkillStatus> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.PPT_SKILL_ENSURE,
+      force === true
+    ) as Promise<PptSkillStatus>
+  },
+
+  onPptSkillStatus(handler: (status: PptSkillStatus) => void): () => void {
+    const listener = (_e: unknown, s: PptSkillStatus): void => handler(s)
+    ipcRenderer.on(IPC_CHANNELS.PPT_SKILL_STATUS, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.PPT_SKILL_STATUS, listener)
+    }
+  },
+
+  getRuntimeComponentsState(): Promise<RuntimeComponentsState> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.RUNTIME_COMPONENTS_GET_STATE
+    ) as Promise<RuntimeComponentsState>
+  },
+
+  ensureRuntimeComponents(force?: boolean): Promise<RuntimeComponentsState> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.RUNTIME_COMPONENTS_ENSURE,
+      force === true
+    ) as Promise<RuntimeComponentsState>
+  },
+
+  onRuntimeComponentsState(handler: (state: RuntimeComponentsState) => void): () => void {
+    const listener = (_e: unknown, s: RuntimeComponentsState): void => handler(s)
+    ipcRenderer.on(IPC_CHANNELS.RUNTIME_COMPONENTS_STATE, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.RUNTIME_COMPONENTS_STATE, listener)
+    }
+  },
+
+  getScenarioCatalog(): Promise<ScenarioCatalogResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.SCENARIO_CATALOG_GET
+    ) as Promise<ScenarioCatalogResult>
+  },
+
+  onScenarioCatalogChanged(handler: (catalog: ScenarioCatalog) => void): () => void {
+    const listener = (_e: unknown, catalog: ScenarioCatalog): void => handler(catalog)
+    ipcRenderer.on(IPC_CHANNELS.SCENARIO_CATALOG_CHANGED, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.SCENARIO_CATALOG_CHANGED, listener)
+    }
   },
 
   getUsageFilterOptions(): Promise<UsageFilterOptionsResult> {

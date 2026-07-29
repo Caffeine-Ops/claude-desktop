@@ -1206,8 +1206,8 @@ function ChatHeader(): React.JSX.Element {
       ? condensedTitle
       : t('chatHeaderUntitled')
 
-  // 斜杠命令标题拆分：'/claude-desktop:ppt-master 武汉大学介绍' →
-  // chip '/ppt-master'（冒号后短名；完整命令进 hover title）+ 正文标题。
+  // 斜杠命令标题拆分：'/claude-desktop:ppt-creator 武汉大学介绍' →
+  // chip '/ppt-creator'（冒号后短名；完整命令进 hover title）+ 正文标题。
   // 纯命令无参数、或非 '/' 开头的标题不拆——chip 只在「命令 + 参数」
   // 形态下才有语义（参数才是会话主题，命令是它的来源标记）。
   const cmdMatch = /^\/(\S+)\s+(\S[\s\S]*)$/.exec(display)
@@ -1216,7 +1216,7 @@ function ChatHeader(): React.JSX.Element {
     ? '/' + (cmdMatch[1].split(':').pop() ?? cmdMatch[1])
     : null
   const restTitle = cmdMatch ? cmdMatch[2] : display
-  // 已知技能命令（ppt-master/spreadsheets/…）→ 复用消息气泡同一份注册表，
+  // 已知技能命令（ppt-creator/spreadsheets/…）→ 复用消息气泡同一份注册表，
   // 拿彩色图标 + 友好文案（「处理表格」），换掉裸 mono chip 的字面命令名。
   // 命名空间/裸名两种形态都试一遍（注册表本身双注册，见 skillChipRegistry）。
   // 未登记的命令仍走原样 mono chip 兜底，不是每个 / 开头都配得上产品化展示。
@@ -1245,7 +1245,7 @@ function ChatHeader(): React.JSX.Element {
 
   // 预填 = 顶栏此刻显示的那行文字（restTitle），不是 store 里的原始 title
   // （2026-07-17 用户要求「跟顶部文字保持一致」）。原始 title 是首条消息
-  // 原文——带 `/claude-desktop:ppt-master` 命令前缀、整条绝对路径、可能还有
+  // 原文——带 `/claude-desktop:ppt-creator` 命令前缀、整条绝对路径、可能还有
   // [[image-edit]] 协议标记；顶栏早把它剥/压/拆成人话了，弹窗却把没处理的
   // 原文摊开，用户看到的和要编辑的不是同一个东西。
   // 空标题（display 落到「未命名」兜底）预填空串让 placeholder 出场，而不是

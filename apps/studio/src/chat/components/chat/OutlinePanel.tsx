@@ -6,7 +6,7 @@ import type { WrittenFile } from '../../stores/chat'
  * OutlinePanel
  * ------------
  * The 大纲 tab's design_spec.md reader. design_spec has a FIXED 11-chapter
- * structure (ppt-master strategist.md §6.2: I. Project Information … XI.
+ * structure (ppt-creator strategist.md §6.2: I. Project Information … XI.
  * Technical Constraints Reminder), which makes it a real *document* — so
  * instead of piping the whole file through one AssistantMarkdown (endless
  * scroll, no wayfinding), we:

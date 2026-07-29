@@ -40,7 +40,7 @@ export function extForImageMime(mime: string, fallback = 'png'): string {
 
 /**
  * Non-image extensions the pptasset:// protocol may need to serve —
- * ppt-master project `assets/` can hold narration audio extracted alongside
+ * ppt-creator project `assets/` can hold narration audio extracted alongside
  * SVG media. Kept separate from IMAGE_MIME_BY_EXT (named/typed around "this
  * is an image") rather than folded in; pptasset is the only caller that
  * needs audio/video too.

@@ -5,134 +5,41 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
-    inputs:
-      cli_source:
-        description: '打包进 App 的 CLI（auto = 跟随 repo variable CLI_SOURCE，两者都没设兜底 fusion）'
-        type: choice
-        options:
-          - auto
-          - fusion
-          - official
-        default: auto
 
 permissions:
   contents: write
 
-env:
-  # 打包进 apps/studio/fusion-bin/ 的 CLI 来源，二选一：
-  #   fusion   — Caffeine-Ops/fusion-code-install 的 fork 版二进制（当前默认）
-  #   official — Anthropic 官方 downloads.claude.ai 分发的原生 claude 二进制
-  # 优先级：workflow_dispatch 手动选的值（非 auto 时）> repo variable
-  # （Settings → Secrets and variables → Actions → Variables 里设 CLI_SOURCE）
-  # > 兜底 fusion。push tag 触发没有 input，只吃 repo variable——要临时切换
-  # 发布用哪个 CLI，必须先改 repo variable 再打 tag，不能在 tag push 那次
-  # 请求里临时指定。这条表达式只用 github/vars 两个 context，job 级 if:（下面
-  # resolve-cli-version 若要复用同一判断）拿不到 env context，别抄这条到那里。
-  CLI_SOURCE: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.cli_source != 'auto' && github.event.inputs.cli_source) || vars.CLI_SOURCE || 'fusion' }}
-  # fusion-code CLI version is per-matrix (matrix.fusion_version), NOT a single
-  # global — darwin-x64 lives in v2.1.91 while arm64/win are still on v2.1.90
-  # until v2.1.91 is backfilled with all arches. See the matrix comment below.
-  # Only consulted when CLI_SOURCE=fusion. The official CLI's version is
-  # resolved dynamically by the resolve-cli-version job (always "latest",
-  # never pinned to a literal version string — see that job's comment).
-  # (Removed 2026-07-15: BUNDLED_NODE_VERSION — the daemon no longer needs a
-  # bundled Node; it runs on Electron's own node after the node:sqlite migration.)
-  # Standalone Python bundled INTO the app for the ppt-master skill (a Python
-  # skill with native-extension deps: PyMuPDF/Pillow/numpy). python-build-
-  # standalone (astral, what uv uses) ships relocatable, install_only tarballs.
-  # PINNED to 3.12 deliberately: it has mature cp312 wheels for every dep, so
-  # the per-user `pip install` hits prebuilt wheels instead of source-compiling
-  # (the py3.14 hang — see the project's error log). The release tag is a date;
-  # bump both together. Verified 20260510 carries 3.12.13 for BOTH mac-arm64
-  # and win-x64 install_only.
-  PYTHON_STANDALONE_TAG: '20260510'
-  PYTHON_STANDALONE_VERSION: '3.12.13'
+# （2026-07-29）CLI_SOURCE / PYTHON_STANDALONE_* 已随组件发布链路搬到
+# .github/workflows/publish-components.yml —— CLI 二进制与 python-runtime 不再
+# 随安装包发布，本 workflow 只负责打壳。版本钉的唯一事实源现在是那个 workflow
+# 的 inputs 与服务器上的 components.json。运维流程见 docs/runtime-components-deploy.md。
 
 jobs:
-  # Resolves the official Claude Code CLI's latest version ONCE, up front, so
-  # all 3 build matrix legs (mac-arm64/mac-x64/win) bundle the SAME version —
-  # if each leg curled /latest independently, a release landing between two
-  # legs' requests would ship a mac build and a win build pinned to different
-  # official CLI versions (same class of cross-leg inconsistency the publish
-  # job's serial-merge exists to avoid for release manifests). Runs
-  # unconditionally (no `if: CLI_SOURCE == official` gate) even when
-  # CLI_SOURCE=fusion — job-level `if:` can't see the `env` context (only
-  # steps can), so gating it here would mean re-deriving the CLI_SOURCE
-  # expression a second time and keeping two copies in sync. The cost of an
-  # unconditional extra curl on a cheap ubuntu runner is negligible next to
-  # that duplication risk.
-  resolve-cli-version:
-    name: Resolve official Claude Code version
-    runs-on: ubuntu-24.04
-    outputs:
-      version: ${{ steps.resolve.outputs.version }}
-    steps:
-      - name: Resolve latest official Claude Code version
-        id: resolve
-        run: |
-          set -euo pipefail
-          VERSION=$(curl -fsSL https://downloads.claude.ai/claude-code-releases/latest)
-          if [ -z "$VERSION" ]; then
-            echo "::error::empty response resolving latest official Claude Code version"
-            exit 1
-          fi
-          echo "resolved official Claude Code version: $VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
   build:
     name: Build ${{ matrix.platform }}
-    needs: resolve-cli-version
     strategy:
       fail-fast: false
       matrix:
         include:
-          # fusion_version is per-arch (not one global env) because darwin-x64
-          # only exists starting v2.1.91, while arm64/win still pull from v2.1.90
-          # — the v2.1.91 release currently carries ONLY the darwin-x64 asset
-          # (fusion-code's publish job 401'd on a stale PUBLIC_RELEASE_TOKEN, so
-          # only darwin-x64 was hand-uploaded). Once v2.1.91 is backfilled with
-          # all 5 arches (fix the token + rerun publish, or upload the rest),
-          # collapse these back to a single v2.1.91 for every leg.
+          # 平台/架构维度只剩「在哪台 runner 上打壳」——CLI 与 python 的
+          # 资产名、版本钉已随组件发布搬到 publish-components.yml。
           #
-          # Apple Silicon. macos-latest is an arm64 runner, so `bun install`
-          # here compiles/fetches arm64 native addons (sharp, onnxruntime-node)
-          # — matching this build's arch. (better-sqlite3 is no longer among
-          # them; the daemon uses node:sqlite now.)
+          # Apple Silicon. macos-latest 是 arm64 runner，`bun install` 在这里
+          # 编译/拉取的是 arm64 native addon（sharp、onnxruntime-node），与本次
+          # 构建的架构一致。（better-sqlite3 已不在其列，daemon 改用 node:sqlite。）
           - os: macos-latest
             platform: mac
             arch: arm64
-            fusion_version: v2.1.90
-            fusion_asset: fusion-code-darwin-arm64
-            fusion_target: apps/studio/fusion-bin/fusion-code-cli
-            official_platform: darwin-arm64
-            official_binary: claude
-            python_dist: aarch64-apple-darwin
-          # Intel Mac. MUST run on an Intel (x64) runner so `bun install`
-          # fetches x64 native addons; an arm64 runner would bundle arm64 .node
-          # files into an x64 app that then crashes on load. GitHub's Intel mac
-          # runners now use the `-intel` suffix (the old macos-13 Intel image is
-          # retired; macos-14+ default to arm64) — macos-15-intel is the current
-          # GA x64 image. fusion_asset is fusion-code-darwin-x64, produced by
-          # Caffeine-Ops/fusion-code's Bun cross-compile (PR #1, tag v2.1.91).
-          # node/python dists are x64 variants.
+          # Intel Mac. **必须**跑在 Intel(x64) runner 上，否则 `bun install` 拉的是
+          # arm64 native addon，装进 x64 包会在加载时崩。GitHub 的 Intel mac runner
+          # 现在用 `-intel` 后缀（旧的 macos-13 Intel 镜像已退役，macos-14+ 默认
+          # arm64）——macos-15-intel 是当前的 GA x64 镜像。
           - os: macos-15-intel
             platform: mac
             arch: x64
-            fusion_version: v2.1.91
-            fusion_asset: fusion-code-darwin-x64
-            fusion_target: apps/studio/fusion-bin/fusion-code-cli
-            official_platform: darwin-x64
-            official_binary: claude
-            python_dist: x86_64-apple-darwin
           - os: windows-latest
             platform: win
             arch: x64
-            fusion_version: v2.1.90
-            fusion_asset: fusion-code-win32-x64.exe
-            fusion_target: apps/studio/fusion-bin/fusion-code-cli.exe
-            official_platform: win32-x64
-            official_binary: claude.exe
-            python_dist: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -179,139 +86,18 @@ jobs:
           python -c "import json; json.load(open('apps/studio/env.json'))" \
             || { echo "::error::env.json is not valid JSON"; exit 1; }
 
-      - name: Download fusion-code CLI
-        if: env.CLI_SOURCE == 'fusion'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # The desktop package (verify:fusion + electron-builder
-          # extraResources) resolves fusion-bin/ relative to apps/studio,
-          # so the CLI must land there — NOT in the repo root. (Pre-monorepo
-          # the app WAS the repo root; the path didn't move in this workflow.)
-          set -euo pipefail
-          mkdir -p apps/studio/fusion-bin
-          gh release download "${{ matrix.fusion_version }}" \
-            --repo Caffeine-Ops/fusion-code-install \
-            --pattern "${{ matrix.fusion_asset }}" \
-            --dir apps/studio/fusion-bin
-          mv "apps/studio/fusion-bin/${{ matrix.fusion_asset }}" "${{ matrix.fusion_target }}"
-          if [ "${{ matrix.platform }}" != "win" ]; then
-            chmod +x "${{ matrix.fusion_target }}"
-          fi
-          ls -la apps/studio/fusion-bin/
-
-          # Integrity gate, RIGHT HERE next to the download — do not wait for the
-          # build step's verify:fusion. The CLI is a bun --compile single-file
-          # binary (~177MB); `gh release download` can leave a TRUNCATED file on
-          # a flaky fetch, and a half-download is otherwise invisible (it's still
-          # a valid-looking Mach-O/PE). On macOS a truncated binary spawns with
-          # error -88; on Windows it spawns then dies with "exit code 1 / cli
-          # exited before first init" — both shipped to users before this gate
-          # existed. We assert the on-disk size equals the size GitHub recorded
-          # for the asset (its authoritative byte count), so a partial fetch
-          # fails the build here instead of silently entering the package.
-          # See errors/2026-05-23-fusion-code-cli截断致spawn-88.md.
-          expected=$(gh release view "${{ matrix.fusion_version }}" \
-            --repo Caffeine-Ops/fusion-code-install \
-            --json assets \
-            --jq ".assets[] | select(.name == \"${{ matrix.fusion_asset }}\") | .size")
-          actual=$(wc -c < "${{ matrix.fusion_target }}" | tr -d '[:space:]')
-          echo "fusion-code asset: expected=$expected actual=$actual bytes"
-          if [ -z "$expected" ]; then
-            echo "::error::Could not read expected size for asset ${{ matrix.fusion_asset }} from release ${{ matrix.fusion_version }}"
-            exit 1
-          fi
-          if [ "$expected" != "$actual" ]; then
-            echo "::error::fusion-code download is truncated: expected $expected bytes, got $actual. Re-run the job."
-            exit 1
-          fi
-
-      # Official Claude Code path — mutually exclusive with the fusion-code
-      # step above via CLI_SOURCE, writes to the SAME fusion_target path so
-      # every downstream consumer (verify:fusion, electron-builder
-      # extraResources) doesn't need to know or care which source produced
-      # the file. VERSION comes from resolve-cli-version's job output, NOT a
-      # literal here — that job re-resolves "latest" on every run, so this
-      # step never goes stale the way a hardcoded VERSION="2.1.212" would.
-      # Integrity check uses the per-platform sha256 from manifest.json
-      # (stronger than fusion-code's size-only truncation gate, since GCS
-      # already guarantees byte-exact transfer over HTTPS — the checksum here
-      # is about catching a corrupted/tampered manifest or binary, not just a
-      # truncated fetch).
-      - name: Download official Claude Code CLI
-        if: env.CLI_SOURCE == 'official'
-        shell: bash
-        env:
-          VERSION: ${{ needs.resolve-cli-version.outputs.version }}
-        run: |
-          set -euo pipefail
-          mkdir -p apps/studio/fusion-bin
-          BASE="https://downloads.claude.ai/claude-code-releases/$VERSION"
-          echo "downloading official Claude Code v$VERSION (${{ matrix.official_platform }})"
-          MANIFEST=$(curl -fsSL "$BASE/manifest.json")
-          CHECKSUM=$(python -c "import json,sys; print(json.load(sys.stdin)['platforms']['${{ matrix.official_platform }}']['checksum'])" <<< "$MANIFEST")
-          if [ -z "$CHECKSUM" ]; then
-            echo "::error::manifest.json for $VERSION has no checksum for platform ${{ matrix.official_platform }}"
-            exit 1
-          fi
-          curl -fsSL -o "${{ matrix.fusion_target }}" "$BASE/${{ matrix.official_platform }}/${{ matrix.official_binary }}"
-          if [ "${{ matrix.platform }}" != "win" ]; then
-            chmod +x "${{ matrix.fusion_target }}"
-          fi
-          actual=$(python -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "${{ matrix.fusion_target }}")
-          if [ "$actual" != "$CHECKSUM" ]; then
-            echo "::error::official Claude Code checksum mismatch: expected $CHECKSUM, got $actual. Re-run the job."
-            exit 1
-          fi
-          echo "official Claude Code v$VERSION verified (sha256 $actual)"
-          ls -la apps/studio/fusion-bin/
-
-      # (Removed 2026-07-15) The daemon used to need a standalone Node 24 bundled
-      # into the app to match its better-sqlite3 ABI. That native dependency is
-      # gone — the SQLite layer moved to node:sqlite (built into the runtime) —
-      # so the daemon now runs on Electron's own node and no node-runtime is
-      # shipped. See resolveNodeBin() / prebundle-daemon.mjs.
-
-      # Bundle a standalone Python 3.12 INTO the app for the ppt-master skill.
-      # python-build-standalone install_only tarballs are relocatable (a top
-      # `python/` dir holding bin/python3 + lib/) — we drop that dir's CONTENTS
-      # into python-runtime/<platform>/ so the interpreter lands at
-      # python-runtime/<platform>/bin/python3 (mac) / python-runtime/<platform>/
-      # python.exe (win) — matching resolveBundledPythonHome() in cliDetect.ts.
-      # The skill's bin/ensure-python.sh uses this as the base to build a
-      # per-user venv at ~/.ppt-master/venv on first run. Not run directly here.
-      - name: Bundle Python runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="$PYTHON_STANDALONE_TAG"
-          ver="$PYTHON_STANDALONE_VERSION"
-          dist="${{ matrix.python_dist }}"
-          dest="apps/studio/python-runtime/${{ matrix.platform }}"
-          asset="cpython-${ver}+${tag}-${dist}-install_only.tar.gz"
-          url="https://github.com/astral-sh/python-build-standalone/releases/download/${tag}/${asset}"
-          mkdir -p "$dest"
-          echo "Downloading $url"
-          curl -fsSL "$url" -o python.tar.gz
-          # tarball has a single top-level `python/` dir; strip it so its
-          # contents (bin/, lib/, …) land directly in $dest.
-          tar -xzf python.tar.gz --strip-components=1 -C "$dest"
-          if [ "${{ matrix.platform }}" = "win" ]; then
-            py="$dest/python.exe"
-          else
-            py="$dest/bin/python3"
-          fi
-          ls -la "$dest"
-          # Assert the bundled interpreter runs and is the pinned 3.12 — a wrong
-          # version would let the user's first-run pip hit the py3.14 no-wheel
-          # source-compile hang we pin 3.12 specifically to avoid.
-          got=$("$py" -c 'import sys;print("%d.%d"%sys.version_info[:2])')
-          echo "bundled python: $got"
-          if [ "$got" != "3.12" ]; then
-            echo "::error::Bundled Python is $got, expected 3.12"
-            exit 1
-          fi
+      # ── CLI 二进制与 python-runtime 的下载步骤已于 2026-07-29 退役 ──
+      #
+      # 它们不再随安装包发布，改由客户端首次启动时按需下载（见
+      # apps/studio/electron/main/services/componentInstaller.ts）。搬走的理由：
+      # 两者合计占安装包体积的绝大部分，且版本节奏与 app 完全不同——CLI 一个月
+      # 变一次、app 一周发几次，随包意味着换个 CLI 版本就得重发一次 app。
+      #
+      # 组件的发布链路搬到了独立的 .github/workflows/publish-components.yml
+      # （workflow_dispatch 手动触发），连同 CLI_SOURCE 的 fusion/official 二选一、
+      # 官方 manifest 校验和比对、fusion 侧的字节数防截断闸门、python 的 3.12
+      # 版本断言，全部原样搬了过去，一条都没丢。运维流程见
+      # docs/runtime-components-deploy.md。
 
       # kb-model 下载暂时跳过（2026-07-06）：runner 上对 huggingface.co 的请求被
       # 一个会返回非法 URL 的 resolve-cache 层污染（node/bun 直跑皆同样报
