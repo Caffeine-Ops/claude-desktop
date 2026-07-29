@@ -20,8 +20,9 @@
  * 恒为 unknown，两端首帧一致；chatApi 探测全部放 effect 里。
  *
  * 挂载位置：layout.tsx body 的最后一个子元素——DOM 顺序天然压过 stage
- * 内容；z-[9999] 与 UpdateReadyToast 同级，靠后渲染盖住它（登录墙起来时
- * 不该有任何可交互的 UI 露头）。
+ * 内容；z-[9999]（登录墙起来时不该有任何可交互的 UI 露头）。例外见
+ * UpdateReadyToast（z-10000，2026-07-27 起故意比登录墙更高——更新就绪
+ * 与登录态正交，用户没登录也该能看到并一键重启安装）。
  */
 
 import { useEffect, useState } from 'react'
