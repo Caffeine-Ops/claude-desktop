@@ -13,16 +13,35 @@
 // 35M 纯死重量，且 Intel Mac 上 embedWorker 加载 native binding 必然失败，知识库
 // 向量检索静默降级（kbSemanticSearch.ts 顶部注释描述的那条降级路径）。
 //
-// CI 已经绕开了这个坑（build.yml 的 x64 leg 跑在 macos-15-intel 上，bun install
-// 拉到的就是 x64），所以这个钩子对 CI 是一层「断言 + 省体积」；对本地跨架构打包
-// 则是**硬失败**——宁可当场报错，也不要静默产出一个装着错架构二进制的安装包。
-// 这条纪律和 dist:* vs build:* 的教训同源：打包链上的问题一旦静默，拿到手的包
-// 看不出任何异常。
+// CI 在 macos-15-intel（真 x64 硬件，bun install 拉到的就是 x64）上跑时，这个
+// 钩子对「本机构建产物」是一层「断言 + 省体积」；对本地跨架构打包
+// （在 arm64 机器上打 x64 包）则是**硬失败**——宁可当场报错，也不要静默产出一个
+// 装着错架构二进制的安装包。这条纪律和 dist:* vs build:* 的教训同源：打包链上的
+// 问题一旦静默，拿到手的包看不出任何异常。
+//
+// 2026-07-30 发现的例外——darwin/x64 是上游永久性缺口，不是构建机问题：
+// 直接拉 npm tarball 逐版本核对，onnxruntime-node 从 1.24.3（当前 @huggingface/
+// transformers@4.2.0 精确锁定的版本）到最新 1.27.0，**从未**发布过 darwin/x64
+// 预编译二进制（1.20.1 时还有，之后上游砍掉，大概率跟 Apple/GitHub 一起放弃了
+// Intel macOS）。这意味着不管在哪台机器上构建、bun install 多少次，darwin/x64
+// 永远不可能出现——硬失败在这个组合上只会永久卡死 release 流水线。见
+// KNOWN_UPSTREAM_GAPS：这个组合走优雅降级而不是硬失败，代价是 KB 语义检索在
+// Intel Mac 上永久走 BM25 关键词降级（kbSemanticSearch.ts 顶部注释描述的既有
+// 降级路径——不管 embedWorker 是初始化时崩溃退出还是 pipeline() 加载原生绑定失败
+// 被 init().catch 捕获成 stale，两条路径都会让 ready 停在 false，后续搜索请求走
+// !ready 分支的 BM25 fallback，不影响其余功能）。其余任何平台/架构组合缺失，
+// 仍然维持硬失败——那才是真正的构建机问题。
 //
 // 时机：afterPack 在文件落盘之后、代码签名之前触发，所以这里删文件不会破坏签名
 // （electron-builder 随后才对整个 .app 重新签）。删的都是 app.asar.unpacked 下的
 // 真实目录，asar header 不受影响；asarUnpack 出来的文件本就不参与 asar integrity
 // 校验，也没有哈希需要同步。
+
+// 已知的、上游不会再发布该架构原生二进制的组合（不是本机构建错误）。
+// 键格式 '<platform>/<arch>'，值是给人看的说明。
+const KNOWN_UPSTREAM_GAPS = new Map([
+  ['darwin/x64', 'onnxruntime-node 自 1.24.3 起未发布 darwin/x64 预编译二进制（截至 1.27.0 仍未恢复）']
+])
 
 const { existsSync, readdirSync, rmSync, statSync } = require('node:fs')
 const { join } = require('node:path')
@@ -68,6 +87,18 @@ function pruneOnnxRuntime(nodeModules, platform, arch, tally) {
   const wantArchDir = join(wantPlatformDir, arch)
 
   if (!existsSync(wantArchDir)) {
+    const gapKey = `${platform}/${arch}`
+    const gapReason = KNOWN_UPSTREAM_GAPS.get(gapKey)
+    if (gapReason) {
+      // 已知永久缺口：不是本机构建出的错，硬失败只会永久卡死这个 arch 的 release。
+      // 整包删掉（不只删 bin/），让 require('onnxruntime-node') 在目标机上干脆利落
+      // 地 MODULE_NOT_FOUND——embedWorker 顶层 import 失败会让 utilityProcess 直接
+      // 崩溃退出，父进程的 exit 监听器把 ready 复位为 false，落入既有 BM25 降级路径。
+      console.log(`[afterPack] onnxruntime-node 无 ${gapKey} 原生二进制（${gapReason}），整体剔除，KB 语义检索在该架构永久降级为 BM25 关键词检索`)
+      dropDir(join(nodeModules, 'onnxruntime-node'), 'onnxruntime-node（目标架构上游不发布，整包剔除）', tally)
+      return
+    }
+
     // 列出实际有什么，好让报错能直接指向原因（多半是「在 arm64 机器上打 x64」）。
     const present = []
     for (const os of readdirSync(binRoot)) {
