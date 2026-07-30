@@ -217,4 +217,31 @@ describe('relocateTarget · 源码级精确匹配', () => {
     }
     expect(relocateTarget(md, t)).toEqual({ range: { start: 1, end: 2 }, ambiguous: false })
   })
+
+  // 性能回归闸（复审 F1 收尾修复）：长度预筛必须【只累加长度、不先 join 再取 length】，
+  // 否则 needle 很长（用户选了大半节/整节）时，每个 start 的内层循环都要真的拼一次接近
+  // 整节长度的字符串才会因超长 break，退化成 O(n²·L)——复审实测 2000 块/117KB 全选整节
+  // 要 7.5s，这条测试就是照那个场景钉的（500 块起步、needle = 整节），断言两件事：
+  // 命中不受影响（正确性）、耗时在数量级内（防止"长度预筛"被当作可有可无的优化误删）。
+  // 阈值给得宽松（正确实现下实测 ~5ms 级，这里给 200ms）——只为挡住 O(n²·L) 级别的退化，
+  // 不是精确的性能基准，避免 CI 机器差异导致误报。
+  it('性能回归·500+ 块整节命中，长度预筛不能退化成"先拼接再比较长度"', () => {
+    const blockCount = 600
+    const blocks = Array.from(
+      { length: blockCount },
+      (_, i) => `第 ${i} 段内容，用于撑大长节体积以复现全宽度扫描的性能悬崖场景。`
+    )
+    const md = blocks.join('\n\n')
+    const t = {
+      sectionName: '1-a.md',
+      range: { start: 0, end: blockCount - 1 },
+      selectedText: blocks.join(' '),
+      beforeMarkdown: md // 用户选中整节：needle 与整节等长，是最坏情形
+    }
+    const t0 = performance.now()
+    const result = relocateTarget(md, t)
+    const elapsedMs = performance.now() - t0
+    expect(result).toEqual({ range: { start: 0, end: blockCount - 1 }, ambiguous: false })
+    expect(elapsedMs).toBeLessThan(200)
+  })
 })
