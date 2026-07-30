@@ -16,7 +16,7 @@
 | 类别 | 工作流 | 产物形态 |
 |---|---|---|
 | 主管线三体裁 | 微信文案 / 短篇小说 / 文章 | `<项目>/drafts/*.md` 一节一文件 |
-| 优化 / 改写类 | `optimize-existing` → `rewrite` / `polish-only` | 同上（这两条本来就建项目） |
+| 优化 / 改写类 | `optimize-existing` → `rewrite` / `polish-only` | ⚠️ 实为 `<项目>/output/`，**当前未接管**，见「已知问题 H-2」 |
 | 轻量快道 | `workplace-writing`、`de-ai` | **本设计新增**：落单文件 `<cwd>/写作/<标题>.md` |
 
 **明确不做**（第一版）：
@@ -62,13 +62,16 @@
 |---|---|---|
 | `electron/shared/writing.ts` | 类型、改写哨兵常量、`spec_lock.md` 的 genre 解析、`design_spec.md` 的大纲节数解析、节文件排序 + 拼接。**纯函数，零 IO** | 共享 |
 | `electron/main/core/writingProject.ts` | 扫描项目 / 读节 / 带乐观锁写回 / 读微信样式 JSON | main |
-| `electron/main/ipc/register.ts`（追加） | 5 条新 IPC handler | main |
+| `electron/main/ipc/register.ts`（追加） | 6 条新 IPC handler（扫描/读节/写节/微信 HTML/导出 docx/保存 PDF）| main |
 | `src/chat/stores/writing.ts` | 当前文档源、各节内容、轮询、改写队列、待审阅改写 | renderer |
 | `src/chat/components/workspace/WritingDocPanel.tsx` | 右栏容器：文稿 / 打印预览两 tab + 导出按钮组 | renderer |
 | `src/chat/components/workspace/WritingPaper.tsx` | 文稿态：逐块只读渲染 + 体裁皮肤 + 末尾进度骨架 | renderer |
 | `src/chat/components/workspace/WritingPreview.tsx` | 打印预览态：A4 走真 PDF，微信走手机宽内联 HTML | renderer |
 | `src/chat/components/workspace/WritingSelectionBubble.tsx` | 选区气泡：扩块 → 收指令 → 派发/入队 | renderer |
-| `src/chat/lib/sendWritingRevision.ts` | 组装改写消息、派发、队列排空、`end` 时收哨兵产出 | renderer |
+| `src/chat/lib/sendWritingMessage.ts` | 程序化发一条写作轮消息（会话一致性校验 + dispatchChatTurn）| renderer |
+| `src/chat/lib/writingRevision.ts` | 改写的定位、消息组装、落地（源码级精确匹配）| renderer |
+| `src/chat/lib/writingSelection.ts` | 选区几何：DOM 选区两端 → 某一节的块区间 | renderer |
+| `src/chat/lib/writingGenreStyle.ts` | 体裁 → 导出样式预设与纸面皮肤类串 | renderer |
 
 `WritingDocPanel` 预计超 1500 行时按仓库约定拆同名目录 + index 重导出。
 
@@ -79,8 +82,10 @@
    a. 项目模式：AI 跑 project_manager.py init
       → 脚本 stdout 末行打印  WRITING_PROJECT=<绝对路径>
       → 渲染层从该 Bash 工具结果里抓
-   b. 单文件模式：AI 用 Write 工具写 <cwd>/写作/<标题>.md
-      → 渲染层从工具调用参数的 file_path 判定（路径在「写作」目录下且为 .md）
+   b. 单文件模式：AI 写 <cwd>/写作/<标题>.md
+      → 渲染层从工具调用参数的 file_path / filePath / path 兜底链判定
+        （路径在「写作」目录下且为 .md）。注意判定不限于 Write——任何带这些参数的
+        工具都算，所以 AI 只是「读」一下该目录下的 md 也会接管。低危，记为已知问题。
 
 ② 轮询（2s）：WRITING_SCAN → 只回文件名 + mtime + size（很轻）
    发现新增 / mtime 变化 → WRITING_READ_SECTIONS 拉全文
@@ -91,7 +96,7 @@
 ④ 改写：选中 → 扩块 → 组装消息发给 AI
    AI 忙 → 入队（显示「已排队」），空闲时自动排空
    AI 用 ===改写结果开始/结束=== 哨兵回改后文本
-   → 聊天出「原文 vs 改后」对照卡 [应用][放弃][继续改]
+   → 右栏面板底部出「原文 vs 改后」对照卡 [应用][放弃]
    → 点应用 → spliceBlocks 换块 → joinBlocks 重拼整节
    → WRITING_WRITE_SECTION（带 expectedMtimeMs 乐观锁）→ 写回磁盘
 
@@ -100,8 +105,10 @@
 
 ### IPC 契约
 
-按仓库铁律，每条都要同时改四处：`ipc-channels.ts` 常量 → `preload/index.ts` 暴露 →
-`preload/index.d.ts` 类型 → main handler。
+按仓库铁律每条都要齐改。实际是**三处**，不是四处——`ChatApi` 接口就定义在 `ipc-channels.ts` 里，
+`preload/index.d.ts` 只是 `chatApi: ChatApi` 的类型转发，不需要改（实施期核实）：
+`ipc-channels.ts`（通道常量 + payload/result 类型 + `ChatApi` 签名）→ `preload/index.ts` 暴露 →
+main handler（并按仓库约定补 `removeHandler`）。
 
 ```ts
 // 文档源：项目模式与单文件模式统一成一个判别联合，下游只认这一个类型
@@ -135,7 +142,9 @@ result:
 payload: { source: WritingDocSource; name: string; markdown: string; expectedMtimeMs: number }
 result:
   | { ok: true; mtimeMs: number }
-  | { ok: false; conflict: true; current: { markdown: string; mtimeMs: number } }
+  // current 可为 null：文件被删/改名时 statSync 就失败，读不回内容。UI 要为这条分出
+  // 单独文案——说「已刷新到最新内容」是假话，会把用户引进死循环。
+  | { ok: false; conflict: true; current: { markdown: string; mtimeMs: number } | null }
   | { ok: false; conflict?: false; error: string }
 
 // WRITING_WECHAT_HTML — 'writing:wechat-html'
@@ -217,7 +226,7 @@ workflow 脚本面板与表格预览在分栏时同样让位，沿用现有规�
   → 抽取干净正文 → 挂到该轮助手消息下渲染「原文 vs 改后」对照卡
   → [应用] spliceBlocks 换块 → joinBlocks → 乐观锁写回磁盘
     [放弃] 丢弃，不碰文件
-    [继续改] 带上「改后文本」再发一轮
+    （第一版不做「继续改」：放弃后重新选中再改一次即可，省掉一条要维护的多轮状态）
 ```
 
 ### 为什么按块替换而不是精确字符区间
@@ -300,7 +309,7 @@ UI 提示「这一节刚被 AI 改过，你的改动未生效」并刷新到最�
 仓库有 `bun test`（覆盖 `electron/`、`src/chat/lib`、`src/chat/composer`）。
 纯逻辑必须带测试，放进这三个目录之一。
 
-**单元测试**（`electron/shared/writing.test.ts`、`src/chat/lib/sendWritingRevision.test.ts`）：
+**单元测试**（`electron/shared/writing.test.ts`、`src/chat/lib/writingRevision.test.ts`）：
 
 - 节文件排序与拼接：`01-x.md` / `02-x.md` / `10-x.md` 的自然序；非数字前缀退回字典序
 - `spec_lock.md` 的 genre 解析：正常值、缺字段、文件不存在（→ `workplace` 默认档）
@@ -361,3 +370,41 @@ UI 提示「这一节刚被 AI 改过，你的改动未生效」并刷新到最�
 - `docs/superpowers/specs/2026-07-10-proposal-selection-scoped-revision-design.md` — 选区改写的先例
 - `src/chat/components/chat/LivePreviewEditor.tsx` — 目录轮询式实时预览的先例
 - `electron/shared/proposalBlocks.ts` — 块切分纯函数（直接复用）
+
+## 已知问题（2026-07-30 全分支终审记录，未在本轮修复）
+
+### H-2：优化 / 改写类工作流的产物落在 `output/`，右栏恒空 —— **待产品决策**
+
+设计时把这一类的产物形态写成「同 drafts/」，实际不是：
+
+- `rewrite.md`：「改完落 `<项目>/output/`」
+- `optimize-existing.md`：「改动落 `output/`」
+- `polish-only.md`：全文没有 `project_manager.py init`，直接触发它根本不建项目、也不落
+  `写作/` 单文件，**完全不接管**
+
+而 `writingProject.ts` 只扫 `<projectDir>/drafts`。`init` 会把五个子目录都建好，所以
+`drafts/` 存在但恒为空 → 纸面永远停在「还没有正文」，稿子其实写在隔壁 `output/` 里。
+`isWritingInProgress` 也因为要求 `${dir}/drafts/` 前缀而恒假，连进度骨架都不出。
+
+**三种可选方向**（需要拍板，各有代价）：
+
+1. **让 scan 同时看 `output/`** —— 前端改动最小。代价：`output/` 里还有各平台导出物
+   （.html/.docx/.txt），要按扩展名过滤；且「原稿」与「改后稿」可能同时存在，纸面显示哪份？
+2. **让这三条工作流改落 `drafts/`** —— 概念上更统一（drafts = 正在打磨的正文）。
+   代价：改 skill 文档，且与「output/ = 定稿与导出」的既有语义冲突。
+3. **第一版就不覆盖这一类** —— 把覆盖范围表改对，等有人真的需要再说。
+
+### 其余带着上线的已知问题
+
+完整清单与裁决理由见 `.superpowers/sdd/2026-07-29-writing-live-preview/progress.md`
+的 deferred 记录。较值得关注的三条：
+
+- **对照卡的「原文」与纸面正文可能不一致**：对照卡生成于 M0，轮询会把纸面刷成 M1，
+  两者不一致时没有任何解释。数据是安全的（点应用会正确冲突并刷新），但用户点之前会懵。
+  已定方案：比对 `baseMtimeMs` 与现读 `sec.mtimeMs`，不等就在卡上加横幅。
+- **`ambiguous` 警示条给不出可操作的线索**：多处命中意味着那几处逐字节完全相同，
+  卡上「原文」栏与用户所选一模一样，他无从判断机器挑的是第几处。低成本改进：
+  `relocateTarget` 已有 `hits` 数组，回传 `hitCount` 与选中序号，文案写成
+  「本节有 3 处相同内容，已选第 2 处」。
+- **改写轮与 messageId 无关联**：该会话任何一轮结束都会消费 `pendingRevision`。
+  可达性被起飞判定的身份闸压得很低，真修要改数据结构，收益不抵风险。
