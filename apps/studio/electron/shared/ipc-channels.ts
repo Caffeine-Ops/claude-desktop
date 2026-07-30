@@ -459,11 +459,10 @@ export const IPC_CHANNELS = {
    */
   TRANSCRIBE_AUDIO: 'speech:transcribe',
   /**
-   * Renderer → main. 提交问题反馈（文字描述 + 可选截图）。main 补上
-   * appVersion/platform/osVersion，用 FEEDBACK_HMAC_SECRET（env.json）
-   * 给请求体签名后转发给反馈代理 Worker——渲染层和 Worker 都不持有
-   * GitHub Token。Worker 把截图传 R2、在目标仓库建 Issue，返回
-   * issueUrl。未配置 FEEDBACK_WORKER_URL 时返回 error，UI 隐藏入口。
+   * Renderer → main. 提交问题反馈（分类 + 文字描述 + 可选截图）。main 补上
+   * appVersion/platform/osVersion，走 authedPost 提交给 sub2api 的
+   * `/api/v1/feedback`（JWT 鉴权，后端从 token 解出当前用户，admin 面板可
+   * 查看）。未登录时返回 error，UI 提示先登录。
    */
   FEEDBACK_SUBMIT: 'feedback:submit',
   /**
@@ -1217,20 +1216,21 @@ export type TranscribeAudioResult =
 
 export interface FeedbackImagePayload {
   filename: string
-  /** 反馈代理 Worker 只收白名单类型：image/png | image/jpeg | image/webp。 */
+  /** 后端只收白名单类型：image/png | image/jpeg | image/webp（拒 svg，admin 面板会 <img> 渲染）。 */
   contentType: string
-  /** base64（不带 data URL 前缀），已在 renderer 侧压缩到 Worker 的体积上限内。 */
+  /** base64（不带 data URL 前缀），已在 renderer 侧压缩到后端的体积上限内。 */
   dataBase64: string
 }
 
+export type FeedbackKind = 'bug' | 'idea' | 'other'
+
 export interface FeedbackSubmitPayload {
+  kind: FeedbackKind
   description: string
   images?: readonly FeedbackImagePayload[]
 }
 
-export type FeedbackSubmitResult =
-  | { issueUrl: string; error?: undefined }
-  | { issueUrl?: undefined; error: string }
+export type FeedbackSubmitResult = { ok: true; error?: undefined } | { ok?: undefined; error: string }
 
 export type ChatSendPayload = {
   sessionId: string
