@@ -166,17 +166,26 @@ function normalizeSlashes(p: string): string {
  * 一旦接管就常驻，于是「全文写完后用户提个问题」也会让纸面底部冒出「正在写第 6 节 · 共 5 节」——
  * 用户会以为 AI 还在写，其实早写完了。
  *
- * 判据改成：这一轮里存在一个**写入到当前文档源目录下**的文件工具调用。这直接对应
- * 「AI 正在往这篇稿子里落字」，AI 干别的事时自然为假。
+ * 判据是两个条件的**与**，缺一不可：
+ *  1) `streaming`——这一轮还没结束；
+ *  2) 这一轮里存在一个**写入到当前文档源目录下**的文件工具调用。
+ *
+ * 【为什么必须有 streaming 这一半】只看 parts 是不够的：一轮结束后，那条 assistant 消息
+ * （连同它携带的 Write 调用）会永远留在 messages 尾部，parts 判据于是**恒真**——AI 早已
+ * 交稿，纸面底部却一直转着「正在写下一节…」，直到用户发下一条消息把最后一条挤成 user
+ * 消息才消失。这是真机上最常见的静止态（写完 → 用户在读稿子），也是这条修复的来由。
+ * 反过来单看 streaming 也不行：它在 AI 跑 shell / 回答无关问题时同样为真（原注释已述）。
  *
  * **`parts` 必须只喂当前这一轮**（调用方只取最后一条 assistant 消息的 parts）——喂全部
  * 历史的话，写完的稿子会因为「第一节 Write 过 drafts/」这条历史记录而一直判为「正在写」。
  */
 export function isWritingInProgress(
   parts: WritingToolPart[],
-  source: WritingDocSource | null
+  source: WritingDocSource | null,
+  /** 会话级流式标志。**与 `parts` 必须同源**（同一个会话的镜像），否则等于拿 A 会话的忙闲判 B 会话。 */
+  streaming: boolean
 ): boolean {
-  if (!source) return false
+  if (!streaming || !source) return false
   for (const p of parts) {
     if (!p.filePath) continue
     const norm = normalizeSlashes(p.filePath)

@@ -237,13 +237,18 @@ export function useWritingWorkspace(): boolean {
  * 都合并进同一条，见 chat.ts 的 appendAssistantDelta），故「最后一条」= 当前/刚结束的这一轮。
  * 全文写完后用户另起一轮提问，会话级 `streaming` 依然会在这轮变真，但这轮的 parts 里没有
  * 写 drafts/ 的文件调用，isWritingInProgress 判定为 false——骨架不会再误挂着「正在写第 N 节」。
+ *
+ * `streaming` 与 parts 一起喂给判定函数，缺了它「本轮已结束但还没有下一轮」这个静止态会
+ * 恒判为真（那条带 Write 调用的 assistant 消息一直躺在尾部）——见 isWritingInProgress 头注释。
+ * 两者都取 chat store 的**顶层镜像**（前台会话，见 chat.ts 的 mirrorFromSlot），天然同源；
+ * 不要把其中一个换成 `perSession[某 sid]` 读法，那会变成拿 A 会话的忙闲去判 B 会话的消息。
  */
 export function useWritingInProgress(): boolean {
   const source = useWritingStore((s) => s.source)
   return useChatStore((s) => {
     const last = s.messages[s.messages.length - 1] as { role?: string; content?: unknown } | undefined
     if (!last || last.role !== 'assistant') return false
-    return isWritingInProgress(toolPartsOf(last.content), source)
+    return isWritingInProgress(toolPartsOf(last.content), source, s.streaming)
   })
 }
 

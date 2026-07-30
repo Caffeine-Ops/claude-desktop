@@ -199,39 +199,50 @@ describe('isWritingInProgress', () => {
   const single = { kind: 'single', filePath: '/a/写作/周报.md' } as const
 
   it('source 为 null 时恒为 false', () => {
-    expect(isWritingInProgress([write('/a/proj/drafts/1.md')], null)).toBe(false)
+    expect(isWritingInProgress([write('/a/proj/drafts/1.md')], null, true)).toBe(false)
   })
 
   it('project 模式：写入 drafts 下的 md → true', () => {
-    expect(isWritingInProgress([write('/a/proj/drafts/1-开场.md')], proj)).toBe(true)
+    expect(isWritingInProgress([write('/a/proj/drafts/1-开场.md')], proj, true)).toBe(true)
   })
 
   it('project 模式：写入项目里别的目录（如 reviews/）→ false', () => {
-    expect(isWritingInProgress([write('/a/proj/reviews/质检.md')], proj)).toBe(false)
+    expect(isWritingInProgress([write('/a/proj/reviews/质检.md')], proj, true)).toBe(false)
   })
 
   it('project 模式：写入别的项目的 drafts → false', () => {
-    expect(isWritingInProgress([write('/b/other/drafts/1.md')], proj)).toBe(false)
+    expect(isWritingInProgress([write('/b/other/drafts/1.md')], proj, true)).toBe(false)
   })
 
   it('single 模式：写入这份文档本身 → true', () => {
-    expect(isWritingInProgress([write('/a/写作/周报.md')], single)).toBe(true)
+    expect(isWritingInProgress([write('/a/写作/周报.md')], single, true)).toBe(true)
   })
 
   it('single 模式：写入同目录另一份 md → false', () => {
-    expect(isWritingInProgress([write('/a/写作/别的.md')], single)).toBe(false)
+    expect(isWritingInProgress([write('/a/写作/别的.md')], single, true)).toBe(false)
   })
 
   it('只有非文件工具调用（跑 shell、回答问题）→ false', () => {
-    expect(isWritingInProgress([bash('ls -la')], proj)).toBe(false)
+    expect(isWritingInProgress([bash('ls -la')], proj, true)).toBe(false)
+  })
+
+  // 回归：这一轮已经结束（streaming=false），但那条 assistant 消息连同它的 Write 调用
+  // 会永远留在 messages 尾部——只看 parts 的话判据恒真，骨架就一直挂着「正在写下一节…」，
+  // 直到用户发下一条消息才消失。真机表现：左栏 AI 已交稿，右栏还在转圈。
+  it('本轮已结束（streaming=false）→ false，哪怕这一轮确实写过 drafts', () => {
+    expect(isWritingInProgress([write('/a/proj/drafts/1-开场.md')], proj, false)).toBe(false)
+  })
+
+  it('single 模式同理：轮次结束后不再算「正在写」', () => {
+    expect(isWritingInProgress([write('/a/写作/周报.md')], single, false)).toBe(false)
   })
 
   it('空数组 → false', () => {
-    expect(isWritingInProgress([], proj)).toBe(false)
+    expect(isWritingInProgress([], proj, true)).toBe(false)
   })
 
   it('Windows 反斜杠路径同样认', () => {
     const winProj = { kind: 'project', projectDir: 'C:\\a\\proj' } as const
-    expect(isWritingInProgress([write('C:\\a\\proj\\drafts\\1.md')], winProj)).toBe(true)
+    expect(isWritingInProgress([write('C:\\a\\proj\\drafts\\1.md')], winProj, true)).toBe(true)
   })
 })
