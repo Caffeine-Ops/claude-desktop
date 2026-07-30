@@ -73,6 +73,16 @@ env.json
 .od-e2e
 .next
 .next-*/
+
+# Next 自动生成/覆写的环境声明（文件自带注释「should not be edited」）。内容
+# 随最后一次跑的是 `next dev` 还是 `next build` 在两个 routes.d.ts 路径间来回
+# 切换（Next 16 引入的 dev/build 分离），本地 dev/build 循环下必然产生纯噪音
+# diff。CI 的 typecheck 跑在任何 next 命令之前、`.next/` 尚不存在时也一样过
+# （已实测：临时移走 `.next/` 后 `tsc --noEmit` 仍零报错），说明它已提交的具体
+# 内容从未被真正依赖过。忽略后本地任何一次 dev/build 都会自动重新生成，无需
+# 手动维护。
+apps/studio/next-env.d.ts
+
 .tmp/
 apps/web/out
 e2e/.od-data
