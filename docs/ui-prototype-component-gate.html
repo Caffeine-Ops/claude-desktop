@@ -1,0 +1,1075 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>组件门 UI 原型 — 首次运行环境准备（ComponentGate 重设计）</title>
+<!--
+  ComponentGate（首次下载 AI 引擎 / Python 运行环境的全屏门）重设计原型。
+  对应实现：apps/studio/src/components/ComponentGate.tsx
+  Token 来源：apps/studio/src/components/login.css 的 --lg-* 双档（原样搬入，零新色相）。
+
+  三个方案（Tweaks 面板切换，快捷键 1/2/3）：
+    A 核心装配 —— 居中进度环 + 应用图标核，开机仪式感，与登录页轨道环同语汇
+    B HUD 分屏 —— 与登录页同骨架（左品牌面 + 右信息面），登录→首装无缝衔接
+    C 清单卡片 —— 保守精修版居中卡片，最接近现状、信息密度最高
+
+  状态机模拟：检查 → 下载(真算速率/ETA) → 校验安装 → 就绪 → 循环；
+  可钉住任意状态（含 失败 / 失败·检测到本机 Claude）。
+-->
+<style>
+/* ── 基础 ─────────────────────────────────────────────────────────── */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro SC", "PingFang SC",
+    "Helvetica Neue", "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: var(--lg-bg);
+  color: var(--lg-ink);
+  overflow-x: hidden;
+  transition: background .3s, color .3s;
+  -webkit-font-smoothing: antialiased;
+}
+p { text-wrap: pretty; }
+button { font-family: inherit; }
+.mono {
+  font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Token（login.css --lg-* 原样搬入；原型里挂 :root 方便预览）────── */
+:root {
+  --lg-bg: #f4f6f5;
+  --lg-ink: #1d1d1f;
+  --lg-ink-2: rgba(29, 29, 31, 0.62);
+  --lg-ink-3: rgba(29, 29, 31, 0.4);
+  --lg-line: rgba(29, 29, 31, 0.14);
+  --lg-line-hover: rgba(29, 29, 31, 0.28);
+  --lg-green: #16a34a;
+  --lg-green-deep: #15803d;
+  --lg-green-fg: #ffffff;
+  --lg-card-bg: #ffffff;
+  --lg-card-border: rgba(29, 29, 31, 0.1);
+  --lg-card-shadow: 0 8px 30px rgba(29, 29, 31, 0.06);
+  --lg-error: #d93025;
+  --lg-grid-line: rgba(22, 163, 74, 0.06);
+  --lg-glow-a: rgba(22, 163, 74, 0.1);
+  --lg-glow-a2: rgba(22, 163, 74, 0.03);
+  --lg-glow-b: rgba(13, 148, 136, 0.05);
+  --lg-mote: rgba(22, 163, 74, 0.5);
+  --lg-mote-glow: rgba(22, 163, 74, 0.45);
+  --lg-ring-outer: rgba(22, 163, 74, 0.3);
+  --lg-ring-inner: rgba(13, 148, 136, 0.26);
+  --lg-dot-outer: #16a34a;
+  --lg-dot-inner: #0d9488;
+  --lg-dot-glow-outer: rgba(22, 163, 74, 0.7);
+  --lg-dot-glow-inner: rgba(13, 148, 136, 0.6);
+  --lg-pane-border: rgba(22, 163, 74, 0.16);
+  --lg-pane-glow: rgba(22, 163, 74, 0.05);
+  --lg-mark-glow: drop-shadow(0 0 11px rgba(22, 163, 74, 0.35));
+  --lg-core-glow: drop-shadow(0 0 26px rgba(22, 163, 74, 0.4));
+  --lg-core-shadow: 0 0 48px rgba(22, 163, 74, 0.35), inset 0 2px 0 rgba(255, 255, 255, 0.35);
+  --lg-btn-shadow: 0 6px 22px rgba(22, 163, 74, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  --lg-btn-shadow-hover: 0 8px 30px rgba(22, 163, 74, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  --lg-sheen: rgba(255, 255, 255, 0.4);
+  --lg-arc-glow: rgba(22, 163, 74, 0.45);
+}
+html[data-theme="dark"] {
+  --lg-bg: #0a0c0b;
+  --lg-ink: #f2f4f3;
+  --lg-ink-2: rgba(242, 244, 243, 0.6);
+  --lg-ink-3: rgba(242, 244, 243, 0.34);
+  --lg-line: rgba(255, 255, 255, 0.1);
+  --lg-line-hover: rgba(255, 255, 255, 0.2);
+  --lg-green: #3bce78;
+  --lg-green-deep: #16a34a;
+  --lg-green-fg: #06130b;
+  --lg-card-bg: rgba(255, 255, 255, 0.03);
+  --lg-card-border: rgba(255, 255, 255, 0.09);
+  --lg-card-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+  --lg-error: #ff6b6b;
+  --lg-grid-line: rgba(59, 206, 120, 0.045);
+  --lg-glow-a: rgba(59, 206, 120, 0.16);
+  --lg-glow-a2: rgba(59, 206, 120, 0.05);
+  --lg-glow-b: rgba(45, 212, 191, 0.07);
+  --lg-mote: rgba(59, 206, 120, 0.55);
+  --lg-mote-glow: rgba(59, 206, 120, 0.5);
+  --lg-ring-outer: rgba(59, 206, 120, 0.22);
+  --lg-ring-inner: rgba(45, 212, 191, 0.18);
+  --lg-dot-outer: #3bce78;
+  --lg-dot-inner: #2dd4bf;
+  --lg-dot-glow-outer: rgba(59, 206, 120, 0.9);
+  --lg-dot-glow-inner: rgba(45, 212, 191, 0.8);
+  --lg-pane-border: rgba(59, 206, 120, 0.12);
+  --lg-pane-glow: rgba(59, 206, 120, 0.07);
+  --lg-mark-glow: drop-shadow(0 0 9px rgba(59, 206, 120, 0.45));
+  --lg-core-glow: drop-shadow(0 0 30px rgba(59, 206, 120, 0.55));
+  --lg-core-shadow: 0 0 60px rgba(59, 206, 120, 0.5), inset 0 2px 0 rgba(255, 255, 255, 0.3);
+  --lg-btn-shadow: 0 6px 26px rgba(59, 206, 120, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  --lg-btn-shadow-hover: 0 8px 34px rgba(59, 206, 120, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  --lg-sheen: rgba(255, 255, 255, 0.38);
+  --lg-arc-glow: rgba(59, 206, 120, 0.55);
+}
+
+/* ── 背景系统（登录页同款：网格 + 双光晕 + 微粒）──────────────────── */
+.bg-grid {
+  position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background:
+    linear-gradient(var(--lg-grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--lg-grid-line) 1px, transparent 1px);
+  background-size: 40px 40px;
+  -webkit-mask-image: radial-gradient(ellipse 90% 75% at 50% 62%, #000 20%, transparent 78%);
+  mask-image: radial-gradient(ellipse 90% 75% at 50% 62%, #000 20%, transparent 78%);
+}
+.bg-glow-main {
+  position: fixed; left: 50%; bottom: -46%; width: 1000px; height: 640px;
+  pointer-events: none; z-index: 0; transform: translateX(-50%);
+  background: radial-gradient(ellipse at center, var(--lg-glow-a) 0%, var(--lg-glow-a2) 42%, transparent 70%);
+  animation: breathe 8s ease-in-out infinite;
+}
+.bg-glow-side {
+  position: fixed; right: -18%; top: -30%; width: 660px; height: 520px;
+  pointer-events: none; z-index: 0;
+  background: radial-gradient(ellipse at center, var(--lg-glow-b) 0%, transparent 65%);
+  animation: breatheSide 11s ease-in-out infinite;
+}
+@keyframes breathe {
+  0%, 100% { opacity: .75; transform: translateX(-50%) scale(1); }
+  50%      { opacity: 1;   transform: translateX(-50%) scale(1.06); }
+}
+@keyframes breatheSide {
+  0%, 100% { opacity: .7; transform: scale(1); }
+  50%      { opacity: 1;  transform: scale(1.08); }
+}
+.mote {
+  position: fixed; bottom: -8px; width: 3px; height: 3px; border-radius: 50%;
+  background: var(--lg-mote); box-shadow: 0 0 8px var(--lg-mote-glow);
+  opacity: 0; pointer-events: none; z-index: 0;
+  animation: floatUp 16s linear infinite;
+}
+@keyframes floatUp {
+  0%   { transform: translateY(0); opacity: 0; }
+  8%   { opacity: .8; }
+  85%  { opacity: .4; }
+  100% { transform: translateY(-100vh); opacity: 0; }
+}
+
+/* ── 共用原子 ─────────────────────────────────────────────────────── */
+.kicker {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 10.5px; font-weight: 500; letter-spacing: 3px; text-transform: uppercase;
+  color: color-mix(in srgb, var(--lg-green) 85%, transparent);
+}
+.kicker::after {
+  content: ''; height: 1px; width: 22px;
+  background: linear-gradient(to right, color-mix(in srgb, var(--lg-green) 50%, transparent), transparent);
+}
+.statusline {
+  display: flex; align-items: center; gap: 8px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 10.5px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--lg-ink-3);
+}
+.statusline .dot {
+  width: 6px; height: 6px; border-radius: 50%; flex: none;
+  background: var(--lg-dot-outer); box-shadow: 0 0 8px var(--lg-dot-glow-outer);
+  animation: pulse 2.2s ease-in-out infinite;
+}
+.statusline.err .dot {
+  background: var(--lg-error);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--lg-error) 70%, transparent);
+}
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+/* 组件行（三方案共用结构，方案内做微调） */
+.rows { text-align: left; }
+.crow { display: flex; gap: 12px; align-items: flex-start; padding: 13px 0; }
+.crow + .crow { border-top: 1px solid color-mix(in srgb, var(--lg-line) 55%, transparent); }
+.crow-main { flex: 1; min-width: 0; }
+.crow-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.crow-name {
+  font-size: 13.5px; font-weight: 600; color: var(--lg-ink);
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.crow-tag {
+  font-size: 10px; font-weight: 500; letter-spacing: .5px; line-height: 1;
+  color: var(--lg-ink-3); border: 1px solid var(--lg-line);
+  padding: 3px 7px; border-radius: 999px; white-space: nowrap;
+}
+.crow-tag.req {
+  color: var(--lg-green);
+  border-color: color-mix(in srgb, var(--lg-green) 35%, transparent);
+  background: color-mix(in srgb, var(--lg-green) 6%, transparent);
+}
+.crow-meta { font-size: 11px; color: var(--lg-ink-3); white-space: nowrap; }
+.crow-detail { margin-top: 7px; font-size: 12px; line-height: 1.5; color: var(--lg-ink-2); }
+.crow-detail.err { color: var(--lg-error); }
+
+/* 状态图标 */
+.g { width: 22px; height: 22px; border-radius: 50%; flex: none; display: grid; place-items: center; margin-top: 1px; }
+.g-pending { border: 1.5px solid var(--lg-line); }
+.g-active {
+  border: 2px solid color-mix(in srgb, var(--lg-green) 22%, transparent);
+  border-top-color: var(--lg-green);
+  animation: spin 1s linear infinite;
+}
+.g-done { background: color-mix(in srgb, var(--lg-green) 14%, transparent); color: var(--lg-green); }
+.g-error { background: color-mix(in srgb, var(--lg-error) 12%, transparent); color: var(--lg-error); }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 进度条 */
+.bar {
+  height: 5px; border-radius: 999px; overflow: hidden; margin-top: 9px;
+  background: color-mix(in srgb, var(--lg-line) 80%, transparent);
+}
+.bar > i {
+  display: block; height: 100%; border-radius: 999px; width: 0;
+  background: linear-gradient(90deg, var(--lg-green), var(--lg-green-deep));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--lg-green) 45%, transparent);
+  transition: width .25s ease-out;
+}
+.bar.indet > i { width: 33%; animation: slide 1.4s ease-in-out infinite; }
+.bar.barerr > i { background: var(--lg-error); box-shadow: none; opacity: .55; }
+@keyframes slide {
+  from { transform: translateX(-110%); }
+  to   { transform: translateX(330%); }
+}
+
+/* 按钮 */
+.btn {
+  position: relative; display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; height: 44px; border-radius: 12px; border: none; cursor: pointer;
+  font-size: 13.5px; font-weight: 600; letter-spacing: -.1px;
+  transition: transform .18s, box-shadow .18s, filter .18s, background .18s, border-color .18s;
+}
+.btn-primary {
+  overflow: hidden;
+  background: linear-gradient(135deg, var(--lg-green), var(--lg-green-deep));
+  color: var(--lg-green-fg); box-shadow: var(--lg-btn-shadow);
+}
+.btn-primary:hover { filter: brightness(1.07); box-shadow: var(--lg-btn-shadow-hover); }
+.btn-primary:active { transform: scale(.985); filter: brightness(.97); }
+.btn-primary::after {
+  content: ''; position: absolute; top: 0; bottom: 0; left: -80%; width: 40%;
+  background: linear-gradient(105deg, transparent, var(--lg-sheen), transparent);
+  transform: skewX(-18deg); transition: left .05s; pointer-events: none;
+}
+.btn-primary:hover::after { left: 130%; transition: left .6s cubic-bezier(.32, .72, 0, 1); }
+.btn-outline {
+  background: transparent; border: 1px solid var(--lg-line); color: var(--lg-ink);
+}
+.btn-outline:hover {
+  border-color: var(--lg-line-hover);
+  background: color-mix(in srgb, var(--lg-line) 28%, transparent);
+}
+.btn-outline:active { transform: scale(.985); }
+
+/* 错误动作区 */
+.errbox { margin-top: 20px; display: none; flex-direction: column; gap: 10px; }
+.errbox.show { display: flex; }
+.errbox .foot { font-size: 12px; line-height: 1.6; color: var(--lg-ink-3); }
+
+/* 应用图标（真实 app-icon.png，缺图时回退字母块） */
+.mark { position: relative; display: block; flex: none; }
+.mark img { display: block; width: 100%; height: 100%; -webkit-user-drag: none; }
+.mark .mark-letter { display: none; }
+.mark.noimg img { display: none; }
+.mark.noimg .mark-letter {
+  display: grid; place-items: center; width: 100%; height: 100%;
+  border-radius: 24%; font-weight: 700; color: var(--lg-green-fg);
+  background: linear-gradient(135deg, var(--lg-green), var(--lg-green-deep));
+  box-shadow: var(--lg-core-shadow);
+}
+
+/* 入场 stagger */
+.rise { opacity: 0; }
+.variant.play .rise {
+  animation: rise .6s cubic-bezier(.32, .72, 0, 1) both;
+  animation-delay: var(--d, 0s);
+}
+@keyframes rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* 方案容器切换 */
+.variant { display: none; position: relative; z-index: 1; }
+body[data-v="A"] #vA, body[data-v="B"] #vB, body[data-v="C"] #vC { display: block; }
+
+/* ── 方案 A：核心装配 ─────────────────────────────────────────────── */
+#vA .a-wrap {
+  min-height: 100vh; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; padding: 64px 24px; text-align: center;
+}
+#vA .a-core { position: relative; width: 248px; height: 248px; margin-bottom: 34px; }
+#vA .a-arcsvg { position: absolute; inset: 0; width: 100%; height: 100%; }
+#vA .a-arcsvg .track { fill: none; stroke: color-mix(in srgb, var(--lg-line) 75%, transparent); stroke-width: 3; }
+#vA .a-arcsvg .fg {
+  fill: none; stroke: var(--lg-green); stroke-width: 3; stroke-linecap: round;
+  filter: drop-shadow(0 0 8px var(--lg-arc-glow));
+  transition: stroke-dashoffset .25s ease-out, stroke .3s;
+}
+#vA .a-arcsvg.err .fg { stroke: var(--lg-error); filter: drop-shadow(0 0 8px color-mix(in srgb, var(--lg-error) 55%, transparent)); }
+#vA .a-arcsvg.indet { animation: spin 1.6s linear infinite; }
+#vA .a-arcsvg.done .fg { filter: drop-shadow(0 0 14px var(--lg-arc-glow)); }
+#vA .a-ring-inner {
+  position: absolute; inset: 26px; border-radius: 50%;
+  border: 1px dashed var(--lg-ring-inner);
+  animation: spin 30s linear infinite reverse;
+}
+#vA .a-ring-inner::before {
+  content: ''; position: absolute; top: -3px; left: 50%;
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--lg-dot-inner); box-shadow: 0 0 10px var(--lg-dot-glow-inner);
+}
+#vA .a-core .mark {
+  position: absolute; inset: 0; margin: auto; width: 112px; height: 112px;
+  filter: var(--lg-core-glow);
+}
+#vA .a-core .mark .mark-letter { font-size: 44px; }
+#vA .a-chip {
+  position: absolute; bottom: -6px; left: 50%; transform: translateX(-50%);
+  font-size: 11.5px; font-weight: 600; padding: 5px 12px; border-radius: 999px;
+  color: var(--lg-ink-2); background: var(--lg-card-bg);
+  border: 1px solid var(--lg-card-border); box-shadow: var(--lg-card-shadow);
+  white-space: nowrap;
+}
+#vA .a-chip b { color: var(--lg-green); font-weight: 650; }
+#vA .a-chip.errc b { color: var(--lg-error); }
+#vA h1 { font-size: 26px; font-weight: 600; letter-spacing: -.4px; line-height: 1.25; margin: 14px 0 0; }
+#vA .a-sub { margin-top: 10px; font-size: 13.5px; line-height: 1.65; color: var(--lg-ink-2); }
+#vA .a-panel { width: min(400px, 88vw); margin-top: 26px; }
+#vA .a-status { justify-content: center; margin-top: 30px; }
+
+/* ── 方案 B：HUD 分屏 ─────────────────────────────────────────────── */
+#vB .b-wrap { display: flex; min-height: 100vh; }
+#vB aside {
+  display: none; width: 44%; flex-direction: column;
+  border-right: 1px solid var(--lg-pane-border);
+  background: radial-gradient(ellipse 80% 60% at 50% 46%, var(--lg-pane-glow), transparent 70%);
+  padding: 60px 48px 36px;
+}
+@media (min-width: 860px) { #vB aside { display: flex; } }
+#vB .b-brand { display: flex; align-items: center; gap: 10px; }
+#vB .b-brand .mark { width: 36px; height: 36px; margin: -3px 0 -3px -3px; filter: var(--lg-mark-glow); }
+#vB .b-brand .mark .mark-letter { font-size: 15px; }
+#vB .b-brand span { font-size: 15px; font-weight: 600; letter-spacing: -.2px; }
+#vB .b-orbit { position: relative; width: 240px; height: 240px; margin: auto; }
+#vB .b-ring {
+  position: absolute; inset: 0; border-radius: 50%;
+  border: 1px solid var(--lg-ring-outer);
+  animation: spin 22s linear infinite;
+}
+#vB .b-ring::before {
+  content: ''; position: absolute; top: -3.5px; left: 50%;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--lg-dot-outer); box-shadow: 0 0 12px var(--lg-dot-glow-outer);
+}
+#vB .b-ring.inner {
+  inset: 34px; border-color: var(--lg-ring-inner); border-style: dashed;
+  animation: spin 30s linear infinite reverse;
+}
+#vB .b-ring.inner::before {
+  top: -3px; width: 5px; height: 5px;
+  background: var(--lg-dot-inner); box-shadow: 0 0 10px var(--lg-dot-glow-inner);
+}
+#vB .b-orbit .mark {
+  position: absolute; inset: 0; margin: auto; width: 116px; height: 116px;
+  filter: var(--lg-core-glow);
+}
+#vB .b-orbit .mark .mark-letter { font-size: 46px; }
+#vB .b-slogan { margin-bottom: auto; text-align: center; }
+#vB .b-slogan h2 { font-size: 26px; font-weight: 600; letter-spacing: -.4px; line-height: 1.3; }
+#vB .b-slogan p { margin-top: 10px; font-size: 13.5px; line-height: 1.65; color: var(--lg-ink-2); }
+#vB .b-side-status { margin-top: 40px; }
+#vB .b-main { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; overflow-y: auto; }
+#vB .b-inner { width: min(400px, 92vw); }
+#vB h1 { font-size: 30px; font-weight: 600; letter-spacing: -.5px; line-height: 1.12; margin-top: 14px; }
+#vB .b-sub { margin-top: 10px; font-size: 14px; line-height: 1.6; color: var(--lg-ink-2); }
+#vB .b-hero { margin: 26px 0 4px; }
+#vB .b-hero-cap {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 10.5px; letter-spacing: 2px; text-transform: uppercase;
+  color: var(--lg-ink-3);
+}
+#vB .b-hero-val {
+  margin-top: 6px; font-size: 42px; font-weight: 650; letter-spacing: -1.2px;
+  line-height: 1.1; font-variant-numeric: tabular-nums;
+}
+#vB .b-hero-val.errv { color: var(--lg-error); }
+#vB .b-hero-note { margin-top: 5px; font-size: 12px; color: var(--lg-ink-3); }
+#vB .b-rows { margin-top: 18px; border-top: 1px solid color-mix(in srgb, var(--lg-line) 55%, transparent); }
+
+/* ── 方案 C：清单卡片 ─────────────────────────────────────────────── */
+#vC .c-wrap { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+#vC .c-card {
+  position: relative; width: min(464px, 94vw); overflow: hidden;
+  border-radius: 18px; border: 1px solid var(--lg-card-border);
+  background: var(--lg-card-bg); box-shadow: var(--lg-card-shadow);
+}
+#vC .c-top { position: absolute; top: 0; left: 0; right: 0; height: 2.5px; background: color-mix(in srgb, var(--lg-line) 60%, transparent); overflow: hidden; }
+#vC .c-top > i {
+  display: block; height: 100%; width: 0;
+  background: linear-gradient(90deg, var(--lg-green), var(--lg-green-deep));
+  box-shadow: 0 0 8px var(--lg-arc-glow);
+  transition: width .25s ease-out;
+}
+#vC .c-top.errt > i { background: var(--lg-error); box-shadow: none; }
+#vC .c-top.indet > i { width: 33%; animation: slide 1.4s ease-in-out infinite; }
+#vC .c-head { display: flex; align-items: center; gap: 12px; padding: 24px 26px 14px; }
+#vC .c-head .mark { width: 34px; height: 34px; filter: var(--lg-mark-glow); }
+#vC .c-head .mark .mark-letter { font-size: 14px; }
+#vC .c-head-txt { flex: 1; min-width: 0; }
+#vC .c-title { font-size: 15.5px; font-weight: 600; letter-spacing: -.2px; }
+#vC .c-sub { margin-top: 3px; font-size: 12.5px; line-height: 1.5; color: var(--lg-ink-2); }
+#vC .c-pill {
+  flex: none; align-self: flex-start; margin-top: 2px;
+  font-size: 10.5px; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--lg-ink-3); border: 1px solid var(--lg-line);
+  padding: 4px 9px; border-radius: 999px; white-space: nowrap;
+}
+#vC .c-pill.errp { color: var(--lg-error); border-color: color-mix(in srgb, var(--lg-error) 40%, transparent); }
+#vC .c-body { padding: 0 26px; }
+#vC .c-body .crow { padding: 14px 0; }
+#vC .c-foot { margin: 12px 26px 24px; }
+#vC .c-footbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  border-radius: 10px; padding: 10px 14px;
+  background: color-mix(in srgb, var(--lg-line) 30%, transparent);
+}
+#vC .c-footbar .statusline { white-space: nowrap; }
+#vC .c-errbox { margin-top: 0; }
+
+/* ── Tweaks 面板 ──────────────────────────────────────────────────── */
+.tweaks-fab {
+  position: fixed; right: 18px; bottom: 18px; z-index: 99;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--lg-ink-2); background: var(--lg-card-bg);
+  border: 1px solid var(--lg-card-border); border-radius: 999px;
+  padding: 9px 16px; cursor: pointer; box-shadow: var(--lg-card-shadow);
+  transition: color .18s, border-color .18s;
+}
+.tweaks-fab:hover { color: var(--lg-ink); border-color: var(--lg-line-hover); }
+.tweaks {
+  position: fixed; right: 18px; bottom: 64px; z-index: 99; width: 292px;
+  display: none; border-radius: 16px; padding: 18px;
+  background: var(--lg-card-bg); border: 1px solid var(--lg-card-border);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, .18);
+}
+.tweaks.open { display: block; }
+.tweaks h3 {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
+  color: var(--lg-ink-3); margin-bottom: 14px;
+}
+.tw-group { margin-bottom: 14px; }
+.tw-group:last-child { margin-bottom: 0; }
+.tw-label { font-size: 11px; font-weight: 600; color: var(--lg-ink-2); margin-bottom: 7px; }
+.tw-seg { display: flex; gap: 5px; }
+.tw-seg button {
+  flex: 1; height: 30px; border-radius: 8px; border: 1px solid var(--lg-line);
+  background: transparent; color: var(--lg-ink-2); font-size: 11.5px; cursor: pointer;
+  transition: all .15s; white-space: nowrap; padding: 0 6px;
+}
+.tw-seg button:hover { border-color: var(--lg-line-hover); color: var(--lg-ink); }
+.tw-seg button.on {
+  border-color: color-mix(in srgb, var(--lg-green) 45%, transparent);
+  background: color-mix(in srgb, var(--lg-green) 8%, transparent);
+  color: var(--lg-green); font-weight: 600;
+}
+.tweaks select {
+  width: 100%; height: 32px; border-radius: 8px; padding: 0 8px;
+  border: 1px solid var(--lg-line); background: var(--lg-bg);
+  color: var(--lg-ink); font-size: 12px; font-family: inherit;
+}
+.tw-replay {
+  width: 100%; height: 32px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--lg-line); background: transparent;
+  color: var(--lg-ink-2); font-size: 12px; transition: all .15s;
+}
+.tw-replay:hover { border-color: var(--lg-line-hover); color: var(--lg-ink); }
+
+@media (prefers-reduced-motion: reduce) {
+  .bg-glow-main, .bg-glow-side, .mote, .statusline .dot,
+  #vA .a-arcsvg.indet, #vA .a-ring-inner, #vB .b-ring, .g-active, .bar.indet > i {
+    animation: none !important;
+  }
+}
+</style>
+</head>
+<body data-v="A">
+
+<!-- 背景系统 -->
+<div class="bg-grid" aria-hidden="true"></div>
+<div class="bg-glow-main" aria-hidden="true"></div>
+<div class="bg-glow-side" aria-hidden="true"></div>
+<span class="mote" style="left:18%; animation-duration:16s;" aria-hidden="true"></span>
+<span class="mote" style="left:36%; width:2px; height:2px; animation-duration:21s; animation-delay:4s;" aria-hidden="true"></span>
+<span class="mote" style="left:58%; animation-duration:14s; animation-delay:8s;" aria-hidden="true"></span>
+<span class="mote" style="left:74%; width:2px; height:2px; animation-duration:24s; animation-delay:2s;" aria-hidden="true"></span>
+<span class="mote" style="left:88%; animation-duration:18s; animation-delay:11s;" aria-hidden="true"></span>
+
+<!-- ══ 方案 A：核心装配 ══════════════════════════════════════════════ -->
+<section class="variant play" id="vA">
+  <div class="a-wrap">
+    <div class="a-core rise" style="--d:.05s">
+      <svg class="a-arcsvg" id="aArc" viewBox="0 0 248 248" aria-hidden="true">
+        <circle class="track" cx="124" cy="124" r="116"></circle>
+        <circle class="fg" id="aArcFg" cx="124" cy="124" r="116"
+                transform="rotate(-90 124 124)"
+                stroke-dasharray="728.85" stroke-dashoffset="728.85"></circle>
+      </svg>
+      <div class="a-ring-inner" aria-hidden="true"></div>
+      <span class="mark">
+        <img src="../apps/studio/public/app-icon.png" alt="" onerror="this.parentElement.classList.add('noimg')">
+        <span class="mark-letter">C</span>
+      </span>
+      <span class="a-chip" id="aChip"><b>0%</b></span>
+    </div>
+
+    <div class="rise" style="--d:.12s"><span class="kicker">First-Run Setup</span></div>
+    <h1 class="rise" id="aTitle" style="--d:.18s">正在准备运行环境</h1>
+    <p class="a-sub rise" id="aSub" style="--d:.24s">首次启动需要下载核心组件，只需这一次，之后打开即用。</p>
+
+    <div class="a-panel rise" style="--d:.32s">
+      <div class="rows" id="aRows"></div>
+      <div class="errbox" id="aErr">
+        <button type="button" class="btn btn-primary" data-act="retry">重试下载</button>
+        <button type="button" class="btn btn-outline" data-act="sys">使用本机已安装的 Claude 继续</button>
+        <p class="foot" data-slot="errfoot"></p>
+      </div>
+    </div>
+
+    <div class="statusline a-status rise" id="aStatus" style="--d:.4s">
+      <i class="dot"></i><span>Checking Components</span>
+    </div>
+  </div>
+</section>
+
+<!-- ══ 方案 B：HUD 分屏 ══════════════════════════════════════════════ -->
+<section class="variant" id="vB">
+  <div class="b-wrap">
+    <aside>
+      <div class="b-brand rise" style="--d:.02s">
+        <span class="mark">
+          <img src="../apps/studio/public/app-icon.png" alt="" onerror="this.parentElement.classList.add('noimg')">
+          <span class="mark-letter">C</span>
+        </span>
+        <span>Cowork</span>
+      </div>
+      <div class="b-orbit rise" style="--d:.1s" aria-hidden="true">
+        <div class="b-ring"></div>
+        <div class="b-ring inner"></div>
+        <span class="mark">
+          <img src="../apps/studio/public/app-icon.png" alt="" onerror="this.parentElement.classList.add('noimg')">
+          <span class="mark-letter">C</span>
+        </span>
+      </div>
+      <div class="b-slogan rise" style="--d:.2s">
+        <h2>第一次启动<br>正在装好你的 AI 工作台</h2>
+        <p>只需要这一次<br>之后打开即用</p>
+      </div>
+      <div class="statusline b-side-status rise" id="bSideStatus" style="--d:.3s">
+        <i class="dot"></i><span>Checking Components</span>
+      </div>
+    </aside>
+
+    <div class="b-main">
+      <div class="b-inner">
+        <div class="rise" style="--d:.05s"><span class="kicker">First-Run Setup</span></div>
+        <h1 class="rise" id="bTitle" style="--d:.12s">正在准备运行环境</h1>
+        <p class="b-sub rise" id="bSub" style="--d:.18s">首次启动需要下载核心组件，只需这一次，之后打开即用。</p>
+
+        <div class="b-hero rise" style="--d:.26s">
+          <div class="b-hero-cap" id="bHeroCap">预计剩余</div>
+          <div class="b-hero-val" id="bHeroVal">检查中</div>
+          <div class="b-hero-note" id="bHeroNote"></div>
+        </div>
+
+        <div class="rows b-rows rise" id="bRows" style="--d:.34s"></div>
+
+        <div class="errbox" id="bErr">
+          <button type="button" class="btn btn-primary" data-act="retry">重试下载</button>
+          <button type="button" class="btn btn-outline" data-act="sys">使用本机已安装的 Claude 继续</button>
+          <p class="foot" data-slot="errfoot"></p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ 方案 C：清单卡片 ══════════════════════════════════════════════ -->
+<section class="variant" id="vC">
+  <div class="c-wrap">
+    <div class="c-card rise" style="--d:.05s">
+      <div class="c-top" id="cTop"><i></i></div>
+      <div class="c-head">
+        <span class="mark">
+          <img src="../apps/studio/public/app-icon.png" alt="" onerror="this.parentElement.classList.add('noimg')">
+          <span class="mark-letter">C</span>
+        </span>
+        <div class="c-head-txt">
+          <div class="c-title" id="cTitle">正在准备运行环境</div>
+          <div class="c-sub" id="cSub">首次启动需要下载核心组件，只需这一次。</div>
+        </div>
+        <span class="c-pill mono" id="cPill">1 / 2</span>
+      </div>
+      <div class="c-body">
+        <div class="rows" id="cRows"></div>
+        <div class="errbox c-errbox" id="cErr">
+          <button type="button" class="btn btn-primary" data-act="retry">重试下载</button>
+          <button type="button" class="btn btn-outline" data-act="sys">使用本机已安装的 Claude 继续</button>
+          <p class="foot" data-slot="errfoot"></p>
+        </div>
+      </div>
+      <div class="c-foot">
+        <div class="c-footbar">
+          <div class="statusline" id="cStatus"><i class="dot"></i><span>Checking</span></div>
+          <span class="crow-meta mono" id="cFootMeta"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ Tweaks ═══════════════════════════════════════════════════════ -->
+<button type="button" class="tweaks-fab" id="twFab">Tweaks</button>
+<div class="tweaks" id="twPanel">
+  <h3>Tweaks</h3>
+  <div class="tw-group">
+    <div class="tw-label">方案（快捷键 1 / 2 / 3）</div>
+    <div class="tw-seg" id="twVariant">
+      <button data-v="A" class="on">A 核心装配</button>
+      <button data-v="B">B HUD 分屏</button>
+      <button data-v="C">C 清单卡片</button>
+    </div>
+  </div>
+  <div class="tw-group">
+    <div class="tw-label">状态</div>
+    <select id="twState">
+      <option value="auto" selected>自动演示（完整循环）</option>
+      <option value="checking">检查中</option>
+      <option value="downloading">下载中</option>
+      <option value="installing">校验安装</option>
+      <option value="ready">就绪</option>
+      <option value="error">失败</option>
+      <option value="error-sys">失败 · 检测到本机 Claude</option>
+    </select>
+  </div>
+  <div class="tw-group">
+    <div class="tw-label">主题</div>
+    <div class="tw-seg" id="twTheme">
+      <button data-t="light" class="on">浅色</button>
+      <button data-t="dark">深色</button>
+      <button data-t="system">跟随系统</button>
+    </div>
+  </div>
+  <div class="tw-group">
+    <div class="tw-label">模拟网速（真实共享出口 ≈ 1.1 MB/s）</div>
+    <select id="twNet">
+      <option value="300000">弱网 · 300 KB/s</option>
+      <option value="1150000" selected>共享出口 · 1.1 MB/s</option>
+      <option value="5000000">快速 · 5 MB/s</option>
+    </select>
+  </div>
+  <div class="tw-group">
+    <button type="button" class="tw-replay" id="twReplay">重播入场动画</button>
+  </div>
+</div>
+
+<script>
+'use strict';
+const $  = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+
+/* ── 常量与状态 ── */
+const CLI_TOTAL = 88.7e6;   // AI 引擎（演示体积）
+const PY_TOTAL  = 163.4e6;  // Python 运行环境（演示体积）
+const ARC_C = 728.85;       // 2πr, r=116
+const ACCEL = 14;           // 演示加速倍率（显示的速率仍按真实网速）
+
+const CHECK_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+const X_SVG = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+
+const state = {
+  mode: 'auto',        // auto | pinned
+  phase: 'checking',   // checking | downloading | installing | ready | error
+  sysClaude: false,
+  cliDone: 0,
+  pyDone: 0,
+  netBps: 1150000,
+  phaseT: 0,
+  clock: 0
+};
+let lastStructKey = '';
+
+/* ── 格式化（镜像 runtimeComponents.ts 的 formatBytes / formatEta）── */
+function fmtBytes(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1048576).toFixed(1) + ' MB';
+}
+function fmtEta(remaining, bps) {
+  if (bps <= 0 || remaining <= 0) return '';
+  const s = Math.ceil(remaining / bps);
+  if (s < 60) return '约 ' + s + ' 秒';
+  return '约 ' + Math.ceil(s / 60) + ' 分钟';
+}
+function fmtEtaEn(remaining, bps) {
+  if (bps <= 0 || remaining <= 0) return '';
+  const s = Math.ceil(remaining / bps);
+  if (s < 60) return 'ETA ' + s + 'S';
+  return 'ETA ' + Math.ceil(s / 60) + 'MIN';
+}
+/* 展示速率：轻微起伏，别像假数字一样钉死 */
+function displayBps() {
+  return state.netBps * (1 + 0.06 * Math.sin(state.clock / 900));
+}
+
+/* ── 视图模型 ── */
+function buildView() {
+  const p = state.phase;
+  const bps = displayBps();
+  const cliPct = Math.min(1, state.cliDone / CLI_TOTAL);
+  const pyPct  = Math.min(1, state.pyDone / PY_TOTAL);
+  const cliEta = fmtEta(CLI_TOTAL - state.cliDone, bps);
+  const pyEta  = fmtEta(PY_TOTAL - state.pyDone, bps);
+  const speed  = fmtBytes(bps) + '/s';
+
+  const cli = { name: 'AI 引擎', tag: '必需', req: true };
+  const py  = { name: 'Python 运行环境', tag: '后台', req: false };
+
+  let title, sub, statusEn, statusShort, statusErr = false;
+  let heroCap = '预计剩余', heroVal = '', heroNote = '', heroErr = false;
+  let chip = '', chipErr = false;
+  let arcPct = cliPct, arcMode = '';   // '' | indet | err | done
+  let pill = '';
+
+  switch (p) {
+    case 'checking':
+      title = '正在检查运行环境';
+      sub = '正在确认需要下载的内容，通常只需几秒。';
+      statusEn = 'Checking Components'; statusShort = 'Checking';
+      Object.assign(cli, { glyph: 'active', meta: '', detail: '正在检查已安装的版本…' });
+      Object.assign(py,  { glyph: 'pending', meta: '', detail: '等待检查' });
+      heroCap = 'Checking'; heroVal = '检查中';
+      chip = '…'; arcMode = 'indet'; pill = '检查中';
+      break;
+
+    case 'downloading':
+      title = '正在准备运行环境';
+      sub = '首次启动需要下载核心组件，只需这一次，之后打开即用。';
+      statusEn = 'Downloading · ' + fmtBytes(bps) + '/S · ' + fmtEtaEn(CLI_TOTAL - state.cliDone, bps);
+      statusShort = 'Downloading';
+      Object.assign(cli, {
+        glyph: 'active', bar: cliPct,
+        meta: fmtBytes(state.cliDone) + ' / ' + fmtBytes(CLI_TOTAL),
+        detail: speed + ' · ' + cliEta
+      });
+      Object.assign(py, { glyph: 'pending', meta: fmtBytes(PY_TOTAL), detail: '排队中 · 等 AI 引擎完成后开始' });
+      heroVal = cliEta || '计算中…';
+      heroNote = speed + ' · 共 ' + fmtBytes(CLI_TOTAL);
+      chip = '<b>' + Math.round(cliPct * 100) + '%</b>';
+      pill = '1 / 2 · 下载中';
+      break;
+
+    case 'installing':
+      title = '正在准备运行环境';
+      sub = '下载完成，正在校验并安装，马上就好。';
+      statusEn = 'Verifying · Installing'; statusShort = 'Installing';
+      Object.assign(cli, {
+        glyph: 'active', bar: 1,
+        meta: fmtBytes(CLI_TOTAL),
+        detail: '正在校验并安装…'
+      });
+      Object.assign(py, {
+        glyph: 'active', bar: pyPct,
+        meta: fmtBytes(state.pyDone) + ' / ' + fmtBytes(PY_TOTAL),
+        detail: speed + ' · ' + pyEta
+      });
+      heroCap = 'Installing'; heroVal = '安装中';
+      chip = '校验中'; arcPct = 1; pill = '2 / 2 · 安装中';
+      break;
+
+    case 'ready':
+      title = '准备就绪';
+      sub = '运行环境已装好，即将进入应用。';
+      statusEn = 'System Ready'; statusShort = 'Ready';
+      Object.assign(cli, { glyph: 'done', meta: fmtBytes(CLI_TOTAL), detail: '已就绪' });
+      Object.assign(py, {
+        glyph: 'active', bar: pyPct,
+        meta: fmtBytes(state.pyDone) + ' / ' + fmtBytes(PY_TOTAL),
+        detail: '后台继续下载，不影响使用'
+      });
+      heroCap = 'Ready'; heroVal = '完成';
+      chip = '<b>完成</b>'; arcPct = 1; arcMode = 'done'; pill = '已就绪';
+      break;
+
+    case 'error':
+      title = '组件准备失败';
+      sub = '下载没有完成，应用暂时无法使用。';
+      statusEn = 'Download Interrupted'; statusShort = 'Interrupted'; statusErr = true;
+      Object.assign(cli, {
+        glyph: 'error', bar: cliPct, barErr: true,
+        meta: fmtBytes(state.cliDone) + ' / ' + fmtBytes(CLI_TOTAL),
+        detail: '下载中断：网络连接超时（已自动重试 3 次）', err: true
+      });
+      Object.assign(py, { glyph: 'pending', meta: '', detail: '已暂停' });
+      heroCap = 'Interrupted'; heroVal = '已中断'; heroErr = true;
+      chip = '<b>已中断</b>'; chipErr = true; arcMode = 'err'; pill = '失败';
+      break;
+  }
+
+  return {
+    structKey: p + '|' + state.sysClaude,
+    rows: [cli, py],
+    title, sub, statusEn, statusShort, statusErr,
+    heroCap, heroVal, heroNote, heroErr,
+    chip, chipErr, arcPct, arcMode, pill,
+    isError: p === 'error'
+  };
+}
+
+/* ── 行渲染 ── */
+function glyphHtml(kind) {
+  if (kind === 'done')  return '<span class="g g-done">' + CHECK_SVG + '</span>';
+  if (kind === 'error') return '<span class="g g-error">' + X_SVG + '</span>';
+  if (kind === 'active') return '<span class="g g-active"></span>';
+  return '<span class="g g-pending"></span>';
+}
+function rowHtml(r) {
+  const bar = (r.bar != null)
+    ? '<div class="bar' + (r.barErr ? ' barerr' : '') + '"><i style="width:' + (r.bar * 100).toFixed(1) + '%"></i></div>'
+    : '';
+  return '<div class="crow">' + glyphHtml(r.glyph) +
+    '<div class="crow-main">' +
+      '<div class="crow-head">' +
+        '<span class="crow-name">' + r.name +
+          '<span class="crow-tag' + (r.req ? ' req' : '') + '">' + r.tag + '</span>' +
+        '</span>' +
+        '<span class="crow-meta mono">' + (r.meta || '') + '</span>' +
+      '</div>' + bar +
+      '<div class="crow-detail' + (r.err ? ' err' : '') + '">' + r.detail + '</div>' +
+    '</div></div>';
+}
+
+/* ── 渲染 ── */
+function render() {
+  const vm = buildView();
+  const rebuild = vm.structKey !== lastStructKey;
+  if (rebuild) lastStructKey = vm.structKey;
+
+  ['aRows', 'bRows', 'cRows'].forEach(function (id) {
+    const c = $('#' + id);
+    if (rebuild) {
+      c.innerHTML = vm.rows.map(rowHtml).join('');
+    } else {
+      const rows = $$('.crow', c);
+      vm.rows.forEach(function (r, i) {
+        const el = rows[i]; if (!el) return;
+        $('.crow-meta', el).textContent = r.meta || '';
+        const det = $('.crow-detail', el);
+        det.textContent = r.detail;
+        det.classList.toggle('err', !!r.err);
+        const bar = $('.bar > i', el);
+        if (bar && r.bar != null) bar.style.width = (r.bar * 100).toFixed(1) + '%';
+      });
+    }
+  });
+
+  /* 标题 / 副标题 */
+  $('#aTitle').textContent = vm.title;  $('#aSub').textContent = vm.sub;
+  $('#bTitle').textContent = vm.title;  $('#bSub').textContent = vm.sub;
+  $('#cTitle').textContent = vm.title;
+  $('#cSub').textContent = vm.isError ? '下载没有完成，应用暂时无法使用。' : '首次启动需要下载核心组件，只需这一次。';
+
+  /* 状态行 */
+  [['#aStatus', vm.statusEn], ['#bSideStatus', vm.statusEn]].forEach(function (pair) {
+    const el = $(pair[0]);
+    $('span', el).textContent = pair[1];
+    el.classList.toggle('err', vm.statusErr);
+  });
+  const cs = $('#cStatus');
+  $('span', cs).textContent = vm.statusShort;
+  cs.classList.toggle('err', vm.statusErr);
+  $('#cFootMeta').textContent =
+    state.phase === 'downloading' ? fmtBytes(displayBps()) + '/s · ' + fmtEta(CLI_TOTAL - state.cliDone, displayBps())
+    : state.phase === 'installing' ? fmtBytes(displayBps()) + '/s'
+    : '';
+
+  /* A：进度环 + 徽标 */
+  const arc = $('#aArc');
+  arc.classList.toggle('indet', vm.arcMode === 'indet');
+  arc.classList.toggle('err',   vm.arcMode === 'err');
+  arc.classList.toggle('done',  vm.arcMode === 'done');
+  const fg = $('#aArcFg');
+  if (vm.arcMode === 'indet') {
+    fg.setAttribute('stroke-dasharray', '96 ' + (ARC_C - 96));
+    fg.setAttribute('stroke-dashoffset', '0');
+  } else {
+    fg.setAttribute('stroke-dasharray', String(ARC_C));
+    fg.setAttribute('stroke-dashoffset', String(ARC_C * (1 - vm.arcPct)));
+  }
+  const chipEl = $('#aChip');
+  chipEl.innerHTML = vm.chip;
+  chipEl.classList.toggle('errc', vm.chipErr);
+
+  /* B：ETA 主读数 */
+  $('#bHeroCap').textContent = vm.heroCap;
+  const hv = $('#bHeroVal');
+  hv.textContent = vm.heroVal;
+  hv.classList.toggle('errv', vm.heroErr);
+  $('#bHeroNote').textContent = vm.heroNote;
+
+  /* C：顶部细进度 + 徽标 */
+  const cTop = $('#cTop');
+  cTop.classList.toggle('indet', vm.arcMode === 'indet');
+  cTop.classList.toggle('errt', vm.arcMode === 'err');
+  if (vm.arcMode !== 'indet') $('i', cTop).style.width = (vm.arcPct * 100).toFixed(1) + '%';
+  const pillEl = $('#cPill');
+  pillEl.textContent = vm.pill;
+  pillEl.classList.toggle('errp', vm.isError);
+
+  /* 错误动作区 */
+  ['#aErr', '#bErr', '#cErr'].forEach(function (sel) {
+    const box = $(sel);
+    box.classList.toggle('show', vm.isError);
+    $('[data-act="sys"]', box).style.display = state.sysClaude ? '' : 'none';
+    $('[data-slot="errfoot"]', box).textContent = state.sysClaude
+      ? '将使用你本机安装的 Claude Code 与你自己的 Anthropic 账号，模型和计费都以该账号为准。'
+      : '若反复失败，请检查网络后重启应用。';
+  });
+}
+
+/* ── 状态机 / 模拟 ── */
+function setPhase(p) { state.phase = p; state.phaseT = 0; }
+
+function pinState(v) {
+  state.mode = 'pinned';
+  state.sysClaude = v === 'error-sys';
+  const p = v === 'error-sys' ? 'error' : v;
+  switch (p) {
+    case 'checking':    state.cliDone = 0;               state.pyDone = 0;              break;
+    case 'downloading': state.cliDone = CLI_TOTAL * .36; state.pyDone = 0;              break;
+    case 'installing':  state.cliDone = CLI_TOTAL;       state.pyDone = PY_TOTAL * .12; break;
+    case 'ready':       state.cliDone = CLI_TOTAL;       state.pyDone = PY_TOTAL * .3;  break;
+    case 'error':       state.cliDone = CLI_TOTAL * .62; state.pyDone = 0;              break;
+  }
+  setPhase(p);
+  render();
+}
+
+let lastTs = performance.now();
+setInterval(function () {
+  const now = performance.now();
+  const dt = Math.min(400, now - lastTs);
+  lastTs = now;
+  state.clock += dt;
+  state.phaseT += dt;
+  const step = state.netBps * ACCEL * dt / 1000;
+
+  if (state.mode === 'auto') {
+    switch (state.phase) {
+      case 'checking':
+        if (state.phaseT > 1400) setPhase('downloading');
+        break;
+      case 'downloading':
+        state.cliDone += step;
+        if (state.cliDone >= CLI_TOTAL) { state.cliDone = CLI_TOTAL; setPhase('installing'); }
+        break;
+      case 'installing':
+        state.pyDone += step * .6;
+        if (state.phaseT > 2600) setPhase('ready');
+        break;
+      case 'ready':
+        state.pyDone = Math.min(PY_TOTAL, state.pyDone + step * .6);
+        if (state.phaseT > 3400) { state.cliDone = 0; state.pyDone = 0; setPhase('checking'); }
+        break;
+    }
+  } else {
+    /* 钉住的状态里保留必要的动感 */
+    if (state.phase === 'downloading') {
+      state.cliDone += step;
+      if (state.cliDone > CLI_TOTAL * .93) state.cliDone = CLI_TOTAL * .18;
+    } else if (state.phase === 'installing') {
+      state.pyDone += step * .6;
+      if (state.pyDone > PY_TOTAL * .8) state.pyDone = PY_TOTAL * .06;
+    } else if (state.phase === 'ready') {
+      state.pyDone = Math.min(PY_TOTAL * .96, state.pyDone + step * .3);
+    }
+  }
+  render();
+}, 120);
+
+/* ── Tweaks ── */
+$('#twFab').addEventListener('click', function () {
+  $('#twPanel').classList.toggle('open');
+});
+
+function setVariant(v) {
+  document.body.dataset.v = v;
+  $$('#twVariant button').forEach(function (b) { b.classList.toggle('on', b.dataset.v === v); });
+  replayRise();
+}
+$('#twVariant').addEventListener('click', function (e) {
+  const b = e.target.closest('button');
+  if (b) setVariant(b.dataset.v);
+});
+document.addEventListener('keydown', function (e) {
+  if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;
+  if (e.key === '1') setVariant('A');
+  if (e.key === '2') setVariant('B');
+  if (e.key === '3') setVariant('C');
+});
+
+$('#twState').addEventListener('change', function (e) {
+  const v = e.target.value;
+  if (v === 'auto') {
+    state.mode = 'auto'; state.sysClaude = false;
+    state.cliDone = 0; state.pyDone = 0;
+    setPhase('checking'); render();
+  } else {
+    pinState(v);
+  }
+});
+
+/* 主题：浅 / 深 / 跟随系统 */
+const mq = window.matchMedia('(prefers-color-scheme: dark)');
+let themeMode = 'light';
+function applyTheme() {
+  const dark = themeMode === 'dark' || (themeMode === 'system' && mq.matches);
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+}
+mq.addEventListener('change', applyTheme);
+$('#twTheme').addEventListener('click', function (e) {
+  const b = e.target.closest('button');
+  if (!b) return;
+  themeMode = b.dataset.t;
+  $$('#twTheme button').forEach(function (x) { x.classList.toggle('on', x === b); });
+  applyTheme();
+});
+
+$('#twNet').addEventListener('change', function (e) {
+  state.netBps = Number(e.target.value);
+});
+
+function replayRise() {
+  const v = $('#v' + document.body.dataset.v);
+  v.classList.remove('play');
+  void v.offsetWidth;
+  v.classList.add('play');
+}
+$('#twReplay').addEventListener('click', replayRise);
+
+/* 错误态按钮：原型里演示为回到下载中 */
+document.addEventListener('click', function (e) {
+  const b = e.target.closest('[data-act="retry"]');
+  if (b) pinState('downloading');
+});
+
+render();
+</script>
+</body>
+</html>
