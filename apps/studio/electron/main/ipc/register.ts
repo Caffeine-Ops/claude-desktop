@@ -173,7 +173,9 @@ import {
   type WritingReadSectionsPayload,
   type WritingReadSectionsResultIpc,
   type WritingWriteSectionPayload,
-  type WritingWriteSectionResultIpc
+  type WritingWriteSectionResultIpc,
+  type WritingWechatHtmlPayload,
+  type WritingWechatHtmlResult
 } from '../../shared/ipc-channels'
 import { setKbRoot, getKbRoot, readKbIndex, kbOutDir, getKbConfig, setKbRemote, kbStoreDir, setKbMode } from '../core/kbIndexStore'
 import { scanLocalDocs, listLocalDocsDirs, setLocalDocsDir } from '../core/localDocsScan'
@@ -215,6 +217,7 @@ import {
   readWritingSections,
   writeWritingSection
 } from '../core/writingProject'
+import { markdownToWechatHtml, loadWechatStyle, FALLBACK_WECHAT_STYLE } from '../core/writingWechat'
 import {
   importBackgroundThemeFromFile,
   listBackgroundThemes,
@@ -492,6 +495,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.WRITING_SCAN)
   ipcMain.removeHandler(IPC_CHANNELS.WRITING_READ_SECTIONS)
   ipcMain.removeHandler(IPC_CHANNELS.WRITING_WRITE_SECTION)
+  ipcMain.removeHandler(IPC_CHANNELS.WRITING_WECHAT_HTML)
   ipcMain.removeHandler(IPC_CHANNELS.BACKGROUND_THEME_IMPORT)
   ipcMain.removeHandler(IPC_CHANNELS.BACKGROUND_THEME_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.BACKGROUND_THEME_DELETE)
@@ -3311,6 +3315,23 @@ export function registerIpcHandlers(): void {
         payload.markdown,
         payload.expectedMtimeMs
       )
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.WRITING_WECHAT_HTML,
+    async (
+      _event,
+      payload: WritingWechatHtmlPayload
+    ): Promise<WritingWechatHtmlResult> => {
+      const loaded = loadWechatStyle(payload.styleName)
+      const style = loaded ?? FALLBACK_WECHAT_STYLE
+      return {
+        ok: true,
+        html: markdownToWechatHtml(payload.markdown ?? '', style),
+        // UI 据此在角标提示「样式未加载」——降级要看得见，不能静默换一套样式。
+        styleFallback: loaded === null
+      }
+    }
   )
 
   // Engine-to-renderer event forwarding lives in the ChatEngine

@@ -164,7 +164,9 @@ import {
   type WritingReadSectionsPayload,
   type WritingReadSectionsResultIpc,
   type WritingWriteSectionPayload,
-  type WritingWriteSectionResultIpc
+  type WritingWriteSectionResultIpc,
+  type WritingWechatHtmlPayload,
+  type WritingWechatHtmlResult
 } from '../shared/ipc-channels'
 import type { ProposalMetricRecord } from '../shared/proposal'
 import type { KbRemoteConfig } from '../shared/kbConfig'
@@ -1133,7 +1135,9 @@ const chatApi: ChatApi = {
   writingWriteSection: (
     payload: WritingWriteSectionPayload
   ): Promise<WritingWriteSectionResultIpc> =>
-    ipcRenderer.invoke(IPC_CHANNELS.WRITING_WRITE_SECTION, payload)
+    ipcRenderer.invoke(IPC_CHANNELS.WRITING_WRITE_SECTION, payload),
+  writingWechatHtml: (payload: WritingWechatHtmlPayload): Promise<WritingWechatHtmlResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.WRITING_WECHAT_HTML, payload)
 }
 
 /**

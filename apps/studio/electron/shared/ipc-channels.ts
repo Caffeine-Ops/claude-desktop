@@ -1019,6 +1019,11 @@ export const IPC_CHANNELS = {
    */
   WRITING_WRITE_SECTION: 'writing:write-section',
   /**
+   * Renderer → main. markdown → 公众号内联样式 HTML。样式 JSON 在 skill 目录里，
+   * 只有 main 能用 skillsDir() 定位；且预览与「复制」共用这同一份 HTML，两者天然一致。
+   */
+  WRITING_WECHAT_HTML: 'writing:wechat-html',
+  /**
    * Renderer → main. 语义检索：模糊自然语言 → 混合(向量+BM25)命中片段+出处。供写方案
    * 搜索面板主动用。embedding 在 utilityProcess、不冻 main；模型缺失/stale 降级 BM25。
    * staleIndex=true 时结果是 BM25 降级（有内容但非语义），面板顶部显「需重建索引」条。
@@ -2411,6 +2416,19 @@ export type WritingWriteSectionResultIpc =
   | { ok: false; conflict: true; current: { markdown: string; mtimeMs: number } | null }
   | { ok: false; conflict?: false; error: string }
 
+/** Payload for WRITING_WECHAT_HTML. `styleName` 对应 skill 目录里的两个导出样式文件。 */
+export interface WritingWechatHtmlPayload {
+  markdown: string
+  styleName: 'wechat-default' | 'wechat-serif'
+}
+/**
+ * Result of WRITING_WECHAT_HTML. `styleFallback: true` = skill 目录的样式 JSON 读不到，
+ * 已降级用内置默认样式——UI 据此在角标提示「样式未加载」，降级要看得见，不能静默换一套样式。
+ */
+export type WritingWechatHtmlResult =
+  | { ok: true; html: string; styleFallback: boolean }
+  | { ok: false; error: string }
+
 /** Payload for PROPOSAL_EXPORT. */
 export interface ProposalExportPayload {
   markdown: string
@@ -3590,6 +3608,11 @@ export interface ChatApi {
    * （WRITING_WRITE_SECTION 通道注释）。
    */
   writingWriteSection(payload: WritingWriteSectionPayload): Promise<WritingWriteSectionResultIpc>
+  /**
+   * markdown → 公众号内联样式 HTML（WRITING_WECHAT_HTML 通道注释）。main 生成、渲染层拿成品——
+   * 打印预览 tab 的微信分支与「复制公众号 HTML」共用同一个字符串，天然一致。
+   */
+  writingWechatHtml(payload: WritingWechatHtmlPayload): Promise<WritingWechatHtmlResult>
 }
 
 /**

@@ -19,6 +19,7 @@ import {
 } from '../../lib/writingRevision'
 import { sendWritingMessage } from '../../lib/sendWritingMessage'
 import { WritingPaper } from './WritingPaper'
+import { WritingPreview } from './WritingPreview'
 import { WritingRevisionReviewCard } from './WritingRevisionReview'
 
 /**
@@ -333,9 +334,10 @@ export function WritingDocPanel(): React.JSX.Element | null {
           onRevise={(target, instruction) => void submitRevision(target, instruction)}
         />
       </div>
-      {/* 打印预览在 Task 8 接入；此处先占位，避免切过去是一片空白无解释。 */}
-      <div className={cn('grid flex-1 place-items-center', tab === 'preview' ? '' : 'hidden')}>
-        <div className="text-[12.5px] text-muted-foreground">打印预览即将接入</div>
+      {/* 用 hidden 类切换而非条件卸载：WritingPreview 内部靠 lastRendered 缓存跳过重渲，
+          切走再切回若被卸载会丢掉这份缓存、每次都重新生成一遍 PDF/微信 HTML。 */}
+      <div className={cn('flex min-h-0 flex-1 flex-col', tab === 'preview' ? '' : 'hidden')}>
+        <WritingPreview active={tab === 'preview'} />
       </div>
 
       {/* 对照卡挂在**两个 tab 之外**（面板级），不随 tab 隐藏：待裁决的改写会挡住队列排空
