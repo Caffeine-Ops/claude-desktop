@@ -31,6 +31,13 @@ import { shouldBlockOnComponents, useRuntimeComponentsStore } from '@/src/stores
  *
  * 根层铁律：这棵树在 `.chat-app` 之外，canvas 的全局 reset 会命中裸
  * `<button>`——交互元素一律带 `data-slot` 逃逸。文案硬编码中文（根层无 i18n）。
+ *
+ * **`--lg-*` 是类作用域变量，不是 :root 全局**（定义在 login.css 的
+ * `.login-screen, .upgrade-screen, .component-gate` 选择器组，亮/暗各一组）。
+ * 根节点必须挂 `component-gate` 类，否则每一条 `var(--lg-*)` 都解析失败、
+ * 整条声明作废：遮罩变透明、首页穿透过来、卡片没底色——首版就是这样（2026-07-29
+ * 修）。加新 lg token 消费者时照做，并在 login.css 两个选择器组各加一行。
+ * 卡片用 `--lg-card-bg/-border/-shadow`（同订阅页卡片），**没有 `--lg-card`**。
  */
 
 function ComponentRow({ c }: { c: ComponentStatus }): React.JSX.Element {
@@ -102,12 +109,12 @@ export function ComponentGate(): React.JSX.Element | null {
   const busy = required.some((c) => c.phase === 'downloading' || c.phase === 'verifying' || c.phase === 'installing')
 
   return (
-    <div className="fixed inset-0 z-[9990] flex items-center justify-center bg-[color:var(--lg-bg)]">
+    <div className="component-gate fixed inset-0 z-[9990] flex items-center justify-center bg-[color:var(--lg-bg)]">
       {/* 全屏层盖住了根 layout 的 .window-drag-strip，自带一条拖拽条，
           否则整个窗口在门开着时拖不动（Login/Upgrade 同样处理）。 */}
       <div className="absolute inset-x-0 top-0 h-12 [-webkit-app-region:drag]" />
 
-      <div className="w-[420px] rounded-2xl border border-[color:var(--lg-line)] bg-[color:var(--lg-card)] p-7 shadow-2xl">
+      <div className="w-[420px] rounded-2xl border border-[color:var(--lg-card-border)] bg-[color:var(--lg-card-bg)] p-7 shadow-[var(--lg-card-shadow)]">
         <div className="text-[15px] font-semibold text-[color:var(--lg-ink)]">
           {isError ? '组件准备失败' : busy ? '正在准备运行环境' : '正在检查运行环境'}
         </div>

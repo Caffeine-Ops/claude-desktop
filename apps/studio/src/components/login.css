@@ -14,13 +14,18 @@
  * （green-600），暗档提亮 #3bce78——发光/网格/轨道环的 alpha 也分档，
  * 亮底上发光要收敛、线条要加深才可见。 */
 
-/* 变量作用域同时覆盖登录页与订阅页（UpgradeScreen 复用同一套科技感
- * token，2026-07-06 订阅页落地时扩展）——新增消费者时在两个选择器组
- * 各加一行即可。（2026-07-21：使用记录页一度以 UsageScreen overlay 形式
+/* 变量作用域同时覆盖登录页、订阅页与运行时组件门（三者复用同一套科技感
+ * token，2026-07-06 订阅页落地时扩展，2026-07-29 组件门加入）——新增消费者
+ * 时在两个选择器组各加一行即可。**只加一组会静默半瞎**（暗档不翻），
+ * ComponentGate 首版更狠：一行都没加，全部 var(--lg-*) 解析失败 → 遮罩透明、
+ * 首页穿透。（2026-07-21：使用记录页一度以 UsageScreen overlay 形式
  * 复用过这套 token，改嫁设置页 UsageSection.tsx 后已退回 shadcn 语义
- * token，这里的扩展随之撤销。） */
+ * token，这里的扩展随之撤销。）
+ * 这两个选择器**只声明变量、不带任何自身样式**，挂上去零副作用——新消费者
+ * 直接在根节点加类即可，不用担心继承到登录页的背景/动效。 */
 .login-screen,
-.upgrade-screen {
+.upgrade-screen,
+.component-gate {
   /* ── 亮档 ── */
   --lg-bg: #f4f6f5;
   --lg-ink: #1d1d1f;
@@ -83,7 +88,8 @@
 }
 
 .dark .login-screen,
-.dark .upgrade-screen {
+.dark .upgrade-screen,
+.dark .component-gate {
   /* ── 暗档（原 HUD 定稿值） ── */
   --lg-bg: #0a0c0b;
   --lg-ink: #f2f4f3;
