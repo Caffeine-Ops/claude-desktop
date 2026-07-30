@@ -1,10 +1,14 @@
+import { Fragment, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'motion/react'
+import { Check, X } from 'lucide-react'
+import type { PptSkillPhase } from '@desktop-shared/pptSkillStatus'
 
+import { cn } from '@/src/lib/utils'
 import { usePptSkillStore } from '../../stores/pptSkill'
 
 /**
- * ppt-creator skill 的下载进度层（2026-07-29）。
+ * ppt-creator skill 的下载进度层（2026-07-29，2026-07-30 加三步 stepper 重设计）。
  *
  * 这个 skill 不再随安装包发布（99MB / 12167 个文件），首次点「制作PPT」时
  * 才下载。三段工作共用这一个层，因为对用户来说它们是同一件事「正在准备」：
@@ -13,6 +17,12 @@ import { usePptSkillStore } from '../../stores/pptSkill'
  *
  * ③ 尤其要在这里体现：它原本是进会话后由 AI 跑第一个命令时才触发的，用户会
  * 在毫无提示的情况下干等几分钟（见 pptSkillInstaller 的注释）。
+ *
+ * 旧版只有一根裸进度条：下载条走到 100% 后界面突然又变成「正在安装」，
+ * 用户分不清这是卡住重来了还是在正常推进。加了三步 stepper（下载→安装→
+ * 准备环境）后，任何时刻都能看出「一共几步、现在第几步、前面几步已经
+ * 完成」——不再需要靠读标题文字猜进度。方案取自
+ * docs/ui-prototype-ppt-skill-gate.html 的方案 A。
  *
  * **只挡 PPT 入口，不挡应用**：这一层是 portal 到 body 的覆盖层，关掉它下载
  * 继续在后台跑，用户可以先去做别的事。
@@ -41,10 +51,31 @@ const PHASE_HINT: Record<string, string> = {
   error: ''
 }
 
+type StepIndex = 0 | 1 | 2
+
+const STEP_LABEL: Record<StepIndex, string> = {
+  0: '下载',
+  1: '安装',
+  2: '准备环境'
+}
+
+/** phase → 所属步骤；`ready` 不在其中，单独按「三步全部完成」处理。 */
+const PHASE_STEP: Partial<Record<PptSkillPhase, StepIndex>> = {
+  idle: 0,
+  checking: 0,
+  downloading: 0,
+  extracting: 1,
+  'preparing-python': 2
+}
+
 function formatBytes(n: number): string {
   if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`
   if (n >= 1024) return `${(n / 1024).toFixed(0)} KB`
   return `${n} B`
+}
+
+function formatCount(n: number): string {
+  return n.toLocaleString('en-US')
 }
 
 export function PptSkillGate(): React.JSX.Element | null {
@@ -52,23 +83,55 @@ export function PptSkillGate(): React.JSX.Element | null {
   const status = usePptSkillStore((s) => s.status)
   const closeOverlay = usePptSkillStore((s) => s.closeOverlay)
 
+  /*
+   * status 不记录「哪一步失败」——phase 变成 'error' 后，失败前它是在下载
+   * 还是解压这段信息就丢了（pptSkillInstaller.ts 的 setStatus 只 merge
+   * 字段，不留痕迹）。用这个 ref 记住失败前最后停留的步骤，出错时 stepper
+   * 才知道该在哪个节点画红叉，而不是每次都画在第一步。
+   */
+  const lastStepRef = useRef<StepIndex>(0)
+  if (status && status.phase in PHASE_STEP) {
+    lastStepRef.current = PHASE_STEP[status.phase] as StepIndex
+  }
+
   if (!overlayOpen || !status) return null
 
-  const phase = status.phase
+  const { phase } = status
   const isError = phase === 'error'
+  const isReady = phase === 'ready'
   // 跨进程来的数据做一次兜底：dev 下 main 与 renderer 的热重载节奏不同步时，
   // 可能收到还没有这两个字段的旧结构，直接 .length 会让整个进度层白屏。
   const logTail = status.logTail ?? []
-  // 下载阶段按字节算、解压按文件数算；总量未知（0）时退化成不确定进度条，
-  // 而不是显示 NaN% 或假装 0%。
-  const pct =
-    status.total > 0 ? Math.min(100, Math.round((status.done / status.total) * 100)) : null
-  const detail =
+  // 下载/解压阶段按分子分母算；检查/准备环境阶段总量恒为 0，退化成不确定
+  // 进度条，而不是显示 NaN% 或假装 0%。
+  const pct = status.total > 0 ? Math.min(1, status.done / status.total) : null
+  const currentStep = lastStepRef.current
+
+  const stepState = (i: StepIndex): 'pending' | 'active' | 'done' | 'error' => {
+    if (isReady) return 'done'
+    if (i < currentStep) return 'done'
+    if (i > currentStep) return 'pending'
+    return isError ? 'error' : 'active'
+  }
+
+  /** 连接线（下载→安装、安装→准备环境）的填充比例：走过的步定死 100%，正在走的步跟着该步自己的百分比长，失败就停在原地不往前画。参数只在 i=0/1 时有意义（第 2 步后面没有线），签名放宽到 StepIndex 只是为了让调用处（数组里天然是 0|1|2 的 i）不用额外收窄类型。 */
+  const lineFill = (i: StepIndex): number => {
+    if (isReady || currentStep > i) return 1
+    if (currentStep === i && !isError && pct !== null) return pct
+    return 0
+  }
+
+  const progressMeta =
     phase === 'downloading' && status.total > 0
       ? `${formatBytes(status.done)} / ${formatBytes(status.total)}`
       : phase === 'extracting' && status.total > 0
-        ? `${status.done} / ${status.total} 个文件`
+        ? `${formatCount(status.done)} / ${formatCount(status.total)} 个文件`
         : ''
+
+  // 失败若发生在「检查」阶段（清单都没拉到），done/total 从未被写过，此时
+  // 没有任何进度可展示，只留错误文案；一旦下载/解压有过进度再失败，红色
+  // 冻结进度条能让用户看出「卡在哪、走到多远」，比只剩文字更直观。
+  const showBar = !isReady && (pct !== null || !isError)
 
   return createPortal(
     <AnimatePresence>
@@ -84,7 +147,7 @@ export function PptSkillGate(): React.JSX.Element | null {
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.98 }}
           transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
-          className="w-[380px] rounded-2xl border border-border bg-card p-6 shadow-2xl"
+          className="w-[400px] rounded-2xl border border-border bg-card p-6 shadow-2xl"
         >
           <div className="text-[15px] font-semibold text-foreground">
             {PHASE_TITLE[phase] ?? '正在准备…'}
@@ -102,15 +165,64 @@ export function PptSkillGate(): React.JSX.Element | null {
             </p>
           )}
 
-          {!isError && phase !== 'ready' && (
+          {/* 三步旅程：下载 → 安装 → 准备环境。节点间的连接线本身就是当前步
+              的完成度，用户不需要读标题文字也能看出「还剩几步」。 */}
+          <div className="mt-4 flex items-start" aria-hidden="true">
+            {([0, 1, 2] as const).map((i) => {
+              const st = stepState(i)
+              return (
+                <Fragment key={i}>
+                  <div className="flex w-14 flex-none flex-col items-center gap-1.5">
+                    <span
+                      className={cn(
+                        'relative grid size-6 place-items-center rounded-full text-[11px] font-semibold transition-colors',
+                        st === 'pending' && 'border border-border text-muted-foreground/70',
+                        st === 'active' && 'border border-brand/45 text-brand',
+                        st === 'done' && 'bg-brand/15 text-brand',
+                        st === 'error' && 'bg-destructive/15 text-destructive'
+                      )}
+                    >
+                      {st === 'done' && <Check className="size-3" strokeWidth={3} />}
+                      {st === 'error' && <X className="size-2.5" strokeWidth={3} />}
+                      {(st === 'pending' || st === 'active') && i + 1}
+                      {st === 'active' && (
+                        <span className="absolute inset-[-1.5px] animate-spin rounded-full border-2 border-transparent border-t-brand" />
+                      )}
+                    </span>
+                    <span
+                      className={cn(
+                        'whitespace-nowrap text-[11px] transition-colors',
+                        (st === 'active' || st === 'done') && 'font-medium text-foreground',
+                        st === 'pending' && 'text-muted-foreground/70',
+                        st === 'error' && 'font-medium text-destructive'
+                      )}
+                    >
+                      {STEP_LABEL[i]}
+                    </span>
+                  </div>
+                  {i < 2 && (
+                    <div className="mt-3 h-0.5 flex-1 overflow-hidden rounded-full bg-foreground/[0.08]">
+                      <motion.div
+                        className={cn('h-full rounded-full', isError ? 'bg-destructive/60' : 'bg-brand')}
+                        animate={{ width: `${Math.round(lineFill(i) * 100)}%` }}
+                        transition={{ duration: 0.25, ease: 'easeOut' }}
+                      />
+                    </div>
+                  )}
+                </Fragment>
+              )
+            })}
+          </div>
+
+          {showBar && (
             <div className="mt-4">
               {/* 进度条：总量已知走确定进度，未知则一条循环滑块——不要用假的
                   百分比糊弄，用户等几分钟时最恨看到进度条卡在某个数字上。 */}
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-foreground/[0.08]">
                 {pct !== null ? (
                   <motion.div
-                    className="h-full rounded-full bg-brand"
-                    animate={{ width: `${pct}%` }}
+                    className={cn('h-full rounded-full', isError ? 'bg-destructive/70' : 'bg-brand')}
+                    animate={{ width: `${pct * 100}%` }}
                     transition={{ duration: 0.25, ease: 'easeOut' }}
                   />
                 ) : (
@@ -121,10 +233,12 @@ export function PptSkillGate(): React.JSX.Element | null {
                   />
                 )}
               </div>
-              <div className="mt-2 flex items-center justify-between text-[12px] text-muted-foreground/70">
-                <span>{detail}</span>
-                {pct !== null && <span>{pct}%</span>}
-              </div>
+              {progressMeta && (
+                <div className="mt-2 flex items-center justify-between text-[12px] text-muted-foreground/70">
+                  <span>{progressMeta}</span>
+                  {pct !== null && <span>{Math.round(pct * 100)}%</span>}
+                </div>
+              )}
             </div>
           )}
 
