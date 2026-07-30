@@ -46,6 +46,10 @@ skills-src/**/__pycache__/
 # 重新生成用 `bun run prebundle:daemon`。不入库。
 apps/studio/prebundled/
 
+# 图片量化缓存：prebundle-daemon.mjs 每次 rm 重建 prebundled/，压缩结果按
+# 源文件的 路径+mtime+size 缓存在这里，避免每次打包重压 124 张图。可随时删。
+apps/studio/.image-cache/
+
 .env
 .env.local
 # Exception: gpt-image-2 ships a secret-free `.env` carrying ONLY the
