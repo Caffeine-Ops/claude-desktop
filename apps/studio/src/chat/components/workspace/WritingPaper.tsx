@@ -19,8 +19,7 @@ import { WritingSelectionBubble } from './WritingSelectionBubble'
 export function WritingPaper({
   writing,
   busy = false,
-  onRevise,
-  onSelectionChange
+  onRevise
 }: {
   /**
    * 这一轮 AI 是不是正在往当前文档源里落字（`useWritingInProgress()`，见 stores/writing.ts）
@@ -36,7 +35,6 @@ export function WritingPaper({
    * 故气泡跟着这个 prop 挂载与否，而不是无条件常驻。
    */
   onRevise?: (target: WritingRevisionTarget, instruction: string) => void
-  onSelectionChange?: () => void
 }): React.JSX.Element {
   const sections = useWritingStore((s) => s.sections)
   const genre = useWritingStore((s) => s.genre)
@@ -81,8 +79,6 @@ export function WritingPaper({
       // relative：选区气泡是它的 absolute 子节点，靠这层建立包含块（气泡坐标已含 scrollTop，
       // 故会随内容一起滚，不需要在 scroll 上重算）。
       className="relative flex-1 overflow-y-auto"
-      onMouseUp={onSelectionChange}
-      onKeyUp={onSelectionChange}
     >
       {/* writing-paper / writing-block：目前全仓没有对应的 CSS 规则，是留给后续任务
           （打印预览的样式对齐、选区改写的定位/高亮）的稳定钩子——不要当成废代码清掉。 */}

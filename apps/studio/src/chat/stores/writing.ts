@@ -33,6 +33,20 @@ export interface WritingRevisionReview {
   target: WritingRevisionTarget
   before: string
   after: string
+  /**
+   * 这张对照卡**成卡那一刻**所依据的那一版正文的 mtime，写盘时当乐观锁基准。
+   *
+   * 【反直觉但必须如此，别改成「写盘时现读最新的 mtime」】：轮询每 2s 把 sections 连同
+   * mtimeMs 从盘上刷一遍。若基准取写盘那一刻的最新值，下面这条链就会静默毁掉正文：
+   *   T0 成卡（基于 M0/m0，range 与 before 都是对 M0 算的）
+   *   T1 AI 又改了这一节 → 盘上变 M1/m1 → 轮询把 store 刷成 M1/m1
+   *   T2 用户点「应用」→ 拿 m1 当基准 → 主进程比对相等、放行 → 按 M0 的块序号把内容
+   *      拼进 M1 的错误位置，无冲突提示、不可逆
+   * 也就是说「AI 在用户裁决期间又改过这一节」——乐观锁最该拦的那个场景——恰恰被漏掉，
+   * 锁实际只覆盖了「最后一次轮询到写盘」那 2 秒。基准与 target/before **同源同刻**取，
+   * 锁才真正覆盖整个用户裁决窗口。
+   */
+  baseMtimeMs: number
 }
 
 interface WritingState {

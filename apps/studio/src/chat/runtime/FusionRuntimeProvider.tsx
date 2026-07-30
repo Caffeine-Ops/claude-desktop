@@ -1957,9 +1957,22 @@ function handleWritingTurnEnd(sid: string, messageId: string): void {
     const msg = slot?.messages.find((m) => m.id === messageId) as
       | { role: string; content: Array<{ type: string; text?: string }> }
       | undefined
-    // 消息还没入 store（end 早于入库的竞态）：**不清 pending**，留给下一次 end 或用户重发
-    // ——清了等于把这条改写请求静默丢掉，用户只看到「点了没反应」。
-    if (!msg || msg.role !== 'assistant') return
+    // 消息没找到（end 早于消息入 store 的竞态）或不是 assistant：**照样清 pending**。
+    // proposal 在同一处刻意【不】记账（它最坏是少累积一次草稿，下次 end 还能补），但两边
+    // 代价不对等——写作侧 pendingRevision 同时是排空 effect 的闸，留一个永不清的 pending
+    // 会让【整个改写队列永久停摆】，且界面上没有任何解释。改写结果丢了可以重发，队列锁死
+    // 不可自愈，两害相权取轻。
+    if (!msg || msg.role !== 'assistant') {
+      console.warn('[writing-revise] 轮末找不到这条助手消息，本次改写作废（可重发）', {
+        sid,
+        messageId
+      })
+      useWritingStore.getState().setPendingRevision(null)
+      useWritingStore
+        .getState()
+        .setConflictMsg('这轮改写的回复没能读到，正文未改动，请重新发起。')
+      return
+    }
 
     // 只取 'text' part（跳过 reasoning / tool-call）：哨兵只可能出现在正文文本里。
     const fullText = msg.content
@@ -1975,12 +1988,30 @@ function handleWritingTurnEnd(sid: string, messageId: string): void {
       const before = splitBlocks(sec.markdown)
         .slice(range.start, range.end + 1)
         .join('\n\n')
-      useWritingStore.getState().setReview({ target: { ...pending, range }, before, after })
+      // range / before / baseMtimeMs 三者**必须同源同刻**取自这一个 `sec` 快照：它们共同描述
+      // 「这张对照卡是基于哪一版正文算出来的」。写盘时拿 baseMtimeMs 当乐观锁基准，锁才覆盖
+      // 整个用户裁决窗口（详见 WritingRevisionReview.baseMtimeMs 的注释——反直觉，别改）。
+      useWritingStore.getState().setReview({
+        target: { ...pending, range },
+        before,
+        after,
+        baseMtimeMs: sec.mtimeMs
+      })
     } else if (!after) {
       console.warn(
         '[writing-revise] 本轮回复里没有改写哨兵——AI 可能在反问或跑题。正文保持不变，请重发改写。',
         { sectionName: pending.sectionName, messageId }
       )
+    } else {
+      // 拿到了改写结果、但那一节已经不在 sections 里（文件被删/改名，或刚好切了文档源）。
+      // 这条落在上面两个分支之外，不出声就只剩「点了没反应」，用户无从判断是 AI 没答还是结果丢了。
+      console.warn('[writing-revise] 拿到改写结果但目标节已不存在，结果丢弃', {
+        sectionName: pending.sectionName,
+        messageId
+      })
+      useWritingStore
+        .getState()
+        .setConflictMsg(`「${pending.sectionName}」已不在文稿里，这次改写结果没有落地。`)
     }
     useWritingStore.getState().setPendingRevision(null)
   } catch (err) {

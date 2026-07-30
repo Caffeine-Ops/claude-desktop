@@ -86,6 +86,16 @@ export function WritingSelectionBubble({
     return () => document.removeEventListener('selectionchange', recompute)
   }, [containerRef])
 
+  // 选区换了目标就清掉已输入的指令。不清的话，用户对 A 段敲了半句「改口语一点」、
+  // 转头去选 B 段，那半句会原样留在框里被误发给 B 段（proposal 的气泡按 sectionId
+  // 变化复位子状态，同一个理由）。key 含区间：同一节里换段落也算换了目标。
+  const anchorKey = anchor
+    ? `${anchor.target.sectionName}:${anchor.target.range.start}-${anchor.target.range.end}`
+    : ''
+  useEffect(() => {
+    setText('')
+  }, [anchorKey])
+
   if (!anchor) return null
 
   const full = queueLen >= MAX_WRITING_REVISION_QUEUE
