@@ -57,6 +57,10 @@ export function markdownToWechatHtml(markdown: string, style: Record<string, str
     // 只去尾部空白，不去首部——对齐 export.py 的 `raw.rstrip()`。标题/引用/列表的正则都用 `^`
     // 锚点匹配整行，若像业余实现那样两端都 trim，缩进的 "# 标题" 会被判成标题，而
     // export.py 会把它当成普通段落（保留了行首空格）——两边输出必须一致。
+    // 【已知边角差异，记录不修】Python `str.rstrip()` 按 Unicode 空白定义剥尾，连全角空格
+    // （U+3000 `　`）也剥掉；这里的 `[ \t]+$` 只剥 ASCII 空格/制表符。中文稿段尾残留全角
+    // 空格的概率极低，且浏览器渲染文本节点时本就会折叠空白，不影响最终视觉——但如果哪天
+    // 逐字节比对 export.py 输出时字符串对不上，先查这一条。
     const line = raw.replace(/[ \t]+$/, '')
     if (!line.trim()) {
       closeList()

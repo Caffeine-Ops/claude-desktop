@@ -27,6 +27,9 @@ export function WritingPreview({ active }: { active: boolean }): React.JSX.Eleme
   const genre = useWritingStore((s) => s.genre)
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [wechatHtml, setWechatHtml] = useState<string>('')
+  // 样式 JSON 读不到、main 降级用了内置兜底样式时为 true——用户看到的排版与真实导出的公众号
+  // HTML 可能不一致，必须在 UI 上说出来，不能静默换一套样式（这正是预览与导出同源存在的意义）。
+  const [wechatStyleFallback, setWechatStyleFallback] = useState(false)
   const [status, setStatus] = useState<Status>('idle')
   const [errMsg, setErrMsg] = useState('')
   const urlRef = useRef<string | null>(null)
@@ -56,6 +59,7 @@ export function WritingPreview({ active }: { active: boolean }): React.JSX.Eleme
       lastRendered.current = null
       swapPdfUrl(null)
       setWechatHtml('')
+      setWechatStyleFallback(false)
       setStatus('empty')
       return
     }
@@ -68,6 +72,11 @@ export function WritingPreview({ active }: { active: boolean }): React.JSX.Eleme
         setStatus('loading')
         try {
           if (genre === 'wechat') {
+            // 跨体裁切换（A4 类 → 微信）时上一次渲染留下的 PDF blob URL 不会再显示，只会白占
+            // 内存——A4 分支靠自己的 swapPdfUrl 调用天然自洽，但这条路径没人碰 urlRef，必须在
+            // 这里手动清一次（F1：曾经的真 bug，停留在微信体裁期间那份 PDF 既不显示也不 revoke，
+            // 直到用户切回某个 A4 体裁或组件卸载才会被动清掉）。
+            swapPdfUrl(null)
             const r = await window.chatApi.writingWechatHtml({
               markdown,
               styleName: 'wechat-default'
@@ -75,6 +84,7 @@ export function WritingPreview({ active }: { active: boolean }): React.JSX.Eleme
             if (cancelled) return
             if (!r.ok) throw new Error(r.error)
             setWechatHtml(r.html)
+            setWechatStyleFallback(r.styleFallback)
           } else {
             // renderProposalPdfHtml 的第三个参数（预渲的 mermaid 图）是给方案文档用的；
             // 写作体裁不支持 mermaid 代码块，显式传 undefined——它不是可选参数，漏传会挂在
@@ -107,6 +117,14 @@ export function WritingPreview({ active }: { active: boolean }): React.JSX.Eleme
     <div className="relative flex-1 overflow-hidden">
       {genre === 'wechat' ? (
         <div className="h-full overflow-y-auto bg-neutral-100 py-6 dark:bg-neutral-900">
+          {/* F2：样式 JSON 读不到、main 已降级用内置兜底样式时必须说出来——用户看到的排版
+              与真实导出的公众号 HTML 可能不一样，静默换一套样式正是这个功能最该避免的事
+              （预览与导出同源才是它存在的理由）。纯 div，不是交互元素，无需 shadcn 原语。 */}
+          {wechatStyleFallback && (
+            <div className="mx-auto mb-3 w-[375px] rounded border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[11.5px] text-amber-700 dark:text-amber-400">
+              样式文件未找到，当前用内置样式预览——与实际导出可能有差异
+            </div>
+          )}
           <div
             className="mx-auto w-[375px] bg-white p-4 text-black shadow"
             // 内容由 main 从 markdown 生成、只输出白名单标签且正文已转义（见 writingWechat.ts）
