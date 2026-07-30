@@ -5,6 +5,9 @@ import { renderProposalPdfHtml } from '../../lib/renderProposalPdfHtml'
 import { writingStyleFor } from '../../lib/writingGenreStyle'
 import { useWritingStore } from '../../stores/writing'
 import { PreviewStateOverlay } from './PreviewStateOverlay'
+// 与方案端空态用**同一个**图标：两处预览的空态视觉语言统一，别在这里另选一个图标
+// 平白造出新的差异（图标定义住在 proposalIcons 是历史位置，不代表它只归方案用）。
+import { FileIcon } from './proposalIcons'
 import { usePreviewFrame } from './usePreviewFrame'
 
 /**
@@ -14,8 +17,9 @@ import { usePreviewFrame } from './usePreviewFrame'
  *  - 其余：走与导出 PDF 完全相同的引擎（renderProposalPdfHtml → renderProposalPdf →
  *    隐藏窗口 printToPDF），预览看的就是导出物本身，分页逐字节一致。
  *
- * 防抖 / cancelled 闸门 / objectURL 回收 / 签名缓存 / active 门控这五件事全在 usePreviewFrame
- * 里（与 ProposalPreview 共用一份，那些机制是两边一起踩坑踩出来的，事故记录见该文件头注释）。
+ * 防抖 / cancelled 闸门 / objectURL 回收 / 签名缓存 / active 门控 / 重试这六件事全在
+ * usePreviewFrame 里（与 ProposalPreview 共用一份，那些机制是两边一起踩坑踩出来的，事故
+ * 记录见该文件头注释）。
  * 本文件只剩写作端真正特有的东西：体裁分支的渲染管线、微信手机宽容器、样式降级警示条。
  */
 type WritingFrame = {
@@ -44,7 +48,7 @@ export function WritingPreview({ active }: { active: boolean }): React.JSX.Eleme
   // 体裁进签名：同一份 markdown 换体裁后产出完全不同（样式甚至输出形态都变），必须重渲。
   const signature = useMemo(() => (markdown ? `${genre}:${markdown}` : null), [genre, markdown])
 
-  const { status, errMsg, frame } = usePreviewFrame<WritingFrame>({
+  const { status, errMsg, frame, retry } = usePreviewFrame<WritingFrame>({
     active,
     signature,
     render: async (isCancelled) => {
@@ -104,7 +108,20 @@ export function WritingPreview({ active }: { active: boolean }): React.JSX.Eleme
         status={status}
         errMsg={errMsg}
         loadingText="正在生成预览…"
-        empty={<div className="text-[12.5px] text-muted-foreground">还没有正文可预览</div>}
+        onRetry={retry}
+        // 空态补图标 + 动作引导（与方案端对齐）：一行灰字漂在整片空画布上像功能坏了，
+        // 用户不知道出路在哪。第二行指向的是「文稿」而非方案端的「编辑」——两边的 tab
+        // 本来就叫不同名字，照抄文案会指向一个这里不存在的按钮。
+        empty={
+          <div className="flex flex-col items-center gap-3 text-center">
+            <FileIcon className="size-8 text-muted-foreground/40" />
+            <div className="text-[12.5px] leading-relaxed text-muted-foreground">
+              还没有正文可预览
+              <br />
+              切回「文稿」，在左侧对话中让 AI 开始写
+            </div>
+          </div>
+        }
       />
     </div>
   )
