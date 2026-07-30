@@ -48,7 +48,7 @@ import { splitBlocks } from '@desktop-shared/proposalBlocks'
 import { extractRevisionResult } from '@desktop-shared/writing'
 import { useWritingStore } from '../stores/writing'
 import { relocateTarget } from '../lib/writingRevision'
-import { sliceCoversSelection } from '../lib/writingSelection'
+import { isSelectionLongEnoughForFallback, sliceCoversSelection } from '../lib/writingSelection'
 import { triggerProposalCitationVerification } from '../lib/proposalVerification'
 import { autoFireProposalGenImages } from '../lib/proposalGenImageFire'
 import { maybeNudgeStageConfirmAfterTurn } from '../lib/proposalStageGate'
@@ -2004,13 +2004,27 @@ function handleWritingTurnEnd(sid: string, messageId: string): void {
       const range =
         relocated ?? (fbInBounds && sliceCoversSelection(fbSlice, pending.selectedText) ? fb : null)
       if (!range) {
+        // 提示要对因。**选区太短被长度门槛挡下时，正文很可能一个字都没变**——若统一说
+        // 「内容变化太大」，用户会满世界去找一个不存在的变化，然后再选一次同样短的一段，
+        // 撞同一堵墙。故按被拒的真实原因分两条文案。
+        const tooShort = !isSelectionLongEnoughForFallback(pending.selectedText)
         console.warn(
-          '[writing-revise] 定位不到选中的那段、兜底区间也对不上原文 —— 不生成对照卡（避免拿错内容骗用户点应用）',
-          { sectionName: pending.sectionName, fallback: fb, inBounds: fbInBounds, messageId }
+          '[writing-revise] 定位不到选中的那段、兜底区间也不可信 —— 不生成对照卡（避免拿错内容骗用户点应用）',
+          {
+            sectionName: pending.sectionName,
+            fallback: fb,
+            inBounds: fbInBounds,
+            tooShort,
+            messageId
+          }
         )
         useWritingStore
           .getState()
-          .setConflictMsg('这一节的内容变化太大，找不到你当初选中的那段了。改动未落地，请重新选中再改一次。')
+          .setConflictMsg(
+            tooShort
+              ? '选中的内容太短，无法确认改的是哪一段。改动未落地，请多选一点再改一次。'
+              : '这一节的内容变化太大，找不到你当初选中的那段了。改动未落地，请重新选中再改一次。'
+          )
         useWritingStore.getState().setPendingRevision(null)
         return
       }

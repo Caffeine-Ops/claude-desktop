@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'bun:test'
-import { resolveSelectionScope, sliceCoversSelection } from './writingSelection'
+import {
+  isSelectionLongEnoughForFallback,
+  resolveSelectionScope,
+  sliceCoversSelection
+} from './writingSelection'
 
 describe('sliceCoversSelection · 良性侧（必须放行，否则兜底就白设了）', () => {
   it('纯文字块 + 选中其中一句 → 通过', () => {
@@ -60,21 +64,36 @@ describe('sliceCoversSelection · 真实风险侧（长切片 vs 短选区、同
     ).toBe(false)
   })
 
-  // 复审实测：旧判据得 0.882 → 放行。英文字母集小，覆盖率判据在英文上尤其失真。
-  it('英文短选区 vs 完全无关的英文长段 → 拒绝', () => {
-    expect(
-      sliceCoversSelection(
-        'The quarterly budget review has been moved to the last week of the month, and the finance team will circulate an updated agenda beforehand.',
-        'deploy the new build'
-      )
-    ).toBe(false)
+  // 复审实测：旧的覆盖率判据得 0.882 → 放行。而这条测试的**上一版是靠切片短侥幸通过的**
+  // ——把切片换成同样无关但更长的段落，纯子序列判据同样会放行（拉丁字符集小，见常量注释的
+  // 蒙特卡洛表：12 字母 vs 600 字母切片假阳性 66%）。现在挡住它的是**拉丁档长度门槛**，
+  // 不是子序列本身，故断言写成 known-limitation 的形式：短拉丁选区一律不予采信。
+  it('英文短选区 vs 无关的英文长段 → 拒绝（靠的是拉丁档 80 字门槛，不是子序列）', () => {
+    const longSlice =
+      'The quarterly budget review has been moved to the last week of the month, and the finance team will circulate an updated agenda beforehand. Please make sure every department submits its headcount plan before the deadline, since the consolidated forecast has to reach the board by Friday afternoon at the latest.'
+    expect(sliceCoversSelection(longSlice, 'deploy the new build')).toBe(false)
   })
 
-  // 复审指出旧测试里那条「高频字」断言是空洞的：反过来写（长切片 vs 短选区）旧判据得 1.000。
-  it('高频字堆成的长切片 vs 由高频字组成的短选区 → 拒绝（这正是旧判据被打穿的方向）', () => {
-    expect(
-      sliceCoversSelection('的了是在和有一二三四五六七八九十不我他这那你们就都要把上下', '的了是在和有')
-    ).toBe(false)
+  // 已知盲区，钉住现状而不是钉住「安全」：选区一旦越过拉丁档门槛，子序列对拉丁文本仍然偏弱
+  // ——字符集只有 26 个，够长的无关文本几乎总能按序凑出任意字母串。
+  // Task 11（源码级精确匹配）到位后整个兜底连同本函数一起删除；在那之前这条测试的作用是
+  // 让接手的人一眼看到「门槛之上没有强度」，不要误以为子序列本身守得住拉丁文本。
+  it('【已知盲区】越过门槛的拉丁长选区 vs 足够长的无关拉丁文本 → 仍会被放行', () => {
+    const need = 'transitionplanningtodotracks'.repeat(3) // 84 字母，越过 80 门槛
+    // 切片字符集覆盖不到选区时仍会拒（'i'/'p'/'l'… 不在 'trans' 里）：
+    expect(sliceCoversSelection('trans'.repeat(400), need)).toBe(false)
+    // 但只要切片够长、字符集覆盖得到，子序列就成立——这正是盲区：
+    expect(sliceCoversSelection('abcdefghijklmnopqrstuvwxyz'.repeat(120), need)).toBe(true)
+  })
+
+  // 复审指出旧测试里那条「高频字」断言是空洞的：`'的了是在和有'` 就是长串的**字面前缀**，
+  // 子序列必然成立，它只被长度门槛（6 < 12）拒掉，根本没检验到子序列那一层。
+  // 改成 ≥12 字的高频字选区、且顺序与切片不同，把判定压到子序列层。
+  it('高频字组成的长选区、顺序与切片对不上 → 拒绝（这一条真正检验的是子序列，不是长度门槛）', () => {
+    const slice = '的了是在和有一二三四五六七八九十不我他这那你们就都要把上下'
+    const need = '下上把要都就们你那这他我不十九八七六五四三二一有和在是了的'
+    expect([...need].length).toBeGreaterThanOrEqual(12) // 确认没被长度门槛短路
+    expect(sliceCoversSelection(slice, need)).toBe(false)
   })
 
   it('长切片 vs 刚好够长但顺序被打乱的选区 → 拒绝（子序列要求保序，不是凑字数）', () => {
@@ -84,6 +103,36 @@ describe('sliceCoversSelection · 真实风险侧（长切片 vs 短选区、同
         '内以周两到压期周付交把折对打率障故'
       )
     ).toBe(false)
+  })
+})
+
+describe('isSelectionLongEnoughForFallback · 字符集自适应门槛', () => {
+  it('纯中文 12 字 → 够长（中文档门槛 12）', () => {
+    expect(isSelectionLongEnoughForFallback('把交付周期压到两周以内啦')).toBe(true)
+  })
+
+  it('纯中文 11 字 → 不够长', () => {
+    expect(isSelectionLongEnoughForFallback('把交付周期压到两周以内')).toBe(false)
+  })
+
+  it('12 个拉丁字母 → 不够长（拉丁字符集小，同长度下假阳性率高两个数量级）', () => {
+    expect(isSelectionLongEnoughForFallback('deploybuild!')).toBe(false)
+  })
+
+  it('80+ 个拉丁字母 → 够长', () => {
+    expect(isSelectionLongEnoughForFallback('transitionplanningtodotracks'.repeat(3))).toBe(true)
+  })
+
+  // workplace-writing 快道（周报/述职）的典型选区：中文里嵌大量数字与百分号，
+  // CJK 占比不到一半 → 落进拉丁档，按 80 判。
+  it('数字密集的中文（CJK 占比 < 50%）落进拉丁档 → 14 字不够长', () => {
+    expect(isSelectionLongEnoughForFallback('2026年Q3营收增长12%')).toBe(false)
+    expect(isSelectionLongEnoughForFallback('12%毛利率38%客户91%')).toBe(false)
+  })
+
+  it('空白 / 空串 → 不够长', () => {
+    expect(isSelectionLongEnoughForFallback('   \n  ')).toBe(false)
+    expect(isSelectionLongEnoughForFallback('')).toBe(false)
   })
 })
 
