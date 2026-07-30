@@ -31,7 +31,7 @@ import { useEffect, useMemo, useRef } from 'react'
 
 import { ChatSurface } from '@/src/components/ChatSurface'
 import { UpdateReadyToast } from '@/src/components/UpdateReadyToast'
-import { useSurfaceOverlayStore } from '@/src/stores/surfaceOverlay'
+import { useSettingsOverlayStore, useSurfaceOverlayStore } from '@/src/stores/surfaceOverlay'
 import { useBackgroundZoneStore } from '@/src/stores/backgroundZone'
 import { cn } from '@/src/lib/utils'
 
@@ -165,6 +165,12 @@ export function SurfaceHost() {
       open: marketShowing ? 'market' : kbShowing ? 'kb' : null
     })
   }, [marketShowing, kbShowing])
+
+  // 设置页同理镜像一份：RailShell 的常驻按钮组要靠它整组隐藏（那组 portal 到
+  // body、z 压过设置页，不隐藏就会浮在设置页导航栏上）。同样只有本组件写。
+  useEffect(() => {
+    useSettingsOverlayStore.setState({ open: settingsOverlay })
+  }, [settingsOverlay])
 
   // ── 切面**不再**做任何 region-refresh 脉冲（2026-07-14 拖拽机制重构，删）──
   // 历史上这里有个切面 effect：瞬时给 documentElement 挂 `.region-refresh` 类
