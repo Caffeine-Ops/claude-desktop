@@ -105,6 +105,11 @@ def main(argv: list[str] | None = None) -> int:
         today = args.date or datetime.now().strftime("%Y%m%d")
         path = init_project(args.name, Path(args.dir), today)
         print(f"[writing] 项目已创建：{path}")
+        # 桌面端接管标记：Cowork 的写作工作区从这一行抓项目绝对路径。
+        # 同款手法见 bin/ensure-python.cmd 的 `WRITING_PY=<path>`——脚本自己报数，
+        # 免得调用方复刻 slugify 规则（中文保留、其余压下划线），两边一漂就找不到目录。
+        # 必须是最后一行且独占一行，前端按行首 `WRITING_PROJECT=` 匹配。
+        print(f"WRITING_PROJECT={path.resolve()}")
         return 0
 
     if args.cmd == "validate":
