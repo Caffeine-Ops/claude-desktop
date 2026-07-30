@@ -23,14 +23,14 @@ export function WritingRevisionReviewCard({
       <div className="mb-2 text-[12px] font-medium text-muted-foreground">
         改写结果待确认 · {review.target.sectionName}
       </div>
-      {/* 兜底成卡的警示条。作用范围是按位置推断的（精确定位没命中），弱校验挡不住全部错块，
-          最后一道闸只能是用户的眼睛——那就明确告诉他该看哪，别让他把「那段眼生」读成
-          「AI 改得比较狠」。见 WritingRevisionReview.inferred 的注释。
+      {/* 多处命中的警示条：源码级精确匹配本身没有歧义，但这一节里恰好有好几处内容完全相同
+          （模板化的段落），机器没法替用户判断该改的是哪一份，只能按「离原选中位置最近」挑一处
+          ——挑中的那处可能是错的。见 WritingRevisionReview.ambiguous 的注释。
           文案说「原文那一栏」而不是「左边」：下面的对照区是 md:grid-cols-2，窄窗口下两栏
           竖排，「左边」当场变成「上面」，指错方向的提示比没有提示更糟。 */}
-      {review.inferred && (
+      {review.ambiguous && (
         <div className="mb-2 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[12px] leading-relaxed text-amber-700 dark:text-amber-400">
-          这段是按位置推断出来的，请核对原文那一栏确实是你要改的那段。
+          这一节里有多段内容完全相同，已按最接近的位置匹配 —— 请核对原文那一栏确实是你要改的那段。
         </div>
       )}
       {/* 对照区限高可滚：整节被改写时 after 可能上千字，不限高会把纸面整个挤出视口。 */}

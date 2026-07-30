@@ -1,15 +1,44 @@
-import {
-  splitBlocks,
-  spliceBlocks,
-  locateBlockRangeByTextWithHint
-} from '@desktop-shared/proposalBlocks'
+import { splitBlocks, spliceBlocks } from '@desktop-shared/proposalBlocks'
 import { WRITING_REVISION_BEGIN, WRITING_REVISION_END } from '@desktop-shared/writing'
 
-/** 一次改写的目标。`selectedText` 是排队重定位的依据，见 relocateTarget。 */
+/** 一次改写的目标。重定位的依据是 `beforeMarkdown`（源码），**不是** `selectedText`。 */
 export interface WritingRevisionTarget {
   sectionName: string
   range: { start: number; end: number }
+  /** 用户在纸面上选中的渲染文本。保留它仅用于展示（气泡里回显）与日志，**不再用于定位**。 */
   selectedText: string
+  /**
+   * 提交那一刻，`range` 覆盖的那几块的 **markdown 源码**（`splitBlocks` 切片 join）。
+   *
+   * 这是定位机制的地基：定位不再拿渲染文本去源码里猜，而是**拿源码比源码**。
+   * 渲染文本里没有 `**`、`- `、`|` 这些标记，跨内联标记/跨列表项/跨表格的选区拿去
+   * `indexOf` 必然落空——那是先天矛盾，不是调参能救的。而这段源码切片
+   * `buildRevisionMessage` 本来就要算（就是发给 AI 的「要改的那一段」），
+   * 此前算完即丢，才逼出了后面一整套模糊兜底。留住它，后面全是精确比对。
+   */
+  beforeMarkdown: string
+}
+
+/**
+ * 一次重定位的结果。**「多处命中」必须显式出现在返回值里**，不能藏在函数内部悄悄挑一个：
+ * 挑中的那处可能是错的，而对照卡若不告诉用户「这里有歧义」，他就只能凭「这段眼生不眼生」
+ * 判断——相似段落根本看不出来。
+ */
+export interface WritingRelocateResult {
+  range: { start: number; end: number }
+  /** 同一节里存在多段**完全相同**的源码，本次是按「离原位置最近」挑的——可能挑错。 */
+  ambiguous: boolean
+}
+
+/**
+ * 把一段块源码归一到「splitBlocks 切出来再 join」的规范形态。
+ *
+ * 存在的意义是让**比较的两边走同一条路径**：`beforeMarkdown` 是切片 join 出来的、当前正文
+ * 也要切片 join，两边都过一遍 splitBlocks 就不会被「块首尾空行怎么算」这类切分细节坑到。
+ * 这不是「模糊比对」——splitBlocks 只去块首尾空行、绝不动块内文本（含 GFM 行尾双空格）。
+ */
+function canonicalize(markdown: string): string {
+  return splitBlocks(markdown).join('\n\n')
 }
 
 /**
@@ -20,7 +49,7 @@ export interface WritingRevisionTarget {
  * AI 手上有 Edit 工具，不明确禁止它会直接改盘，那样就绕过了「先对照再应用」这一步，
  * 用户点「放弃」也已经晚了。
  *
- * 返回 null = 不发这一轮（空指令 / 区间越界）。
+ * 返回 null = 不发这一轮（空指令 / 区间越界 / target 已过期）。
  */
 export function buildRevisionMessage(input: {
   sectionMarkdown: string
@@ -40,6 +69,12 @@ export function buildRevisionMessage(input: {
   // 这条防御目前打不到：splitBlocks 保证每个块 trim 后非空，join 出的 selected 不可能是空白。
   // 保留它是防止「splitBlocks 非空块」这条不变量将来被改动时，这里跟着静默出错——别当死代码删掉。
   if (!selected.trim()) return null
+  // 一致性校验：`beforeMarkdown` 是**提交那一刻**那几块的源码，`selected` 是**现在**同一区间的
+  // 源码。两者不等 = 这一版 target 已经过期（正文在这中间被改过、块序号漂了），此时把
+  // `selected` 发给 AI 就是让它改一段用户没选的内容，回来的结果还会被当成「那一段的改写」
+  // 落回去。宁可这一轮不发、让用户重选，也不能发一轮定位已经错了的请求。
+  // 调用方（排空 effect）应先 relocateTarget 拿到新 range 再进来，正常路径不会撞这道闸。
+  if (selected !== canonicalize(input.target.beforeMarkdown)) return null
 
   return [
     // 禁令放在最前面，且在结尾再重复一次：AI 手上有 Edit/Write 工具，而「先对照再应用」
@@ -82,17 +117,47 @@ export function applyRevision(
 }
 
 /**
- * 用「当初选中的原文」在最新内容里重新定位块区间。
+ * 用「提交那一刻的块源码切片」（`target.beforeMarkdown`）在最新正文里重新定位块区间。
  *
- * 为什么需要：改写请求可能在队列里等过一阵（AI 当时在写下一节），期间前面的改写已经落地、
- * 块序号会漂到别处。直接用入队时的序号，改的就是隔壁段落。原文多处命中时，用入队时的
- * 区间当提示选最近的一处（`locateBlockRangeByTextWithHint` 已实现这个裁决）。
+ * 为什么不再用 `selectedText` 定位（详见 {@link WritingRevisionTarget.beforeMarkdown} 的
+ * 注释）：`selectedText` 是渲染后的纯文本，没有 `**`、`- `、`|` 这些标记，拿它去 markdown
+ * 源码里找，选区一旦跨了内联标记/多个列表项/表格就必然落空——三轮模糊补丁想弥补的正是这个
+ * 先天矛盾，而实际上只要**留住提交那一刻的源码切片**，后面就是两段源码逐字节比较，
+ * 不需要任何归一化或模糊判据。`selectedText` 在这里完全不参与匹配，只在多处命中时
+ * 当"哪一处离原位置最近"的参照点用。
  *
- * 返回 null = 那段原文已经不存在（被 AI 重写了），调用方应丢弃这次改写并告知用户。
+ * 算法：把最新正文切块，找一段【连续】的块，其 join 结果与 `beforeMarkdown` 的规范形态
+ * （见 {@link canonicalize}）完全相等。
+ *
+ * - 命中 0 处：那几块的源码已经不在了（真的被改写/删除了）→ `null`，调用方应放弃这次改写，
+ *   不能拿"按位置推断"的旧区间去赌——那正是三轮补丁都在踩的坑。
+ * - 命中 1 处：直接返回，`ambiguous: false`。
+ * - 命中多处：同一节里存在完全相同的连续块（例如两段句式雷同的模板化文字），按「离入队时
+ *   `target.range.start` 最近」选一处，但 `ambiguous: true`——挑中的那处可能是错的，
+ *   调用方必须把这个信号透传给用户（对照卡警示条），不能像旧版那样悄悄选一个当"精确命中"。
  */
 export function relocateTarget(
   sectionMarkdown: string,
   target: WritingRevisionTarget
-): { start: number; end: number } | null {
-  return locateBlockRangeByTextWithHint(sectionMarkdown, target.selectedText, target.range)
+): WritingRelocateResult | null {
+  const blocks = splitBlocks(sectionMarkdown)
+  const needleBlocks = splitBlocks(target.beforeMarkdown)
+  // 空切片必须提前拦：若放行，下面的循环会把每个位置的「空 slice join 成 ''」都判成命中
+  // （needle 也是 ''），在整节里制造出一片虚假命中。正常路径下 beforeMarkdown 不可能是
+  // 空白（buildRevisionMessage 的越界/空白检查已经挡在提交之前），这里只是防御。
+  if (needleBlocks.length === 0) return null
+  const needle = needleBlocks.join('\n\n') // 等价于 canonicalize(target.beforeMarkdown)
+
+  const hits: Array<{ start: number; end: number }> = []
+  for (let start = 0; start + needleBlocks.length <= blocks.length; start++) {
+    const end = start + needleBlocks.length - 1
+    if (blocks.slice(start, end + 1).join('\n\n') === needle) hits.push({ start, end })
+  }
+  if (hits.length === 0) return null
+  if (hits.length === 1) return { range: hits[0], ambiguous: false }
+
+  const nearest = hits.reduce((best, cur) =>
+    Math.abs(cur.start - target.range.start) < Math.abs(best.start - target.range.start) ? cur : best
+  )
+  return { range: nearest, ambiguous: true }
 }

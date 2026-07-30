@@ -21,7 +21,7 @@ type WritingStatus = 'idle' | 'ready' | 'missing' | 'error'
 export const MAX_WRITING_REVISION_QUEUE = 10
 
 /** 排队中的改写。**不存最终块序号**：排队期间前面的改写可能落地、序号会漂，排空时用
- *  selectedText 重新定位（range 只当多处命中时的裁决提示）。 */
+ *  target.beforeMarkdown 重新定位（range 只当多处命中时"哪一处离原位置最近"的裁决提示）。 */
 export interface QueuedWritingRevision {
   id: string
   target: WritingRevisionTarget
@@ -48,14 +48,16 @@ export interface WritingRevisionReview {
    */
   baseMtimeMs: number
   /**
-   * 这张卡的作用范围是**按位置推断**出来的，不是按原文定位到的。
+   * `relocateTarget` 在这一节里找到了**不止一处**与 `beforeMarkdown` 完全相同的连续块
+   * （例如两段句式雷同的模板化文字），本次是按「离入队时的位置最近」挑的一处——挑中的
+   * 那处**可能是错的**。
    *
-   * 为真 = 轮末 `relocateTarget` 没能在最新正文里找到当初选中的那段（格式化选区的常态），
-   * 只好退回提交时的块序号、再用 `sliceCoversSelection` 做了一道弱校验。弱校验挡得住明显
-   * 的错块，但它终究是模糊判据——**最后一道闸只能是用户的眼睛**，故卡面必须显眼地告诉他
-   * 「这段是推断的，请核对左边确实是你要改的那段」。为假 = 精确定位命中，无需提醒。
+   * 这不是模糊匹配的产物（源码级匹配本身是精确的、逐字节相等），而是正文里恰好存在重复
+   * 内容这一事实本身带来的歧义，机器无法替用户判断该改哪一份。为真时卡面必须显眼地提醒
+   * 用户核对左侧原文确实是他要改的那段——**最后一道闸只能是用户的眼睛**。为假 = 唯一命中，
+   * 无需提醒。
    */
-  inferred: boolean
+  ambiguous: boolean
 }
 
 interface WritingState {

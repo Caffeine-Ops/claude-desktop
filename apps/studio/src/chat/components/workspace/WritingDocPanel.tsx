@@ -193,9 +193,11 @@ export function WritingDocPanel(): React.JSX.Element | null {
       st.setConflictMsg('有一条排队的改写找不到对应的章节文件了，已跳过。')
       return
     }
-    // 用当初选中的原文重新定位。找不到 = 那段已被 AI 重写，宁可跳过也不改错段落。
-    const range = relocateTarget(sec.markdown, head.target)
-    if (!range) {
+    // 用提交那一刻的块源码切片重新定位。找不到 = 那几块已被 AI 重写，宁可跳过也不改错段落。
+    // 这里只要 range：ambiguous（多处命中选错的风险）留给最终成卡的 handleWritingTurnEnd
+    // 去透传给用户——这一步只是决定"这条排队改写该发给哪一段"，不产出对照卡。
+    const relocated = relocateTarget(sec.markdown, head.target)
+    if (!relocated) {
       st.shiftQueue()
       st.setConflictMsg('有一条排队的改写找不到原文了（那段可能已被 AI 重写），已跳过。')
       return
@@ -203,7 +205,7 @@ export function WritingDocPanel(): React.JSX.Element | null {
     // 校验全过才出队。submitRevision 会在任何 await 之前同步立起 pendingRevision，
     // 故 StrictMode 的第二次进来会被上面的现读守卫挡住，不会重复消费。
     st.shiftQueue()
-    void submitRevision({ ...head.target, range }, head.instruction)
+    void submitRevision({ ...head.target, range: relocated.range }, head.instruction)
   }, [streaming, pendingRevision, review, queueLen, submitRevision])
 
   /**
@@ -219,11 +221,14 @@ export function WritingDocPanel(): React.JSX.Element | null {
    *     `splitBlocks(现在的正文).slice(卡里的 range) === r.before`。
    *     `before` 本来就是用**同一个 splitBlocks、从同一版正文**切出来的，所以
    *     **内容真没变时必然逐字节相等，零误拒**；一旦那几块被动过（改了 / 被前面插入的段落挤走
-   *     / 越界），立刻不相等，转去用「当初选中的原文」重新定位，定位不到就别写。
-   *     【为什么不无条件重定位】：`relocateTarget` 拿**渲染后的选中文字**去 markdown 源码里找，
-   *     选区一旦跨了 `**加粗**` / 行内代码 / 链接 / 多个列表项 / 表格，必然定位失败（Task 6
-   *     定位器的已知限制）。无条件重定位会让这类选区**连正文根本没变的正常情况都拒写**——
-   *     职场文档、文章这类多加粗多项目符号的体裁那是常态，等于主路径直接不可用。
+   *     / 越界），立刻不相等，转去用「提交那一刻的块源码切片」（`r.target.beforeMarkdown`）
+   *     重新定位，定位不到就别写。
+   *     【为什么不无条件重定位（Task 11 之后）】：`relocateTarget` 现在是源码级精确匹配
+   *     （见 writingRevision.ts），内容原地未变时它与这里的自检结果等价——不再有 Task 6/7
+   *     那套渲染文本模糊定位器"跨 `**加粗**`/多列表项/表格必然落空"的弱点。保留自检优先仍
+   *     值得：它是 O(1) 的原地相等判断，不无条件重定位是为了避免在「绝大多数情况下内容根本
+   *     没变」这条热路径上，仍去扫一遍全节找所有匹配位置——纯粹是省一次没必要的工作，
+   *     不再是"不然会误拒"这个正确性理由（那已随模糊匹配一起被删掉）。
    *     【为什么用内容自检而不是比 mtime】：mtime 相等只说明「文件时间戳没动」，盖不住
    *     时间戳精度不足、以及读节时 stat 与 read 之间那个窗口（拿到新正文配旧时间戳）。
    *     自检问的是「我要替换的那几块，确实还是给你看过的那几块吗」——那才是真正要确认的事。
@@ -260,7 +265,7 @@ export function WritingDocPanel(): React.JSX.Element | null {
       cardRange.end >= cardRange.start &&
       cardRange.end < blocks.length &&
       blocks.slice(cardRange.start, cardRange.end + 1).join('\n\n') === r.before
-    const range = intact ? cardRange : relocateTarget(sec.markdown, r.target)
+    const range = intact ? cardRange : (relocateTarget(sec.markdown, r.target)?.range ?? null)
     if (!range) {
       st.setConflictMsg('这一节的原文已经变了，找不到当初选中的那段，改动未写入，请重新选中修改。')
       st.setReview(null)

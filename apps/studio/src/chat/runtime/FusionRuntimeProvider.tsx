@@ -48,7 +48,6 @@ import { splitBlocks } from '@desktop-shared/proposalBlocks'
 import { extractRevisionResult } from '@desktop-shared/writing'
 import { useWritingStore } from '../stores/writing'
 import { relocateTarget } from '../lib/writingRevision'
-import { isSelectionLongEnoughForFallback, sliceCoversSelection } from '../lib/writingSelection'
 import { triggerProposalCitationVerification } from '../lib/proposalVerification'
 import { autoFireProposalGenImages } from '../lib/proposalGenImageFire'
 import { maybeNudgeStageConfirmAfterTurn } from '../lib/proposalStageGate'
@@ -1983,52 +1982,32 @@ function handleWritingTurnEnd(sid: string, messageId: string): void {
     const after = extractRevisionResult(fullText)
     const sec = ws.sections.find((s) => s.name === pending.sectionName)
     if (after && sec) {
-      // 重定位：用户提交改写到 AI 答完之间，AI 可能又改过这一节，块序号会漂。
+      // 重定位：用户提交改写到 AI 答完之间，AI 可能又改过这一节，块序号会漂。定位依据是
+      // `pending.beforeMarkdown`（提交那一刻那几块的源码切片）——两边都是源码，逐字节相等
+      // 即可判定，不需要任何模糊/子序列判据（详见 relocateTarget 的注释）。
       //
-      // 【兜底 range 必须先过校验，不能无条件 `?? pending.range`】——原先那样写会造出一张
-      // **基于 stale range 的对照卡**：AI 若在改写轮期间动过这一节、而重定位又失败（格式化
-      // 选区是常态），`before` 取的就是新版本在旧序号处的切片（越界时甚至是空串），
-      // `baseMtimeMs` 取的却是新版本的 mtime。用户点「应用」时 mtime 自然相等 →
-      // spliceBlocks 还会把越界序号 clamp 到最后一块 → 静默替换错块，乐观锁全程放行。
-      // 宁可让用户重选重发，也不能拿一张左边显示错内容（甚至空白）的卡骗他点「应用」。
-      const blocks = splitBlocks(sec.markdown)
+      // 【重定位失败就是失败，不再有 `?? pending.range` 兜底】——旧版曾在重定位失败时退回
+      // 提交时的块序号、再靠一套模糊子序列校验放行，三轮补丁都被下一轮复审找出新的假阳性
+      // （最严重一次：职场平行段 0.923 覆盖率放行、英文 12 字母 vs 600 字母切片 66% 放行）。
+      // 假阳性的后果是**不可撤销的正文损坏**：卡面显示错块 → 用户看不出（相似段落）→
+      // 点应用 → 相邻段落被整块覆盖。现在的判据是源码逐字节相等，找不到就是那几块真的被
+      // AI 动过了，此时唯一安全的选择是不成卡、让用户重新选中再改一次。
       const relocated = relocateTarget(sec.markdown, pending)
-      const fb = pending.range
-      const fbInBounds =
-        Number.isInteger(fb.start) &&
-        Number.isInteger(fb.end) &&
-        fb.start >= 0 &&
-        fb.end >= fb.start &&
-        fb.end < blocks.length
-      const fbSlice = fbInBounds ? blocks.slice(fb.start, fb.end + 1).join('\n\n') : ''
-      const range =
-        relocated ?? (fbInBounds && sliceCoversSelection(fbSlice, pending.selectedText) ? fb : null)
-      if (!range) {
-        // 提示要对因。**选区太短被长度门槛挡下时，正文很可能一个字都没变**——若统一说
-        // 「内容变化太大」，用户会满世界去找一个不存在的变化，然后再选一次同样短的一段，
-        // 撞同一堵墙。故按被拒的真实原因分两条文案。
-        const tooShort = !isSelectionLongEnoughForFallback(pending.selectedText)
+      if (!relocated) {
         console.warn(
-          '[writing-revise] 定位不到选中的那段、兜底区间也不可信 —— 不生成对照卡（避免拿错内容骗用户点应用）',
-          {
-            sectionName: pending.sectionName,
-            fallback: fb,
-            inBounds: fbInBounds,
-            tooShort,
-            messageId
-          }
+          '[writing-revise] 源码级定位没找到提交时的那几块（内容已被改写）—— 不生成对照卡',
+          { sectionName: pending.sectionName, messageId }
         )
         useWritingStore
           .getState()
-          .setConflictMsg(
-            tooShort
-              ? '选中的内容太短，无法确认改的是哪一段。改动未落地，请多选一点再改一次。'
-              : '这一节的内容变化太大，找不到你当初选中的那段了。改动未落地，请重新选中再改一次。'
-          )
+          .setConflictMsg('这一节的内容已经变了，找不到你当初选中的那段了。改动未落地，请重新选中再改一次。')
         useWritingStore.getState().setPendingRevision(null)
         return
       }
-      const before = blocks.slice(range.start, range.end + 1).join('\n\n')
+      const { range, ambiguous } = relocated
+      const before = splitBlocks(sec.markdown)
+        .slice(range.start, range.end + 1)
+        .join('\n\n')
       // range / before / baseMtimeMs 三者**必须同源同刻**取自这一个 `sec` 快照：它们共同描述
       // 「这张对照卡是基于哪一版正文算出来的」。写盘时拿 baseMtimeMs 当乐观锁基准，锁才覆盖
       // 整个用户裁决窗口（详见 WritingRevisionReview.baseMtimeMs 的注释——反直觉，别改）。
@@ -2037,9 +2016,9 @@ function handleWritingTurnEnd(sid: string, messageId: string): void {
         before,
         after,
         baseMtimeMs: sec.mtimeMs,
-        // 精确定位没命中、靠兜底 range 成的卡：弱校验只挡得住明显错块，最后一道闸是用户的
-        // 眼睛，卡面要显眼地提醒他核对左侧原文（见 WritingRevisionReview.inferred 注释）。
-        inferred: relocated === null
+        // 同一节里存在多段完全相同的源码、挑中的那处可能是错的——最后一道闸是用户的眼睛，
+        // 卡面要显眼地提醒他核对左侧原文（见 WritingRevisionReview.ambiguous 注释）。
+        ambiguous
       })
     } else if (!after) {
       console.warn(

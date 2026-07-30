@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/src/components/ui/button'
 import { Textarea } from '@/src/components/ui/textarea'
+import { splitBlocks } from '@desktop-shared/proposalBlocks'
 import { MAX_WRITING_REVISION_QUEUE, useWritingStore } from '../../stores/writing'
 import { resolveSelectionScope, type WritingBlockRef } from '../../lib/writingSelection'
 import type { WritingRevisionTarget } from '../../lib/writingRevision'
@@ -72,10 +73,23 @@ export function WritingSelectionBubble({
         resolveBlock(range.endContainer)
       )
       if (!scope) return
+      // 在这里（选区几何算出来的同一刻）现读 store 里这一节的正文并切出 beforeMarkdown，
+      // 不要等到点「改写」按钮那一刻才算：`scope.range` 的块序号是从当前渲染的 DOM
+      // （data-block-index）读出来的，只有配上「渲染这份 DOM 时用的那一版 markdown」切出来
+      // 的源码切片，序号才和内容对得上。若拖到 fire() 时才用彼时的最新 markdown 去切，
+      // 期间这一节若被 AI 改写、块数变化，同样的序号会切出完全不相关的内容——那就不是
+      // "这段被改了、target 该判过期"，而是从一开始就切错了块，beforeMarkdown 记的根本不是
+      // 用户选的那段。此刻捕获能保证两者永远同源；之后若真的变了，buildRevisionMessage 的
+      // 一致性校验 / relocateTarget 会在发送前正确识别成"target 已过期"并拒绝，而不是悄悄错位。
+      const sec = useWritingStore.getState().sections.find((s) => s.name === scope.sectionName)
+      if (!sec) return // 找不到该节最新正文，没法可靠地算出 beforeMarkdown，这次选区不成立
+      const beforeMarkdown = splitBlocks(sec.markdown)
+        .slice(scope.range.start, scope.range.end + 1)
+        .join('\n\n')
       const rect = range.getBoundingClientRect()
       const box = container.getBoundingClientRect()
       setAnchor({
-        target: { sectionName: scope.sectionName, range: scope.range, selectedText },
+        target: { sectionName: scope.sectionName, range: scope.range, selectedText, beforeMarkdown },
         // 加上容器自身的滚动量：absolute 子节点的包含块是容器的 padding box，它随内容一起滚，
         // 故坐标要写成「内容坐标系」的值，滚动时浮层自然跟着走、无需在 scroll 上重算。
         left: rect.left - box.left + container.scrollLeft,
