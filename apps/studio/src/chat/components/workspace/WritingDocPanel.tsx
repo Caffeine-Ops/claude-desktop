@@ -121,9 +121,18 @@ export function WritingDocPanel(): React.JSX.Element | null {
         st.setConflictMsg(`「${target.sectionName}」已不在文稿里，这条改写没有发出。`)
         return
       }
+      // 发送前先尝试重定位（复审 F2）：气泡从「算出 beforeMarkdown」到用户真正点「改写」
+      // 之间可能过了几秒到几十秒，这期间 AI 若在这一节别处插入/删除了块（良性位移，
+      // 选中的内容本身没变），target.range 会漂但 beforeMarkdown 仍然能在新位置找到。
+      // 排空 effect 早已对排队改写这么做（见上面的 useEffect），这里是把同一处理
+      // 补给「AI 空闲、直接发送」这条路径——否则这类良性位移会被下面的一致性校验当成
+      // 「选区已失效」硬拒，而其实 relocateTarget 本可以救回来。relocate 失败（那几块
+      // 真的被改写/删除了）就保留原 target，交给 buildRevisionMessage 走已有的拒绝路径。
+      const relocated = relocateTarget(sec.markdown, target)
+      const effectiveTarget = relocated ? { ...target, range: relocated.range } : target
       const msg = buildRevisionMessage({
         sectionMarkdown: sec.markdown,
-        target,
+        target: effectiveTarget,
         instruction
       })
       if (!msg) {
@@ -133,8 +142,10 @@ export function WritingDocPanel(): React.JSX.Element | null {
         return
       }
       // 先立 pending 再发：它同时是「防重入」和「轮末该走哨兵抽取」的闸，必须在任何 await
-      // 之前同步生效（排空 effect 与用户连点都可能在这一瞬间再次进来）。
-      st.setPendingRevision(target)
+      // 之前同步生效（排空 effect 与用户连点都可能在这一瞬间再次进来）。存 effectiveTarget
+      // （relocate 之后的 range）而不是原始 target——轮末 handleWritingTurnEnd 还要拿它再
+      // relocate 一次，range 越准确，多处命中时"离哪里最近"这个提示就越可信。
+      st.setPendingRevision(effectiveTarget)
       const sent = await sendWritingMessage(msg)
       // 起飞判定（照搬 proposal drainRevisionQueue 的 H3 判据）：**不能靠 catch 判成败**——
       // dispatchChatTurn 把 chatApi.send 的异常自己吞了（catch 里直接调 store 的
@@ -150,7 +161,7 @@ export function WritingDocPanel(): React.JSX.Element | null {
       // `pendingRevision === target` 是精度闸：只有「我立的那个 pending 还在」时才由我收尾。
       // 别人（轮末钩子 / onTurnError / 换源）已经清过或换过，就别再插一脚——否则会在对照卡
       // 已经出来的情况下弹一条「没能发出去」的假警报。
-      if ((!sent || !airborne) && nowSt.pendingRevision === target) {
+      if ((!sent || !airborne) && nowSt.pendingRevision === effectiveTarget) {
         nowSt.setPendingRevision(null)
         nowSt.setConflictMsg(
           sent

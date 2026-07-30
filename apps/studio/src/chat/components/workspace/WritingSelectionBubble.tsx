@@ -79,8 +79,12 @@ export function WritingSelectionBubble({
       // 的源码切片，序号才和内容对得上。若拖到 fire() 时才用彼时的最新 markdown 去切，
       // 期间这一节若被 AI 改写、块数变化，同样的序号会切出完全不相关的内容——那就不是
       // "这段被改了、target 该判过期"，而是从一开始就切错了块，beforeMarkdown 记的根本不是
-      // 用户选的那段。此刻捕获能保证两者永远同源；之后若真的变了，buildRevisionMessage 的
-      // 一致性校验 / relocateTarget 会在发送前正确识别成"target 已过期"并拒绝，而不是悄悄错位。
+      // 用户选的那段。此刻捕获把这个窗口从"选区打开到用户点击发送"的秒级压到了一帧内
+      // （selectionchange 触发时 DOM 和 store 必然是同一次渲染提交的结果；理论上仍有一个
+      // 亚帧窗口——轮询把 store 刷新到下一版之后、React 还没来得及重渲染更新 DOM 之前——
+      // 但这里读的是 getState() 现读值而不是渲染期闭包，实际不可达，别把它当不变量沉淀）。
+      // 之后若真的变了，buildRevisionMessage 的一致性校验 / relocateTarget 会在发送前正确
+      // 识别成"target 已过期"并拒绝，而不是悄悄错位。
       const sec = useWritingStore.getState().sections.find((s) => s.name === scope.sectionName)
       if (!sec) return // 找不到该节最新正文，没法可靠地算出 beforeMarkdown，这次选区不成立
       const beforeMarkdown = splitBlocks(sec.markdown)

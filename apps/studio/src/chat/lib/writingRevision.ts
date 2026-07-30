@@ -135,23 +135,44 @@ export function applyRevision(
  * - 命中多处：同一节里存在完全相同的连续块（例如两段句式雷同的模板化文字），按「离入队时
  *   `target.range.start` 最近」选一处，但 `ambiguous: true`——挑中的那处可能是错的，
  *   调用方必须把这个信号透传给用户（对照卡警示条），不能像旧版那样悄悄选一个当"精确命中"。
+ *
+ * 【为什么窗口宽度不能钉死成 `splitBlocks(beforeMarkdown).length`（复审 F1，反直觉但必须
+ * 记住）】：`canonicalize` 只保证**字符串幂等**（join 出来的整段文本再切一遍能切回原样的
+ * 块序列），不保证**块数幂等**——`splitBlocks` 的切块规则依赖上下文：「列表项间单空行并入
+ * 列表段」「缩进续行并入列表段」这两条规则，独立对 `beforeMarkdown` 这一小段字符串再切一次
+ * 时，切出来的块数可能和它原本嵌在整节正文里被切出的块数不一样（例如两个用双空行隔开的列表，
+ * 单独切成两块，但作为正文一部分时因为前后内容影响被并成一块，反之亦然）。若窗口宽度直接
+ * 取 `needleBlocks.length` 且这个数恰好不对，就**没有任何一个位置的宽度是对的**——不是
+ * "这一处内容不匹配"，而是从一开始就没扫到会匹配的那个宽度，导致内容其实一个字都没变，
+ * 却被误判成"已过期"且**永久**匹配不到（复审给出的反例：`'- 甲项\n- 乙项\n\n\n   缩进的续行段落'`
+ * 在嵌入正文时被切成两块，但 `beforeMarkdown` 单独再切一次会被"缩进续行并入列表段"的规则
+ * 并回一块）。故只用**内容长度**做剪枝，不假设任何固定的块数。
  */
 export function relocateTarget(
   sectionMarkdown: string,
   target: WritingRevisionTarget
 ): WritingRelocateResult | null {
   const blocks = splitBlocks(sectionMarkdown)
-  const needleBlocks = splitBlocks(target.beforeMarkdown)
-  // 空切片必须提前拦：若放行，下面的循环会把每个位置的「空 slice join 成 ''」都判成命中
-  // （needle 也是 ''），在整节里制造出一片虚假命中。正常路径下 beforeMarkdown 不可能是
-  // 空白（buildRevisionMessage 的越界/空白检查已经挡在提交之前），这里只是防御。
-  if (needleBlocks.length === 0) return null
-  const needle = needleBlocks.join('\n\n') // 等价于 canonicalize(target.beforeMarkdown)
+  const needle = canonicalize(target.beforeMarkdown)
+  // 空切片必须提前拦：若放行，下面的循环会把每个位置的「空 slice join 成 ''」都判成命中，
+  // 在整节里制造出一片虚假命中。正常路径下 beforeMarkdown 不可能是空白（buildRevisionMessage
+  // 的越界/空白检查已经挡在提交之前），这里只是防御。
+  if (needle.length === 0) return null
 
+  // 扫描所有 [start, end] 连续窗口（宽度不固定，理由见上）。靠**长度单调性**剪枝而不是
+  // 枚举所有宽度：固定 start 时，随 end 增大 join 出的字符串只会变长（`join('\n\n')` 只增不减），
+  // 一旦超过 needle 长度就不可能再相等，直接换下一个 start——不需要为此另设距离上限，
+  // 真实文档的块数量级下这近似线性，100KB 巨节实测单次 0.216ms（复审实测）。
   const hits: Array<{ start: number; end: number }> = []
-  for (let start = 0; start + needleBlocks.length <= blocks.length; start++) {
-    const end = start + needleBlocks.length - 1
-    if (blocks.slice(start, end + 1).join('\n\n') === needle) hits.push({ start, end })
+  for (let start = 0; start < blocks.length; start++) {
+    for (let end = start; end < blocks.length; end++) {
+      const slice = blocks.slice(start, end + 1).join('\n\n')
+      if (slice.length > needle.length) break
+      if (slice === needle) {
+        hits.push({ start, end })
+        break // 同一个 start 的 join 长度严格递增，不可能有第二个更长的窗口也等于 needle
+      }
+    }
   }
   if (hits.length === 0) return null
   if (hits.length === 1) return { range: hits[0], ambiguous: false }
