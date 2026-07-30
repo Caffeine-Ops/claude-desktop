@@ -9,6 +9,7 @@ import {
   pickFilePath,
   type WritingToolPart
 } from '../lib/writingDocSource'
+import type { WritingRevisionTarget } from '../lib/writingRevision'
 import { useChatStore } from './chat'
 
 /** 轮询间隔。2s 是「AI 写完一节到你看见」的上限，对人眼足够；再密只是空转 IPC。 */
@@ -16,38 +17,121 @@ const POLL_MS = 2000
 
 type WritingStatus = 'idle' | 'ready' | 'missing' | 'error'
 
+/** 排队软上限。与 proposal 的 MAX_REVISION_QUEUE 对齐——同一个数只写一处，提示文案引用它。 */
+export const MAX_WRITING_REVISION_QUEUE = 10
+
+/** 排队中的改写。**不存最终块序号**：排队期间前面的改写可能落地、序号会漂，排空时用
+ *  selectedText 重新定位（range 只当多处命中时的裁决提示）。 */
+export interface QueuedWritingRevision {
+  id: string
+  target: WritingRevisionTarget
+  instruction: string
+}
+
+/** 待用户裁决的改写。渲染成「原文 vs 改后」对照卡。瞬时 UI 信号，不持久化。 */
+export interface WritingRevisionReview {
+  target: WritingRevisionTarget
+  before: string
+  after: string
+}
+
 interface WritingState {
   source: WritingDocSource | null
+  /**
+   * 工作区绑定的会话 id。**改写消息的收件人**——多 tab 时前台会话可能已切走，
+   * 没有它就无从判断「这条改写该不该发」，会把请求泄漏进别的会话（proposal 的
+   * ps.sessionId 是同一个理由）。随 setSource 一起记，两者永远同生同灭。
+   */
+  sessionId: string | null
   genre: WritingGenre
   outlineTotal: number | null
   sections: WritingSection[]
   status: WritingStatus
   errMsg: string
+  /** 已发出、正在等 AI 回复的那一条改写。非空 = 本轮回复要走哨兵抽取而非普通对话。 */
+  pendingRevision: WritingRevisionTarget | null
+  queue: QueuedWritingRevision[]
+  review: WritingRevisionReview | null
+  /** 一次性提示条（写盘冲突 / 排队项定位失败 / 队列满）。展示后由用户或下一次操作清掉。 */
+  conflictMsg: string
   /** 切换文档源：清空旧内容，避免上一篇的正文闪现在新文档里。 */
   setSource: (source: WritingDocSource | null) => void
+  /**
+   * 只重绑归属会话，**不动正文**。用于「源没变、前台会话换了」——同一篇稿子在另一个会话里
+   * 接着写时 setSource 不会触发（源字面相同），sessionId 会留成旧会话的，之后每次点改写都
+   * 撞 sendWritingMessage 的一致性校验静默 no-op，表现为「点了没反应」。
+   * 走这条而不是重调 setSource：后者会清空 sections，而轮询的 lastSignature 只在 source
+   * 引用变化时才重置——源引用没变就不会补拉，纸面会一直空着。
+   */
+  bindSession: (sessionId: string | null) => void
   applyScan: (v: { genre: WritingGenre; outlineTotal: number | null }) => void
   setSections: (sections: WritingSection[]) => void
   setStatus: (status: WritingStatus, errMsg?: string) => void
   /** 应用改写后就地替换一节的正文与 mtime（写盘成功后调用，避免等下一轮轮询才刷新）。 */
   replaceSectionMarkdown: (name: string, markdown: string, mtimeMs: number) => void
+  setPendingRevision: (t: WritingRevisionTarget | null) => void
+  /** 入队；返回 false = 队列已满、这一条被拒（调用方据此提示用户，别静默丢）。 */
+  pushQueue: (item: QueuedWritingRevision) => boolean
+  shiftQueue: () => QueuedWritingRevision | null
+  setReview: (r: WritingRevisionReview | null) => void
+  setConflictMsg: (msg: string) => void
 }
 
-export const useWritingStore = create<WritingState>((set) => ({
+export const useWritingStore = create<WritingState>((set, get) => ({
   source: null,
+  sessionId: null,
   genre: 'workplace',
   outlineTotal: null,
   sections: [],
   status: 'idle',
   errMsg: '',
+  pendingRevision: null,
+  queue: [],
+  review: null,
+  conflictMsg: '',
   setSource: (source) =>
-    set({ source, sections: [], outlineTotal: null, status: 'idle', errMsg: '' }),
+    set({
+      source,
+      // 会话 id 与文档源同生同灭：源是从【当前会话】的消息树推导出来的，故此刻的前台会话
+      // 就是这篇稿子的归属会话。切源 = 换了篇稿子（多半也换了会话），一并刷新。
+      sessionId: source ? useChatStore.getState().sessionId : null,
+      sections: [],
+      outlineTotal: null,
+      status: 'idle',
+      errMsg: '',
+      // 改写态一律跟着源清空：pending/queue/review 里的 sectionName 只对旧文档有意义，
+      // 留到新文档上会往错的文件里写内容——这类「跨文档串台」是不可逆的正文损坏。
+      pendingRevision: null,
+      queue: [],
+      review: null,
+      conflictMsg: ''
+    }),
+  bindSession: (sessionId) => {
+    if (get().sessionId === sessionId) return
+    // 换了归属会话就清改写态：旧会话的 pending 不该由新会话的轮末来兑现（那会把别的
+    // 对话的回复当成这条改写的结果推给用户确认）。
+    set({ sessionId, pendingRevision: null, queue: [], review: null, conflictMsg: '' })
+  },
   applyScan: ({ genre, outlineTotal }) => set({ genre, outlineTotal }),
   setSections: (sections) => set({ sections }),
   setStatus: (status, errMsg = '') => set({ status, errMsg }),
   replaceSectionMarkdown: (name, markdown, mtimeMs) =>
     set((s) => ({
       sections: s.sections.map((sec) => (sec.name === name ? { ...sec, markdown, mtimeMs } : sec))
-    }))
+    })),
+  setPendingRevision: (pendingRevision) => set({ pendingRevision }),
+  pushQueue: (item) => {
+    if (get().queue.length >= MAX_WRITING_REVISION_QUEUE) return false
+    set((s) => ({ queue: [...s.queue, item] }))
+    return true
+  },
+  shiftQueue: () => {
+    const head = get().queue[0] ?? null
+    if (head) set((s) => ({ queue: s.queue.slice(1) }))
+    return head
+  },
+  setReview: (review) => set({ review }),
+  setConflictMsg: (conflictMsg) => set({ conflictMsg })
 }))
 
 /**
