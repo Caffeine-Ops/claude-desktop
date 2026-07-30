@@ -7,6 +7,7 @@ import {
   detectWritingSource,
   isWritingInProgress,
   pickFilePath,
+  toolResultText,
   type WritingToolPart
 } from '../lib/writingDocSource'
 import type { WritingRevisionTarget } from '../lib/writingRevision'
@@ -175,10 +176,22 @@ function toolPartsOf(content: unknown): WritingToolPart[] {
   }[]) {
     if (p.type !== 'tool-call' || !p.toolName) continue
     const args = p.args ?? {}
+    // **只有 Bash 才算 commandText / resultText**。两个理由，都别退回去：
+    //  1) 语义：判定只从 Bash 的命令文本与 stdout 里找 WRITING_PROJECT= 标记
+    //     （detectWritingSource 对非 Bash 的 part 压根不看这两个字段），非 Bash 算了也白算。
+    //  2) 性能：这个函数被 useWritingSource 用，而 useWritingSource 订阅整个 chat store
+    //     ——流式期间**每个 delta** 都会把会话全部历史消息重扫一遍。无条件把每条
+    //     Read/Write/Grep 的结果（可能是几十 KB 正文）都转成文本，等于在最热的路径上
+    //     反复做与判定无关的字符串搬运。它抄的模板 usePreviewServer（chat.ts）第一步
+    //     就是 `if (p.toolName !== 'Bash') continue`，恰恰避开了这个坑。
+    const isBash = p.toolName === 'Bash'
     parts.push({
       toolName: p.toolName,
-      commandText: typeof args.command === 'string' ? args.command : '',
-      resultText: typeof p.result === 'string' ? p.result : JSON.stringify(p.result ?? ''),
+      commandText: isBash && typeof args.command === 'string' ? args.command : '',
+      // 不用 JSON.stringify 兜底：数组形态的 tool result 被 JSON 化后真实换行变成 `\`+`n`
+      // 两个字符，PROJECT_LINE 的 `[^\r\n]+` 不认，会一路吞到 JSON 末尾抓出带尾巴的假路径
+      // （静默表现为右栏永远「写作项目目录已不存在」）。完整推演见 toolResultText 头注释。
+      resultText: isBash ? toolResultText(p.result) : '',
       filePath: pickFilePath(args)
     })
   }
@@ -199,7 +212,20 @@ export function useWritingSource(): WritingDocSource | null {
   )
 }
 
-/** 右栏门控：有文档源即接管。与 proposal / slides 的互斥在 ThreadView 里裁决。 */
+/**
+ * 工作区**已经开着**（store 里落了文档源）。
+ *
+ * 【别把它单独当右栏门控用——那会自锁死】store.source 唯一的写手是 WritingDocPanel 自己的
+ * effect（它在面板内调 useWritingSource 推导后 setSource）。若门控只看 store.source：
+ *   store.source 为 null → 面板不挂载 → 推导 effect 不跑 → store.source 永远为 null
+ * ——成环，AI 写完稿子右栏也永远不出现（真机零功能，但类型与单测全绿）。
+ *
+ * 与 proposal 的关键差异：proposal 的 workspaceOpen 由 slash 命令 / 引擎事件在面板**之外**
+ * 置起，天然没有这个环；写作是「从消息推导」，推导器却被关在只有推导成功才会打开的门里面。
+ * 故 ThreadView 的门控必须是 `useWritingSource() !== null || useWritingWorkspace()`：
+ * 前者负责**开门**（消息推导，与面板挂载无关），后者负责在推导值瞬时抖动时**保持开着**，
+ * 并保留「推导为 null → 面板 effect setSource(null) → 两者同时为假 → 卸载」这条拆卸路径。
+ */
 export function useWritingWorkspace(): boolean {
   return useWritingStore((s) => s.source !== null)
 }

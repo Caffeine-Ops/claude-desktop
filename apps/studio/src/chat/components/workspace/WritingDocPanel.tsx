@@ -31,6 +31,8 @@ import { WritingRevisionReviewCard } from './WritingRevisionReview'
  *
  * 顶栏**不标 app-region:drag**：根 layout 的 .window-drag-strip 是全应用唯一的拖拽面，
  * 组件顶栏再标会复发「整窗拖不动 + 双击不缩放」（CLAUDE.md 记了 7 条同族事故）。
+ * 反过来，顶栏又整条落在那条 46px 拖拽带里，所以**栏内交互控件必须 no-drag 挖洞**，
+ * 否则点击被拖窗吞掉——两件事是一体两面，缺哪一半都出问题，详见顶栏那段行内注释。
  *
  * 本组件是选区改写闭环的调度中枢：气泡（在纸面里）派发 → 这里决定「直发还是排队」→
  * 轮末哨兵抽取（FusionRuntimeProvider）产出对照卡 → 用户点应用 → 乐观锁写盘。
@@ -300,6 +302,13 @@ export function WritingDocPanel(): React.JSX.Element | null {
       }
       if (res.conflict) {
         // 乐观锁拦下：AI 在用户裁决期间又改过这一节。**不覆盖**，把盘上最新的灌回来。
+        //
+        // 【为什么必须按 res.current 分两条文案】main 侧 writeWritingSection 在**两种**情况下
+        // 都回 conflict：mtime 对不上（文件还在、能读回最新内容 → current 非空），以及
+        // statSync/readFileSync 失败（文件被删除或改名 → current 为 null）。后者说到底不是
+        // 「被改过」，而是「没了」——此时既没有刷新、也没有可重新选中的内容，若照旧说
+        // 「已刷新到最新内容，请重新选中修改」，用户会按提示再操作一次、再撞一次同样的墙。
+        // 提示的价值全在「下一步该干什么」，说错了比不说更费人。
         if (res.current) {
           after.replaceSectionMarkdown(
             r.target.sectionName,
@@ -308,7 +317,9 @@ export function WritingDocPanel(): React.JSX.Element | null {
           )
         }
         after.setConflictMsg(
-          '这一节刚被 AI 改过，你的改动未生效。已刷新到最新内容，请重新选中修改。'
+          res.current
+            ? '这一节刚被 AI 改过，你的改动未生效。已刷新到最新内容，请重新选中修改。'
+            : '这一节的文件已不存在（可能被删除或改名），改动未生效。'
         )
         after.setReview(null)
         return
@@ -438,25 +449,38 @@ export function WritingDocPanel(): React.JSX.Element | null {
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col border-l border-border bg-background">
-      <div className="flex items-center gap-1 border-b border-border px-3 py-2">
-        <Button
-          variant={tab === 'doc' ? 'secondary' : 'ghost'}
-          size="sm"
-          onClick={() => setTab('doc')}
-        >
-          文稿
-        </Button>
-        <Button
-          variant={tab === 'preview' ? 'secondary' : 'ghost'}
-          size="sm"
-          onClick={() => setTab('preview')}
-        >
-          打印预览
-        </Button>
+      {/* 顶栏：h-[46px] + shrink-0，与 ChatHeader / ProposalDocPanel / slides tab 栏同参
+          ——分栏各列顶栏底边必须对齐成一条（旧写法 px-3 py-2 + size="sm"(h-8) 自适应出
+          48px，与左列 46px 差 2px）。
+          【本栏整条落在根 .window-drag-strip（fixed 全宽 46px、app-region:drag）里，
+          栏内每个交互控件都必须 no-drag 挖洞，否则点击被原生窗口拖拽整个吞掉】——
+          这不是样式洁癖：漏挖洞的表现是「按钮点了没反应、按住会拖动窗口」，五个按钮
+          （文稿 / 打印预览 / 导出 Word / 导出 PDF / 复制公众号 HTML）会一起哑掉，且
+          控制台零报错。CLAUDE.md 里这是 errors/ 记了 7 条的同族事故。挖洞按「组」挖
+          （tab 一组、右侧一组），不逐个按钮挖：新增按钮时自动继承，不会漏。
+          注意顶栏本身仍**不标 drag** —— 全应用唯一的拖拽面是根 .window-drag-strip，
+          组件顶栏再标会复发「整窗拖不动 + 双击不缩放」。 */}
+      <div className="flex h-[46px] shrink-0 items-center gap-1 border-b border-border px-3">
+        <div className="flex items-center gap-1 [-webkit-app-region:no-drag]">
+          <Button
+            variant={tab === 'doc' ? 'secondary' : 'ghost'}
+            size="sm"
+            onClick={() => setTab('doc')}
+          >
+            文稿
+          </Button>
+          <Button
+            variant={tab === 'preview' ? 'secondary' : 'ghost'}
+            size="sm"
+            onClick={() => setTab('preview')}
+          >
+            打印预览
+          </Button>
+        </div>
         {/* 右侧一组：排队计数 + 导出反馈 + 导出按钮。包一层 ml-auto 而不是挂在排队计数上——
             排队计数是条件渲染，若把 ml-auto 放它身上，队列一空右侧这组就会贴着 tab 按钮，
-            导出按钮组的位置会跟着队列有无跳动。 */}
-        <div className="ml-auto flex items-center gap-2">
+            导出按钮组的位置会跟着队列有无跳动。no-drag 同样一次盖住整组（见上）。 */}
+        <div className="ml-auto flex items-center gap-2 [-webkit-app-region:no-drag]">
           {/* 排队计数放顶栏：气泡发完就收起，没有它用户看不出「我排的那几条还在不在」。 */}
           {queueLen > 0 && (
             <span className="text-[11px] text-muted-foreground">{queueLen} 条改写排队中</span>

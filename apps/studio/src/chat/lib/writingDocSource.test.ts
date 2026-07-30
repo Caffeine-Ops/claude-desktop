@@ -3,6 +3,7 @@ import {
   detectWritingSource,
   isWritingInProgress,
   pickFilePath,
+  toolResultText,
   type WritingToolPart
 } from './writingDocSource'
 
@@ -113,6 +114,58 @@ describe('detectWritingSource · 命令文本分支', () => {
   it('命令文本与输出都有标记时，取输出里的那个（输出是脚本真实报数）', () => {
     const parts = [bash('WRITING_PROJECT=/a/real\n', 'echo "WRITING_PROJECT=/a/typed"')]
     expect(detectWritingSource(parts)).toEqual({ kind: 'project', projectDir: '/a/real' })
+  })
+})
+
+describe('toolResultText · tool result 归一（回归：数组形态曾被 JSON.stringify 毁掉）', () => {
+  it('string 形态原样返回', () => {
+    expect(toolResultText('WRITING_PROJECT=/a/proj\n')).toBe('WRITING_PROJECT=/a/proj\n')
+  })
+
+  it('数组形态：拼接各 text block，真实换行保留', () => {
+    const result = [
+      { type: 'text', text: '已创建项目\n' },
+      { type: 'text', text: 'WRITING_PROJECT=/Users/k/proj/我的小说_20260729\n' }
+    ]
+    expect(toolResultText(result)).toBe(
+      '已创建项目\nWRITING_PROJECT=/Users/k/proj/我的小说_20260729\n'
+    )
+  })
+
+  it('数组里混入裸字符串与无 text 的块也不炸', () => {
+    expect(toolResultText(['a', { type: 'image' }, { type: 'text', text: 'b' }])).toBe('ab')
+  })
+
+  it('对象形态：text / content(字符串) / content(数组) 三种都认', () => {
+    expect(toolResultText({ text: 'x' })).toBe('x')
+    expect(toolResultText({ content: 'y' })).toBe('y')
+    expect(toolResultText({ content: [{ type: 'text', text: 'z' }] })).toBe('z')
+  })
+
+  it('认不出的形态回空串（绝不回 JSON 串——那会被当成命令输出去匹配标记）', () => {
+    expect(toolResultText(undefined)).toBe('')
+    expect(toolResultText(null)).toBe('')
+    expect(toolResultText(42)).toBe('')
+    expect(toolResultText({ foo: 1 })).toBe('')
+  })
+
+  it('端到端回归：数组形态的 tool result 抓出的项目路径不带 JSON 尾巴', () => {
+    // 曾经的 bug：store 里用 JSON.stringify 兜底，真实换行被转义成 `\`+`n` 两个字符，
+    // PROJECT_LINE 的 [^\r\n]+ 不认，捕获组一路吞到 JSON 末尾，抓出
+    // `/Users/k/proj/我的小说_20260729\n"}]`——main 侧 statSync 必失败，右栏永远显示
+    // 「写作项目目录已不存在」，且全程零报错。
+    const arrayResult = [
+      { type: 'text', text: 'WRITING_PROJECT=/Users/k/proj/我的小说_20260729\n' }
+    ]
+    expect(detectWritingSource([bash(toolResultText(arrayResult))])).toEqual({
+      kind: 'project',
+      projectDir: '/Users/k/proj/我的小说_20260729'
+    })
+    // 反证：老写法（JSON.stringify）会抓到带尾巴的假路径，这条钉住"为什么不能那么写"。
+    expect(detectWritingSource([bash(JSON.stringify(arrayResult))])).not.toEqual({
+      kind: 'project',
+      projectDir: '/Users/k/proj/我的小说_20260729'
+    })
   })
 })
 

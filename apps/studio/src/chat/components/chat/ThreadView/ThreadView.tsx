@@ -50,7 +50,7 @@ import {
 } from './WorkflowScriptPanel'
 import { ProposalDocPanel } from '../../workspace/ProposalDocPanel'
 import { useProposalWorkspace } from '../../../stores/proposal'
-import { useWritingWorkspace } from '../../../stores/writing'
+import { useWritingSource, useWritingWorkspace } from '../../../stores/writing'
 import { WritingDocPanel } from '../../workspace/WritingDocPanel'
 import { SpreadsheetPreviewPanel } from './SpreadsheetPreviewPanel'
 import { ImageEditPanel } from './ImageEditPanel'
@@ -508,7 +508,22 @@ export function ThreadView(): React.JSX.Element {
   // 写作两栏：与 proposal 同为「实时接管」语义（有写作文档源即接管、没有即还原），
   // 不按会话启动模式标记。三者互斥，优先级 proposal > slides > writing——proposal 由
   // slash 显式激活、意图最强；writing 是从工具调用推导出来的，最弱。
-  const isWritingMode = useWritingWorkspace() && !isProposalMode && !isSlidesMode
+  //
+  // 【门控为什么必须是「消息推导 || store 已开」这个或，不能只看 store——反直觉，别"简化"回去】
+  // store.writing.source 的唯一写手是 WritingDocPanel 自己的 effect（面板内推导后 setSource）。
+  // 若门控只看 store：source 为 null → 面板不挂载 → 推导 effect 不跑 → source 永远为 null，
+  // 成环，AI 写完稿子右栏也永远不出现（真机零功能，而类型检查与单测全绿，抓不到）。
+  // 这与 proposal 的差别在于：proposal 的 workspaceOpen 由 slash/引擎事件在面板**之外**置起，
+  // 天生无环；写作的推导器却在面板里面，必须由这里的 useWritingSource() 把门先撞开。
+  //   - writingDerived 负责【开门】：直接从前台会话消息树推导，与面板挂载与否无关。
+  //   - writingOpen 负责【保持开着】：推导值瞬时抖动（切会话中途 messages 短暂为空等）
+  //     时不至于把面板整个抖掉，同时保留「推导为 null → 面板 effect setSource(null) →
+  //     两者同时为假 → 卸载」这条既有拆卸路径。
+  // 面板首帧 storeSource 仍为 null 会 return null（它所有 hook 都在那句 return 之前，
+  // 无 hook 顺序问题），次帧 effect 落库后出内容——这是预期的两帧交接。
+  const writingDerived = useWritingSource() !== null
+  const writingOpen = useWritingWorkspace()
+  const isWritingMode = (writingDerived || writingOpen) && !isProposalMode && !isSlidesMode
   // 任一分栏模式：chat 列都收窄成固定宽度 rail（共用同一条拖拽宽度）。
   const isSplitMode = isProposalMode || isSlidesMode || isWritingMode
   // Workflow 脚本面板（右栏）：AI 正在写 workflow 脚本时自动弹出，或用户

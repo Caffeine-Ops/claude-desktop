@@ -79,6 +79,45 @@ export function pickFilePath(args: unknown): string | null {
 }
 
 /**
+ * 把一条 tool result 归一成纯文本。
+ *
+ * 【为什么不能用 `JSON.stringify` 兜底】Anthropic SDK 的 `ToolResultBlockParam.content` 类型
+ * 就是 `string | Array<TextBlockParam|…>`，engine.ts 转发时不归一，所以数组形态在本仓是**真实
+ * 存在**的形态（chat.ts 的 `previewResultText` 为此写了 string/array/object 三分支，就是证据）。
+ * 一旦 JSON.stringify，正文里的真实换行会被转义成 `\` + `n` **两个字符**，而
+ * `PROJECT_LINE` 的 `[^\r\n]+` 只认真正的换行符——于是捕获组从 marker 一路吞到 JSON 串末尾，
+ * 抓出 `/Users/k/proj/我的小说_20260729\n"}]` 这种带尾巴的假路径。
+ * 后果是完全静默的：main 侧 statSync 失败 → dirMissing → 右栏永远显示「写作项目目录已不存在」，
+ * 零报错、类型全绿。改这里前先想清楚这条链。
+ *
+ * 与 chat.ts 的 `previewResultText` 同源同语义。为什么复制而不是复用：那份在
+ * `src/chat/stores/chat.ts` 里、未导出，且 stores/ 不在 bun test 覆盖范围
+ * （`test` 脚本只跑 electron/ + src/chat/lib + src/chat/composer）；放在 lib/ 才测得到。
+ * 改一处要同步另一处。
+ */
+export function toolResultText(result: unknown): string {
+  if (typeof result === 'string') return result
+  if (Array.isArray(result)) {
+    return result
+      .map((part) =>
+        part && typeof part === 'object' && 'text' in part
+          ? String((part as { text?: unknown }).text ?? '')
+          : typeof part === 'string'
+            ? part
+            : ''
+      )
+      .join('')
+  }
+  if (result && typeof result === 'object') {
+    const obj = result as Record<string, unknown>
+    if (typeof obj.text === 'string') return obj.text
+    if (typeof obj.content === 'string') return obj.content
+    if (Array.isArray(obj.content)) return toolResultText(obj.content)
+  }
+  return ''
+}
+
+/**
  * 遍历工具调用，判定文档源。**项目模式优先于单文件模式**：主管线会先 init 项目再写文件，
  * 若按出现顺序取最后一个，写第一节时就会被 Write 的路径判定顶掉。两种模式各自取「最后一次」
  * （用户可能在同一会话里开第二个项目 / 写第二篇周报）。都没有则返回 null，会话保持单栏。
