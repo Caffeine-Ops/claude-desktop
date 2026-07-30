@@ -1024,6 +1024,21 @@ export const IPC_CHANNELS = {
    */
   WRITING_WECHAT_HTML: 'writing:wechat-html',
   /**
+   * Renderer → main. 导出 Word。渲染层拼好 markdown（joinWritingSections）+ 体裁样式
+   * （writingStyleFor），main 弹原生保存对话框、跑 markdownToDocxBuffer 并写盘。
+   * **不复用 PROPOSAL_EXPORT**：那条通道的保存框默认文件名写死成「方案草稿.docx」，写作
+   * 复用会让用户在保存框里看到「方案草稿」、日志也显示成方案导出，误导排查——真正的重逻辑
+   * （markdownToDocxBuffer）两边共用，只是各自管自己的保存框与默认名（见 writingExport.ts）。
+   */
+  WRITING_EXPORT_DOCX: 'writing:export-docx',
+  /**
+   * Renderer → main. 保存 PDF 字节。PDF 由渲染层经 `renderProposalPdfHtml` → `PROPOSAL_RENDER_PDF`
+   * 生成字节后传来，main 只管保存框与写盘——与 WRITING_EXPORT_DOCX 分成两条通道是因为生成方不同
+   * （docx 由 main 从 markdown 生成，PDF 字节由 renderer 侧渲染层出），塞进一条通道会让 payload
+   * 出现互斥字段。
+   */
+  WRITING_EXPORT_PDF: 'writing:export-pdf',
+  /**
    * Renderer → main. 语义检索：模糊自然语言 → 混合(向量+BM25)命中片段+出处。供写方案
    * 搜索面板主动用。embedding 在 utilityProcess、不冻 main；模型缺失/stale 降级 BM25。
    * staleIndex=true 时结果是 BM25 降级（有内容但非语义），面板顶部显「需重建索引」条。
@@ -2429,6 +2444,24 @@ export type WritingWechatHtmlResult =
   | { ok: true; html: string; styleFallback: boolean }
   | { ok: false; error: string }
 
+/** Payload for WRITING_EXPORT_DOCX. */
+export interface WritingExportDocxPayload {
+  markdown: string
+  /** 体裁样式模板（writingStyleFor(genre)）。纯数据，结构化克隆安全。 */
+  style: ProposalStyleConfig
+  /** 保存对话框的默认文件名（不含扩展名）——取自文稿第一节的一级标题，取不到时回退「文稿」。 */
+  defaultBaseName: string
+}
+/** Payload for WRITING_EXPORT_PDF。`bytes` 是 renderer 经 renderProposalPdf 拿到的 PDF 字节。 */
+export interface WritingExportPdfPayload {
+  bytes: Uint8Array
+  defaultBaseName: string
+}
+/** Result of WRITING_EXPORT_DOCX / WRITING_EXPORT_PDF 共用：`path: null` = 用户取消保存框，不是错误。 */
+export interface WritingExportResult {
+  path: string | null
+}
+
 /** Payload for PROPOSAL_EXPORT. */
 export interface ProposalExportPayload {
   markdown: string
@@ -3613,6 +3646,16 @@ export interface ChatApi {
    * 打印预览 tab 的微信分支与「复制公众号 HTML」共用同一个字符串，天然一致。
    */
   writingWechatHtml(payload: WritingWechatHtmlPayload): Promise<WritingWechatHtmlResult>
+  /**
+   * 导出 Word（WRITING_EXPORT_DOCX 通道注释）。**不复用 exportProposal**——保存框默认名与
+   * 日志语义都该说「写作」而不是「方案」，真正的重逻辑（markdownToDocxBuffer）仍是共用的。
+   */
+  writingExportDocx(payload: WritingExportDocxPayload): Promise<WritingExportResult>
+  /**
+   * 保存 PDF 字节（WRITING_EXPORT_PDF 通道注释）。字节由 renderer 经 renderProposalPdf 生成，
+   * 这里只弹保存框、写盘。
+   */
+  writingExportPdf(payload: WritingExportPdfPayload): Promise<WritingExportResult>
 }
 
 /**

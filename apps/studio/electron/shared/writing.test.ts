@@ -10,6 +10,7 @@ import {
   WRITING_REVISION_END,
   type WritingSection
 } from './writing'
+import { PROPOSAL_PAGEBREAK } from './proposal'
 
 describe('parseWritingGenre', () => {
   it('读出 spec_lock 的 genre', () => {
@@ -136,7 +137,9 @@ describe('joinWritingSections', () => {
   it('分页时在节之间插入分页标记，首节前不插', () => {
     const out = joinWritingSections(secs, { pageBreaks: true })
     expect(out.startsWith('# 第一章')).toBe(true)
-    expect(out).toContain('\n\n<!-- pagebreak -->\n\n# 第二章')
+    // 分页标记必须与 markdownToDocxBuffer（proposalDocx.ts）识别的 PROPOSAL_PAGEBREAK
+    // 逐字节一致，否则小说体裁的分页导出会静默失效（曾经的真实 bug，见上方常量注释）。
+    expect(out).toContain(`\n\n${PROPOSAL_PAGEBREAK}\n\n# 第二章`)
   })
 
   it('空数组返回空串', () => {

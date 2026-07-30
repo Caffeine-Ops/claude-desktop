@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/src/components/ui/button'
 import { cn } from '@/src/lib/utils'
 import { splitBlocks } from '@desktop-shared/proposalBlocks'
+import { joinWritingSections, shouldPageBreak } from '@desktop-shared/writing'
 import { useChatStore } from '../../stores/chat'
 import {
   MAX_WRITING_REVISION_QUEUE,
@@ -18,6 +19,9 @@ import {
   type WritingRevisionTarget
 } from '../../lib/writingRevision'
 import { sendWritingMessage } from '../../lib/sendWritingMessage'
+import { writingStyleFor } from '../../lib/writingGenreStyle'
+import { renderProposalPdfHtml } from '../../lib/renderProposalPdfHtml'
+import { deriveWritingExportBaseName } from '../../lib/writingExportInput'
 import { WritingPaper } from './WritingPaper'
 import { WritingPreview } from './WritingPreview'
 import { WritingRevisionReviewCard } from './WritingRevisionReview'
@@ -35,7 +39,19 @@ export function WritingDocPanel(): React.JSX.Element | null {
   const source = useWritingSource()
   const setSource = useWritingStore((s) => s.setSource)
   const storeSource = useWritingStore((s) => s.source)
+  // 只用来决定「复制公众号 HTML」按钮是否显示；导出按钮点击时一律现读 getState()（见
+  // buildExportInput），不吃这份渲染期快照。
+  const genre = useWritingStore((s) => s.genre)
   const [tab, setTab] = useState<'doc' | 'preview'>('doc')
+  // 导出反馈条：{tone,text} 而非纯字符串——'err' 用醒目色，'ok'/'muted' 用弱化色，与
+  // ProposalDocPanel 的 exportMsg 同款约定（同一份代码里两处导出条不该长得不一样）。
+  const [exportMsg, setExportMsg] = useState<{ tone: 'ok' | 'err' | 'muted'; text: string } | null>(
+    null
+  )
+  // 导出在飞：防止用户连点弹出多个保存对话框。三种导出各自独立（Word 在飞不该锁住微信复制）。
+  const [exportingDocx, setExportingDocx] = useState(false)
+  const [exportingPdf, setExportingPdf] = useState(false)
+  const [copyingWechat, setCopyingWechat] = useState(false)
   // 「这一轮在写这篇稿子」而非会话级 streaming——见 useWritingInProgress 头注释，
   // 避免全文写完后用户提问还挂着「正在写第 N 节」的骨架。
   const writing = useWritingInProgress()
@@ -287,6 +303,121 @@ export function WritingDocPanel(): React.JSX.Element | null {
     }
   }, [])
 
+  // 导出反馈条 4s 后自动收起（同 ProposalDocPanel 的 exportMsg 约定）——它只是「刚才那次
+  // 导出/复制成功与否」的一次性回执，不是需要用户手动确认的告警（那种用上面的 conflictMsg 条）。
+  useEffect(() => {
+    if (!exportMsg) return
+    const id = setTimeout(() => setExportMsg(null), 4000)
+    return () => clearTimeout(id)
+  }, [exportMsg])
+
+  /**
+   * 导出用的完整 markdown 与默认文件名。**现读 getState()**：三个导出按钮共用这个函数，
+   * 点击那一刻的 sections/genre 应该是最新的，不吃渲染期闭包（与本文件其余状态读取纪律一致）。
+   * 文件名取拼合后全篇第一个一级标题，取不到用「文稿」（deriveWritingExportBaseName）。
+   */
+  function buildExportInput(): { markdown: string; baseName: string } {
+    const st = useWritingStore.getState()
+    const markdown = joinWritingSections(st.sections, { pageBreaks: shouldPageBreak(st.genre) })
+    return { markdown, baseName: deriveWritingExportBaseName(markdown) }
+  }
+
+  async function exportDocx(): Promise<void> {
+    if (exportingDocx) return
+    const { markdown, baseName } = buildExportInput()
+    if (!markdown) {
+      setExportMsg({ tone: 'muted', text: '正文为空，无内容可导出' })
+      return
+    }
+    setExportingDocx(true)
+    try {
+      const r = await window.chatApi.writingExportDocx({
+        markdown,
+        style: writingStyleFor(useWritingStore.getState().genre),
+        defaultBaseName: baseName
+      })
+      setExportMsg(
+        r.path ? { tone: 'ok', text: `已导出：${r.path}` } : { tone: 'muted', text: '已取消导出' }
+      )
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err)
+      console.error('[writing-export docx]', err)
+      setExportMsg({ tone: 'err', text: `导出失败：${m}` })
+    } finally {
+      setExportingDocx(false)
+    }
+  }
+
+  async function exportPdf(): Promise<void> {
+    if (exportingPdf) return
+    const { markdown, baseName } = buildExportInput()
+    if (!markdown) {
+      setExportMsg({ tone: 'muted', text: '正文为空，无内容可导出' })
+      return
+    }
+    setExportingPdf(true)
+    try {
+      // renderProposalPdfHtml 的第三个参数（预渲 mermaid 图）不是可选参数，写作体裁不支持
+      // mermaid 代码块，必须显式传 undefined——漏传是 TS2554（Task 8 踩过的坑，见 WritingPreview）。
+      const html = await renderProposalPdfHtml(
+        markdown,
+        writingStyleFor(useWritingStore.getState().genre),
+        undefined
+      )
+      const { bytes } = await window.chatApi.renderProposalPdf({ html })
+      const r = await window.chatApi.writingExportPdf({ bytes, defaultBaseName: baseName })
+      setExportMsg(
+        r.path ? { tone: 'ok', text: `已导出：${r.path}` } : { tone: 'muted', text: '已取消导出' }
+      )
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err)
+      console.error('[writing-export pdf]', err)
+      setExportMsg({ tone: 'err', text: `导出失败：${m}` })
+    } finally {
+      setExportingPdf(false)
+    }
+  }
+
+  /**
+   * 微信：复制而非存文件——公众号的工作流就是粘贴，存成 .html 还得再打开复制一次。
+   * `ClipboardItem` 同时写 text/html 与 text/plain：公众号编辑器读 HTML flavor 才能保住样式，
+   * 纯文本 flavor 是给其他编辑器（或粘贴到聊天框之类的场景）的兜底，不写它会导致普通编辑器
+   * 粘贴出一整段裸 HTML 源码。
+   */
+  async function copyWechat(): Promise<void> {
+    if (copyingWechat) return
+    const { markdown } = buildExportInput()
+    if (!markdown) {
+      setExportMsg({ tone: 'muted', text: '正文为空，无内容可复制' })
+      return
+    }
+    setCopyingWechat(true)
+    try {
+      const r = await window.chatApi.writingWechatHtml({ markdown, styleName: 'wechat-default' })
+      if (!r.ok) {
+        setExportMsg({ tone: 'err', text: `生成失败：${r.error}` })
+        return
+      }
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html': new Blob([r.html], { type: 'text/html' }),
+          'text/plain': new Blob([r.html], { type: 'text/plain' })
+        })
+      ])
+      setExportMsg(
+        r.styleFallback
+          ? { tone: 'muted', text: '已复制（样式文件未找到，用了内置样式）' }
+          : { tone: 'ok', text: '已复制，可粘贴进公众号编辑器' }
+      )
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err)
+      console.error('[writing-export wechat]', err)
+      setExportMsg({ tone: 'err', text: `复制失败：${m}` })
+    } finally {
+      setCopyingWechat(false)
+    }
+  }
+
   if (!storeSource) return null
 
   return (
@@ -306,10 +437,44 @@ export function WritingDocPanel(): React.JSX.Element | null {
         >
           打印预览
         </Button>
-        {/* 排队计数放顶栏：气泡发完就收起，没有它用户看不出「我排的那几条还在不在」。 */}
-        {queueLen > 0 && (
-          <span className="ml-auto text-[11px] text-muted-foreground">{queueLen} 条改写排队中</span>
-        )}
+        {/* 右侧一组：排队计数 + 导出反馈 + 导出按钮。包一层 ml-auto 而不是挂在排队计数上——
+            排队计数是条件渲染，若把 ml-auto 放它身上，队列一空右侧这组就会贴着 tab 按钮，
+            导出按钮组的位置会跟着队列有无跳动。 */}
+        <div className="ml-auto flex items-center gap-2">
+          {/* 排队计数放顶栏：气泡发完就收起，没有它用户看不出「我排的那几条还在不在」。 */}
+          {queueLen > 0 && (
+            <span className="text-[11px] text-muted-foreground">{queueLen} 条改写排队中</span>
+          )}
+          {exportMsg && (
+            <span
+              className={cn(
+                'max-w-[220px] truncate text-[11px]',
+                exportMsg.tone === 'ok' && 'text-emerald-600 dark:text-emerald-400',
+                exportMsg.tone === 'err' && 'text-rose-600 dark:text-rose-400',
+                exportMsg.tone === 'muted' && 'text-muted-foreground'
+              )}
+              title={exportMsg.text}
+            >
+              {exportMsg.text}
+            </span>
+          )}
+          <Button variant="ghost" size="xs" disabled={exportingDocx} onClick={() => void exportDocx()}>
+            导出 Word
+          </Button>
+          <Button variant="ghost" size="xs" disabled={exportingPdf} onClick={() => void exportPdf()}>
+            导出 PDF
+          </Button>
+          {genre === 'wechat' && (
+            <Button
+              variant="ghost"
+              size="xs"
+              disabled={copyingWechat}
+              onClick={() => void copyWechat()}
+            >
+              复制公众号 HTML
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* 一次性提示条（写盘冲突 / 排队项被跳过 / 队列满）。可手动关掉，不自动消失

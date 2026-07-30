@@ -2,6 +2,8 @@
 // 改写结果怎么抽」用同一份判定——两边各写一份必然漂移（proposal 的哨兵放 shared 是同一理由）。
 // 零 IO、零 electron 依赖：bun test 在无 electron 的进程里跑。
 
+import { PROPOSAL_PAGEBREAK } from './proposal'
+
 /**
  * 文档源。写作有两种形态，下游一律只认这个判别联合，不再各自判断：
  *  - project：主管线 / 优化改写类工作流建的项目目录，正文在 <projectDir>/drafts/*.md
@@ -122,10 +124,14 @@ export function sortSectionNames(names: string[]): string[] {
 }
 
 /**
- * 分页标记。与 proposal 的导出链共用同一种 HTML 注释形态——`markdownToDocxBuffer`
- * 的 markdown 解析器把它当 html 节点，docx 生成时翻成分页符。
+ * 分页标记。**直接复用 proposal 的 `PROPOSAL_PAGEBREAK` 本体**（而非另定义一个字符串常量）：
+ * `markdownToDocxBuffer`（proposalDocx.ts `case 'html'`）用 `node.value.trim() === PROPOSAL_PAGEBREAK`
+ * 做逐字节比对来插入 Word 分页符，两边若各写一份、哪怕只差一个空格（曾经的真实 bug：这里写的是
+ * `'<!-- pagebreak -->'`，proposal 那边是 `'<!--proposal-pagebreak-->'`），比对就永远不命中——
+ * 分页标记会原样降级成一行可见文本「<!-- pagebreak -->」躺进导出的 Word 里，小说体裁的每章分页
+ * 静默失效，且没有任何报错。
  */
-const PAGE_BREAK = '<!-- pagebreak -->'
+const PAGE_BREAK = PROPOSAL_PAGEBREAK
 
 /** 各节拼成完整 markdown。`pageBreaks` 时在**节之间**插分页标记（首节前不插，否则多一张空白首页）。 */
 export function joinWritingSections(

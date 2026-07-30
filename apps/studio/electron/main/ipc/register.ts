@@ -175,7 +175,10 @@ import {
   type WritingWriteSectionPayload,
   type WritingWriteSectionResultIpc,
   type WritingWechatHtmlPayload,
-  type WritingWechatHtmlResult
+  type WritingWechatHtmlResult,
+  type WritingExportDocxPayload,
+  type WritingExportPdfPayload,
+  type WritingExportResult
 } from '../../shared/ipc-channels'
 import { setKbRoot, getKbRoot, readKbIndex, kbOutDir, getKbConfig, setKbRemote, kbStoreDir, setKbMode } from '../core/kbIndexStore'
 import { scanLocalDocs, listLocalDocsDirs, setLocalDocsDir } from '../core/localDocsScan'
@@ -218,6 +221,7 @@ import {
   writeWritingSection
 } from '../core/writingProject'
 import { markdownToWechatHtml, loadWechatStyle, FALLBACK_WECHAT_STYLE } from '../core/writingWechat'
+import { exportWritingDocx, saveWritingPdf } from '../core/writingExport'
 import {
   importBackgroundThemeFromFile,
   listBackgroundThemes,
@@ -496,6 +500,8 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.WRITING_READ_SECTIONS)
   ipcMain.removeHandler(IPC_CHANNELS.WRITING_WRITE_SECTION)
   ipcMain.removeHandler(IPC_CHANNELS.WRITING_WECHAT_HTML)
+  ipcMain.removeHandler(IPC_CHANNELS.WRITING_EXPORT_DOCX)
+  ipcMain.removeHandler(IPC_CHANNELS.WRITING_EXPORT_PDF)
   ipcMain.removeHandler(IPC_CHANNELS.BACKGROUND_THEME_IMPORT)
   ipcMain.removeHandler(IPC_CHANNELS.BACKGROUND_THEME_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.BACKGROUND_THEME_DELETE)
@@ -3331,6 +3337,27 @@ export function registerIpcHandlers(): void {
         // UI 据此在角标提示「样式未加载」——降级要看得见，不能静默换一套样式。
         styleFallback: loaded === null
       }
+    }
+  )
+
+  // 写作导出 Word / PDF：与 PROPOSAL_EXPORT(_PDF) 同引擎（markdownToDocxBuffer / printToPDF），
+  // 但保存框默认名与日志语义都该说「写作」而不是「方案」，故走独立的 writingExport.ts（详见
+  // WRITING_EXPORT_DOCX / WRITING_EXPORT_PDF 通道注释）。取当前窗口的写法照抄 PROPOSAL_EXPORT。
+  ipcMain.handle(
+    IPC_CHANNELS.WRITING_EXPORT_DOCX,
+    async (event, payload: WritingExportDocxPayload): Promise<WritingExportResult> => {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      if (!win) return { path: null }
+      return exportWritingDocx(win, payload.markdown, payload.style, payload.defaultBaseName)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.WRITING_EXPORT_PDF,
+    async (event, payload: WritingExportPdfPayload): Promise<WritingExportResult> => {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      if (!win) return { path: null }
+      return saveWritingPdf(win, payload.bytes, payload.defaultBaseName)
     }
   )
 
