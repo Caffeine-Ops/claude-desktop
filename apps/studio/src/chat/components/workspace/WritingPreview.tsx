@@ -1,14 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useMemo } from 'react'
 
 import { joinWritingSections, shouldPageBreak } from '@desktop-shared/writing'
 import { renderProposalPdfHtml } from '../../lib/renderProposalPdfHtml'
 import { writingStyleFor } from '../../lib/writingGenreStyle'
 import { useWritingStore } from '../../stores/writing'
-
-/** 防抖窗口：节级更新是成簇到来的（一条消息 end 可能同时刷出多节），300ms 足以等一簇落定。 */
-const DEBOUNCE_MS = 300
-
-type Status = 'idle' | 'loading' | 'ready' | 'empty' | 'error'
+import { PreviewStateOverlay } from './PreviewStateOverlay'
+import { usePreviewFrame } from './usePreviewFrame'
 
 /**
  * 打印预览。两条分支：
@@ -17,110 +14,71 @@ type Status = 'idle' | 'loading' | 'ready' | 'empty' | 'error'
  *  - 其余：走与导出 PDF 完全相同的引擎（renderProposalPdfHtml → renderProposalPdf →
  *    隐藏窗口 printToPDF），预览看的就是导出物本身，分页逐字节一致。
  *
- * 两个必守的点，都是 proposal 预览踩出来的（完整事故记录见 ProposalPreview.tsx 头注释）：
- *  1) **objectURL 原子替换 + cancelled 闸门**：一次渲染要过多个 await，期间可能被更新的一帧取代。
- *     只有过了最后一道 cancelled 检查才把新 URL 换进 iframe 并 revoke 旧的。
- *  2) **防抖期间保持上一帧**，不提前翻 loading——否则成簇更新时一直闪 spinner。
+ * 防抖 / cancelled 闸门 / objectURL 回收 / 签名缓存 / active 门控这五件事全在 usePreviewFrame
+ * 里（与 ProposalPreview 共用一份，那些机制是两边一起踩坑踩出来的，事故记录见该文件头注释）。
+ * 本文件只剩写作端真正特有的东西：体裁分支的渲染管线、微信手机宽容器、样式降级警示条。
  */
+type WritingFrame = {
+  /** A4 体裁：PDF blob 的 objectURL。微信体裁固定 null——hook 借此把上一帧残留的 PDF revoke 掉。 */
+  objectUrl: string | null
+  /** 微信体裁：main 生成的内联 HTML。 */
+  html?: string
+  /**
+   * 样式 JSON 读不到、main 降级用了内置兜底样式时为 true——用户看到的排版与真实导出的
+   * 公众号 HTML 可能不一致，必须在 UI 上说出来，不能静默换一套样式（这正是预览与导出同源
+   * 存在的意义）。
+   */
+  styleFallback?: boolean
+}
+
 export function WritingPreview({ active }: { active: boolean }): React.JSX.Element {
   const sections = useWritingStore((s) => s.sections)
   const genre = useWritingStore((s) => s.genre)
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null)
-  const [wechatHtml, setWechatHtml] = useState<string>('')
-  // 样式 JSON 读不到、main 降级用了内置兜底样式时为 true——用户看到的排版与真实导出的公众号
-  // HTML 可能不一致，必须在 UI 上说出来，不能静默换一套样式（这正是预览与导出同源存在的意义）。
-  const [wechatStyleFallback, setWechatStyleFallback] = useState(false)
-  const [status, setStatus] = useState<Status>('idle')
-  const [errMsg, setErrMsg] = useState('')
-  const urlRef = useRef<string | null>(null)
-  // 缓存键 = 体裁 + markdown。切走再切回（active 变化）不应触发重渲——只要内容没变就复用上一帧。
-  const lastRendered = useRef<string | null>(null)
 
-  function swapPdfUrl(next: string | null): void {
-    if (urlRef.current) URL.revokeObjectURL(urlRef.current)
-    urlRef.current = next
-    setPdfUrl(next)
-  }
+  // !active 时不拼接：本组件常驻挂载（WritingDocPanel 用 hidden 类切换以保住签名缓存），
+  // 文稿 tab 编辑期间 sections 每变一次都不该在这里白拼一遍长 markdown。
+  const markdown = useMemo(
+    () => (active ? joinWritingSections(sections, { pageBreaks: shouldPageBreak(genre) }) : ''),
+    [sections, genre, active]
+  )
+  // 体裁进签名：同一份 markdown 换体裁后产出完全不同（样式甚至输出形态都变），必须重渲。
+  const signature = useMemo(() => (markdown ? `${genre}:${markdown}` : null), [genre, markdown])
 
-  useEffect(() => {
-    return () => {
-      if (urlRef.current) URL.revokeObjectURL(urlRef.current)
-      urlRef.current = null
+  const { status, errMsg, frame } = usePreviewFrame<WritingFrame>({
+    active,
+    signature,
+    render: async (isCancelled) => {
+      if (genre === 'wechat') {
+        const r = await window.chatApi.writingWechatHtml({
+          markdown,
+          styleName: 'wechat-default'
+        })
+        if (!r.ok) throw new Error(r.error)
+        // objectUrl: null 不只是「这条路径没有 PDF」——它同时是让 hook 回收上一帧 PDF blob 的
+        // 手段。跨体裁切换（A4 → 微信）后那份 PDF 再也不会显示，只会白占内存（F1 曾是真 bug：
+        // 停留在微信体裁期间旧 PDF 既不显示也不 revoke）。
+        return { objectUrl: null, html: r.html, styleFallback: r.styleFallback }
+      }
+      // renderProposalPdfHtml 的第三个参数（预渲的 mermaid 图）是给方案文档用的；写作体裁
+      // 不支持 mermaid 代码块，显式传 undefined——它不是可选参数，漏传会挂在 typecheck 上。
+      const html = await renderProposalPdfHtml(markdown, writingStyleFor(genre), undefined)
+      // 已被更新的一帧取代：提前退出，省掉后面那次昂贵的 printToPDF。返回值本身无意义——
+      // hook 拿到结果后还会再查一次 cancelled 并整份丢弃，这里只是不做无用功。
+      if (isCancelled()) return { objectUrl: null }
+      const { bytes } = await window.chatApi.renderProposalPdf({ html })
+      const blob = new Blob([new Uint8Array(bytes)], { type: 'application/pdf' })
+      return { objectUrl: URL.createObjectURL(blob) }
     }
-  }, [])
-
-  useEffect(() => {
-    // 常驻但隐藏时不空跑：WritingDocPanel 用 hidden 类而非条件卸载挂载本组件（保住
-    // lastRendered 缓存），但只有真正切到这个 tab 才该生成/渲染，否则文稿 tab 编辑期间
-    // 这里也会每次 sections 变都白跑一遍 PDF/微信 HTML 生成。
-    if (!active) return
-    const markdown = joinWritingSections(sections, { pageBreaks: shouldPageBreak(genre) })
-    if (!markdown) {
-      lastRendered.current = null
-      swapPdfUrl(null)
-      setWechatHtml('')
-      setWechatStyleFallback(false)
-      setStatus('empty')
-      return
-    }
-    const signature = `${genre}:${markdown}`
-    if (signature === lastRendered.current) return
-
-    let cancelled = false
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        setStatus('loading')
-        try {
-          if (genre === 'wechat') {
-            // 跨体裁切换（A4 类 → 微信）时上一次渲染留下的 PDF blob URL 不会再显示，只会白占
-            // 内存——A4 分支靠自己的 swapPdfUrl 调用天然自洽，但这条路径没人碰 urlRef，必须在
-            // 这里手动清一次（F1：曾经的真 bug，停留在微信体裁期间那份 PDF 既不显示也不 revoke，
-            // 直到用户切回某个 A4 体裁或组件卸载才会被动清掉）。
-            swapPdfUrl(null)
-            const r = await window.chatApi.writingWechatHtml({
-              markdown,
-              styleName: 'wechat-default'
-            })
-            if (cancelled) return
-            if (!r.ok) throw new Error(r.error)
-            setWechatHtml(r.html)
-            setWechatStyleFallback(r.styleFallback)
-          } else {
-            // renderProposalPdfHtml 的第三个参数（预渲的 mermaid 图）是给方案文档用的；
-            // 写作体裁不支持 mermaid 代码块，显式传 undefined——它不是可选参数，漏传会挂在
-            // typecheck 上（任务书原稿的调用少写了这个参数）。
-            const html = await renderProposalPdfHtml(markdown, writingStyleFor(genre), undefined)
-            if (cancelled) return
-            const { bytes } = await window.chatApi.renderProposalPdf({ html })
-            if (cancelled) return
-            const blob = new Blob([new Uint8Array(bytes)], { type: 'application/pdf' })
-            if (cancelled) return
-            swapPdfUrl(URL.createObjectURL(blob))
-          }
-          lastRendered.current = signature
-          setStatus('ready')
-        } catch (err) {
-          if (cancelled) return
-          setErrMsg(err instanceof Error ? err.message : String(err))
-          setStatus('error')
-        }
-      })()
-    }, DEBOUNCE_MS)
-
-    return () => {
-      cancelled = true
-      clearTimeout(timer)
-    }
-  }, [sections, genre, active])
+  })
 
   return (
     <div className="relative flex-1 overflow-hidden">
       {genre === 'wechat' ? (
         <div className="h-full overflow-y-auto bg-neutral-100 py-6 dark:bg-neutral-900">
-          {/* F2：样式 JSON 读不到、main 已降级用内置兜底样式时必须说出来——用户看到的排版
-              与真实导出的公众号 HTML 可能不一样，静默换一套样式正是这个功能最该避免的事
-              （预览与导出同源才是它存在的理由）。纯 div，不是交互元素，无需 shadcn 原语。 */}
-          {wechatStyleFallback && (
+          {/* F2：main 已降级用内置兜底样式时必须说出来——用户看到的排版与真实导出的公众号
+              HTML 可能不一样，静默换一套样式正是这个功能最该避免的事。纯 div，不是交互元素，
+              无需 shadcn 原语。 */}
+          {frame?.styleFallback && (
             <div className="mx-auto mb-3 w-[375px] rounded border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[11.5px] text-amber-700 dark:text-amber-400">
               样式文件未找到，当前用内置样式预览——与实际导出可能有差异
             </div>
@@ -128,36 +86,26 @@ export function WritingPreview({ active }: { active: boolean }): React.JSX.Eleme
           <div
             className="mx-auto w-[375px] bg-white p-4 text-black shadow"
             // 内容由 main 从 markdown 生成、只输出白名单标签且正文已转义（见 writingWechat.ts）
-            dangerouslySetInnerHTML={{ __html: wechatHtml }}
+            dangerouslySetInnerHTML={{ __html: frame?.html ?? '' }}
           />
         </div>
       ) : (
-        pdfUrl && (
-          <iframe key={pdfUrl} src={pdfUrl} title="文稿预览" className="h-full w-full border-0" />
+        frame?.objectUrl && (
+          <iframe
+            key={frame.objectUrl}
+            src={frame.objectUrl}
+            title="文稿预览"
+            className="h-full w-full border-0"
+          />
         )
       )}
 
-      {status === 'loading' && (
-        <div className="absolute inset-0 grid place-items-center bg-neutral-200/80 dark:bg-neutral-900/80">
-          <div className="flex flex-col items-center gap-3">
-            <div className="size-6 animate-spin rounded-full border-[2.5px] border-border border-t-accent" />
-            <div className="text-[12px] text-muted-foreground">正在生成预览…</div>
-          </div>
-        </div>
-      )}
-      {status === 'empty' && (
-        <div className="absolute inset-0 grid place-items-center">
-          <div className="text-[12.5px] text-muted-foreground">还没有正文可预览</div>
-        </div>
-      )}
-      {status === 'error' && (
-        <div className="absolute inset-0 grid place-items-center">
-          <div className="flex max-w-[80%] flex-col items-center gap-2 text-center">
-            <div className="text-[13px] text-rose-500">预览生成失败</div>
-            <div className="text-[11px] text-muted-foreground">{errMsg}</div>
-          </div>
-        </div>
-      )}
+      <PreviewStateOverlay
+        status={status}
+        errMsg={errMsg}
+        loadingText="正在生成预览…"
+        empty={<div className="text-[12.5px] text-muted-foreground">还没有正文可预览</div>}
+      />
     </div>
   )
 }
