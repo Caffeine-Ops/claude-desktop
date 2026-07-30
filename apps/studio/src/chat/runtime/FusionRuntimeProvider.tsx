@@ -48,6 +48,7 @@ import { splitBlocks } from '@desktop-shared/proposalBlocks'
 import { extractRevisionResult } from '@desktop-shared/writing'
 import { useWritingStore } from '../stores/writing'
 import { relocateTarget } from '../lib/writingRevision'
+import { sliceCoversSelection } from '../lib/writingSelection'
 import { triggerProposalCitationVerification } from '../lib/proposalVerification'
 import { autoFireProposalGenImages } from '../lib/proposalGenImageFire'
 import { maybeNudgeStageConfirmAfterTurn } from '../lib/proposalStageGate'
@@ -1982,12 +1983,38 @@ function handleWritingTurnEnd(sid: string, messageId: string): void {
     const after = extractRevisionResult(fullText)
     const sec = ws.sections.find((s) => s.name === pending.sectionName)
     if (after && sec) {
-      // 重定位：用户提交改写到 AI 答完之间，AI 可能又改过这一节，块序号会漂。拿不到就退回
-      // 原 range——写盘还有乐观锁兜底（mtime 变了会拒写并提示），不至于静默改错。
-      const range = relocateTarget(sec.markdown, pending) ?? pending.range
-      const before = splitBlocks(sec.markdown)
-        .slice(range.start, range.end + 1)
-        .join('\n\n')
+      // 重定位：用户提交改写到 AI 答完之间，AI 可能又改过这一节，块序号会漂。
+      //
+      // 【兜底 range 必须先过校验，不能无条件 `?? pending.range`】——原先那样写会造出一张
+      // **基于 stale range 的对照卡**：AI 若在改写轮期间动过这一节、而重定位又失败（格式化
+      // 选区是常态），`before` 取的就是新版本在旧序号处的切片（越界时甚至是空串），
+      // `baseMtimeMs` 取的却是新版本的 mtime。用户点「应用」时 mtime 自然相等 →
+      // spliceBlocks 还会把越界序号 clamp 到最后一块 → 静默替换错块，乐观锁全程放行。
+      // 宁可让用户重选重发，也不能拿一张左边显示错内容（甚至空白）的卡骗他点「应用」。
+      const blocks = splitBlocks(sec.markdown)
+      const relocated = relocateTarget(sec.markdown, pending)
+      const fb = pending.range
+      const fbInBounds =
+        Number.isInteger(fb.start) &&
+        Number.isInteger(fb.end) &&
+        fb.start >= 0 &&
+        fb.end >= fb.start &&
+        fb.end < blocks.length
+      const fbSlice = fbInBounds ? blocks.slice(fb.start, fb.end + 1).join('\n\n') : ''
+      const range =
+        relocated ?? (fbInBounds && sliceCoversSelection(fbSlice, pending.selectedText) ? fb : null)
+      if (!range) {
+        console.warn(
+          '[writing-revise] 定位不到选中的那段、兜底区间也对不上原文 —— 不生成对照卡（避免拿错内容骗用户点应用）',
+          { sectionName: pending.sectionName, fallback: fb, inBounds: fbInBounds, messageId }
+        )
+        useWritingStore
+          .getState()
+          .setConflictMsg('这一节的内容变化太大，找不到你当初选中的那段了。改动未落地，请重新选中再改一次。')
+        useWritingStore.getState().setPendingRevision(null)
+        return
+      }
+      const before = blocks.slice(range.start, range.end + 1).join('\n\n')
       // range / before / baseMtimeMs 三者**必须同源同刻**取自这一个 `sec` 快照：它们共同描述
       // 「这张对照卡是基于哪一版正文算出来的」。写盘时拿 baseMtimeMs 当乐观锁基准，锁才覆盖
       // 整个用户裁决窗口（详见 WritingRevisionReview.baseMtimeMs 的注释——反直觉，别改）。

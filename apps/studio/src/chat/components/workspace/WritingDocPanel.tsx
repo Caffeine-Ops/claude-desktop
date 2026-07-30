@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { Button } from '@/src/components/ui/button'
 import { cn } from '@/src/lib/utils'
+import { splitBlocks } from '@desktop-shared/proposalBlocks'
 import { useChatStore } from '../../stores/chat'
 import {
   MAX_WRITING_REVISION_QUEUE,
@@ -196,15 +197,19 @@ export function WritingDocPanel(): React.JSX.Element | null {
    *     轮询每 2s 刷一次 sections 连同 mtime，用现读值当基准，锁就只覆盖「最后一次轮询到
    *     写盘」那 2 秒，而不是整个用户裁决窗口——「AI 在用户裁决期间又改过这一节」这个最该
    *     拦的场景反而被放行。完整推演见 WritingRevisionReview.baseMtimeMs 注释。
-   *  2. **正文变过才重定位（第二道保险），没变过就直接信卡里的 range。**
-   *     `sec.mtimeMs === r.baseMtimeMs` 时，store 里这份**就是**成卡时那一版，`r.target.range`
-   *     是对它算出来的、逐字节有效，无需也不该再定位一次。只有 store 已被轮询刷成别的版本时
-   *     才需要用「当初选中的原文」重新定位，找不到就别写。
-   *     【为什么不无条件重定位】：`relocateTarget` 拿**渲染后的选中文字**去 markdown 源码里
-   *     找，选区一旦跨了 `**加粗**` / 行内代码 / 链接 / 多个列表项 / 表格，必然定位失败（Task 6
+   *  2. **先做逐字节自检，对不上才重定位；重定位也失败就拒写。**
+   *     自检 = 「卡上那几块是不是还原封不动待在原位」：
+   *     `splitBlocks(现在的正文).slice(卡里的 range) === r.before`。
+   *     `before` 本来就是用**同一个 splitBlocks、从同一版正文**切出来的，所以
+   *     **内容真没变时必然逐字节相等，零误拒**；一旦那几块被动过（改了 / 被前面插入的段落挤走
+   *     / 越界），立刻不相等，转去用「当初选中的原文」重新定位，定位不到就别写。
+   *     【为什么不无条件重定位】：`relocateTarget` 拿**渲染后的选中文字**去 markdown 源码里找，
+   *     选区一旦跨了 `**加粗**` / 行内代码 / 链接 / 多个列表项 / 表格，必然定位失败（Task 6
    *     定位器的已知限制）。无条件重定位会让这类选区**连正文根本没变的正常情况都拒写**——
-   *     职场文档、文章这类多加粗多项目符号的体裁，那是常态而非偶发，等于主路径直接不可用。
-   *     用 mtime 把「需不需要重定位」判准，既保住了保险、又不误伤没变过的正文。
+   *     职场文档、文章这类多加粗多项目符号的体裁那是常态，等于主路径直接不可用。
+   *     【为什么用内容自检而不是比 mtime】：mtime 相等只说明「文件时间戳没动」，盖不住
+   *     时间戳精度不足、以及读节时 stat 与 read 之间那个窗口（拿到新正文配旧时间戳）。
+   *     自检问的是「我要替换的那几块，确实还是给你看过的那几块吗」——那才是真正要确认的事。
    * 其余状态一律现读 getState()，不吃渲染期闭包（await 期间轮询可能已经刷过 sections）。
    */
   const applyReview = useCallback(async (): Promise<void> => {
@@ -218,11 +223,17 @@ export function WritingDocPanel(): React.JSX.Element | null {
       st.setReview(null)
       return
     }
-    // 双保险（仅在正文确实变过时才需要，理由见函数头注释第 2 条）：store 里这份若已不是成卡
-    // 那一版，就拿当初选中的原文重新定位；拿不到 = 那段已被重写，此时照 stale range 硬拼改的
-    // 就是隔壁段落——宁可不写，让用户重来。
-    const range =
-      sec.mtimeMs === r.baseMtimeMs ? r.target.range : relocateTarget(sec.markdown, r.target)
+    // 逐字节自检（理由见函数头注释第 2 条）：卡上那几块还原封不动待在原位 → 直接用卡里的
+    // range；被动过 → 拿当初选中的原文重新定位；再定位不到 = 那段已被重写，此时照 stale range
+    // 硬拼改的就是隔壁段落（spliceBlocks 还会把越界序号 clamp 到最后一块）——宁可不写，让用户重来。
+    const blocks = splitBlocks(sec.markdown)
+    const cardRange = r.target.range
+    const intact =
+      cardRange.start >= 0 &&
+      cardRange.end >= cardRange.start &&
+      cardRange.end < blocks.length &&
+      blocks.slice(cardRange.start, cardRange.end + 1).join('\n\n') === r.before
+    const range = intact ? cardRange : relocateTarget(sec.markdown, r.target)
     if (!range) {
       st.setConflictMsg('这一节的原文已经变了，找不到当初选中的那段，改动未写入，请重新选中修改。')
       st.setReview(null)
