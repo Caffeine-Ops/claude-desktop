@@ -2022,7 +2022,10 @@ function handleWritingTurnEnd(sid: string, messageId: string): void {
         target: { ...pending, range },
         before,
         after,
-        baseMtimeMs: sec.mtimeMs
+        baseMtimeMs: sec.mtimeMs,
+        // 精确定位没命中、靠兜底 range 成的卡：弱校验只挡得住明显错块，最后一道闸是用户的
+        // 眼睛，卡面要显眼地提醒他核对左侧原文（见 WritingRevisionReview.inferred 注释）。
+        inferred: relocated === null
       })
     } else if (!after) {
       console.warn(

@@ -210,6 +210,16 @@ export function WritingDocPanel(): React.JSX.Element | null {
    *     【为什么用内容自检而不是比 mtime】：mtime 相等只说明「文件时间戳没动」，盖不住
    *     时间戳精度不足、以及读节时 stat 与 read 之间那个窗口（拿到新正文配旧时间戳）。
    *     自检问的是「我要替换的那几块，确实还是给你看过的那几块吗」——那才是真正要确认的事。
+   *
+   * **这里的 `relocateTarget` 实际只承担一个角色：返回 null 时给出更准确的拒写提示。别误以为
+   * 它在救场。** 推理链：能写进盘的充要条件是「盘上 mtime === `r.baseMtimeMs`」（乐观锁），
+   * 而 store 的正文只可能等于或旧于盘上；两者 mtime 相同 ⟹ store 里这份就是成卡那一版 ⟹
+   * 逐字节自检必过 ⟹ 根本走不到 relocate 分支。反过来，走到 relocate 分支就说明 store 已不是
+   * 成卡那一版，此时即便重定位成功、后面的写盘也必然撞乐观锁冲突。
+   * 所以「自检不过 → 重定位 → 成功 → 写入」这条路**不存在能真正落地的分支**，它的产出只是
+   * 「拒写时告诉用户是『找不到原文』还是『被人改过』」。**若将来有人想让它真的救场，那要改的
+   * 是锁基准（把 `expectedMtimeMs` 从 `r.baseMtimeMs` 换成 `sec.mtimeMs`），而那会推翻 H1 修复
+   * 的语义前提——别顺手改，先回到 H1 的推演。**
    * 其余状态一律现读 getState()，不吃渲染期闭包（await 期间轮询可能已经刷过 sections）。
    */
   const applyReview = useCallback(async (): Promise<void> => {

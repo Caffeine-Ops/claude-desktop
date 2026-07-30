@@ -47,6 +47,15 @@ export interface WritingRevisionReview {
    * 锁才真正覆盖整个用户裁决窗口。
    */
   baseMtimeMs: number
+  /**
+   * 这张卡的作用范围是**按位置推断**出来的，不是按原文定位到的。
+   *
+   * 为真 = 轮末 `relocateTarget` 没能在最新正文里找到当初选中的那段（格式化选区的常态），
+   * 只好退回提交时的块序号、再用 `sliceCoversSelection` 做了一道弱校验。弱校验挡得住明显
+   * 的错块，但它终究是模糊判据——**最后一道闸只能是用户的眼睛**，故卡面必须显眼地告诉他
+   * 「这段是推断的，请核对左边确实是你要改的那段」。为假 = 精确定位命中，无需提醒。
+   */
+  inferred: boolean
 }
 
 interface WritingState {

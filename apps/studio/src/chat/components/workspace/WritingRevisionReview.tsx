@@ -23,6 +23,14 @@ export function WritingRevisionReviewCard({
       <div className="mb-2 text-[12px] font-medium text-muted-foreground">
         改写结果待确认 · {review.target.sectionName}
       </div>
+      {/* 兜底成卡的警示条。作用范围是按位置推断的（精确定位没命中），弱校验挡不住全部错块，
+          最后一道闸只能是用户的眼睛——那就明确告诉他该看哪，别让他把「左边这段眼生」读成
+          「AI 改得比较狠」。见 WritingRevisionReview.inferred 的注释。 */}
+      {review.inferred && (
+        <div className="mb-2 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[12px] leading-relaxed text-amber-700 dark:text-amber-400">
+          这段是按位置推断出来的，请核对左边确实是你要改的那段。
+        </div>
+      )}
       {/* 对照区限高可滚：整节被改写时 after 可能上千字，不限高会把纸面整个挤出视口。 */}
       <div className="grid max-h-[40vh] gap-2 overflow-y-auto md:grid-cols-2">
         <div className="rounded border border-border bg-background p-2">

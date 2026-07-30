@@ -8,47 +8,57 @@
  */
 
 /**
- * 「这几块看起来还是用户当初选中的那几块吗」的最低门槛。
+ * 兜底校验的最小选区长度（归一后的字符数）。
  *
- * 只在**重定位失败后走兜底 range** 那条路上用（见 handleWritingTurnEnd）。为什么不能直接
- * 用 `locateBlockRangeByTextWithHint` 那套 indexOf 包含判定：那正是刚刚失败的那一个——
- * 选中文字来自**渲染后的 DOM**（没有 `**`、`` ` ``、`[]()`），块源码里有，去空白后
- * indexOf 必然落空。**用包含判定当兜底校验，等于把「格式化选区」这个最常见的良性情况
- * 一并拒掉**，而兜底存在的意义恰恰就是接住它。
- *
- * 故改判**字符覆盖率**：选中文字的每个字符（去空白后）能否在块源码里找到对应的一个。
- * 良性情况下覆盖率恒为 1.0——渲染文本的字符全部来自源码，markdown 标记只会给源码
- * **多加**字符、绝不拿走选中文字里的字符。而块换了个段落时，覆盖率会掉到很低
- * （中文里 `的``了` 这种高频字带来的偶然重合远达不到阈值）。
- *
- * 归一方式与 `locateAllBlockRanges` 保持一致（`\s+ → ''`），不另造一套。
+ * 短选区在任何「字符层面」的判据下都会失真——4 个常用汉字在随便一段中文里几乎必然凑得齐，
+ * 判据恒真、等于没判。这条门槛把它们直接判否：**代价不对称**——判错方向（假阴性）只是让
+ * 用户重选重发一次，判错另一头（假阳性）是相邻段落被整块覆盖、无备份无撤销。
  */
-const SELECTION_COVERAGE_MIN = 0.8
+const SELECTION_MIN_CHARS = 12
 
 /**
- * 兜底校验：`sliceMarkdown`（按兜底 range 切出来的块源码）是否大致还是 `selectedText`
- * 当初选中的那段。空切片（越界）与空选区一律 false——宁可让用户重选，也不能拿一张
- * 左边是空白或错内容的对照卡骗他点「应用」。
+ * 兜底校验：`sliceMarkdown`（按兜底 range 切出来的块源码）是否**确实还是** `selectedText`
+ * 当初选中的那段。只在**重定位失败后走兜底 range** 那条路上用（见 handleWritingTurnEnd）。
+ *
+ * 判据 = 归一后「选中文字是块源码的**子序列**」+ 选区不短于 {@link SELECTION_MIN_CHARS}。
+ * 归一方式与 `locateAllBlockRanges` 一致（`\s+ → ''`），不另造一套。
+ *
+ * **为什么不能用 `indexOf` 包含判定**：那正是刚刚失败的那一个——选中文字来自**渲染后的 DOM**
+ * （没有 `**`、`` ` ``、`[]()`），块源码里有，去空白后连续匹配必然落空。用它当兜底校验，
+ * 等于把「格式化选区 + 正文其实没变」这个最常见的良性情况一并拒掉，而兜底存在的意义恰恰
+ * 是接住它。子序列正是包含判定的**最小必要放宽**：只允许源码在选中文字的字符之间**插入**
+ * 标记字符，不允许换顺序、不允许缺字。良性情况恒成立（渲染文本就是源码抠掉标记）。
+ *
+ * **为什么不是「字符覆盖率 ≥ 某个比例」**（本判据的上一版，实测被打穿、已废弃）：
+ * 多重集合覆盖率既不看顺序、也只按选区长度归一而不看切片长度，而兜底切片通常远长于用户
+ * 选区——正是假阳性最容易发生的方向。实测反例：职场周报里句式平行的相邻段（「把交付周期
+ * 从四周压缩到两周」vs「…把交付周期从两周压缩到一周…」）覆盖率 0.923；4 字短选区对无关
+ * 中文段 1.000；英文短选区对无关英文长段 0.882。子序列判据把这三条全部挡下（顺序对不上 /
+ * 长度不达标），且良性侧零代价。
+ *
+ * **为什么不用「双向覆盖率」或「切片长度 ≤ 选区长度 × K」这两种长度守卫**：两者都会误伤
+ * 良性情况。双向覆盖率要求切片的字符也都在选区里，而源码必然多出标记字符，格式化选区一律
+ * 被拒；长度比值守卫则忽略了「作用域是整块、用户常常只选块里的一句话」——长段落里选一句，
+ * 切片本就比选区长好几倍，属正常。子序列是**顺序**守卫，能挡住长切片白送，又不误伤这两类。
+ *
+ * 空切片（越界）与过短/空选区一律 false——宁可让用户重选，也不能拿一张左边是空白或错内容的
+ * 对照卡骗他点「应用」。
  */
 export function sliceCoversSelection(sliceMarkdown: string, selectedText: string): boolean {
   const norm = (s: string): string => s.replace(/\s+/g, '')
-  const need = norm(selectedText)
-  const have = norm(sliceMarkdown)
-  if (!need || !have) return false
-  // 多重集合求交：每个字符按出现次数消耗，避免「块里有一个『的』就覆盖选区里十个『的』」。
-  const pool = new Map<string, number>()
-  for (const ch of have) pool.set(ch, (pool.get(ch) ?? 0) + 1)
-  let covered = 0
-  let total = 0
-  for (const ch of need) {
-    total += 1
-    const n = pool.get(ch) ?? 0
-    if (n > 0) {
-      pool.set(ch, n - 1)
-      covered += 1
+  // 展开成码点数组（`[...s]` 而非 s[i]）：中文、emoji 不能按 UTF-16 码元切。
+  const need = [...norm(selectedText)]
+  const have = [...norm(sliceMarkdown)]
+  if (need.length < SELECTION_MIN_CHARS || have.length === 0) return false
+  // 贪心子序列匹配：对「是否为子序列」这个判定，最早匹配是最优且完备的（不会漏判）。
+  let i = 0
+  for (const ch of have) {
+    if (ch === need[i]) {
+      i += 1
+      if (i === need.length) return true
     }
   }
-  return covered / total >= SELECTION_COVERAGE_MIN
+  return false
 }
 
 /** 选区某一端落在哪一节的第几块。由组件从 data-section-name / data-block-index 读出。 */
