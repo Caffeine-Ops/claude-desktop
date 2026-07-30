@@ -20,16 +20,14 @@
  *
  * UI 形态（2026-07-16 重设计，docs/ui-prototype-feedback.html 的 V3
  * 「成功叙事」变体落地）：
- *  - 反馈类型分段（问题/建议/其他）——反馈不只是报 bug；类型经 description
- *    前缀传递（「问题」不加前缀与旧数据同形，别的类型加「类型：」行），
- *    刻意不动 FeedbackSubmitPayload 的 IPC 契约（加字段要连改 ipc-channels/
- *    preload 双件/main handler/feedback-worker 五处，收益配不上）。
+ *  - 反馈类型分段（问题/建议/其他）——反馈不只是报 bug；类型是结构化字段
+ *    （kind），随 description 一起提交给 sub2api，admin 面板按分类筛选。
  *  - 附件整行热区：点击、拖拽、⌘V 粘贴三条路都通（报 bug 场景截图九成来自
  *    剪贴板）；有图后热区缩成尾部小方块。
  *  - 失败态是可重试的错误条（「内容已为你保留」）——表单内容在 error 态
  *    完整保留，重试直接重跑提交。
  *  - 成功态整卡切换成叙事视图：对勾描线动画（keyframes 在 globals.css 的
- *    fb-disc-pop / fb-check-draw）+ issue 链接卡 + 「再提一条/完成」。
+ *    fb-disc-pop / fb-check-draw）+「再提一条/完成」。
  *  - 排版吃「Notion 精修档」（与重命名/删除弹窗同族）：19px 标题 / 13px
  *    副文 / rounded-2xl / 品牌绿渐变主按钮（disabled 中性灰、transition
  *    只留 opacity/shadow——background-image 不可过渡，2026-07-07 教训）。
@@ -37,15 +35,17 @@
  *    data-slot 逃逸 canvas 的裸元素 reset（2026-07-04 事故家族）。
  *
  * 数据面：window.chatApi.submitFeedback —— main 进程补齐 appVersion/
- * platform/osVersion 并签名后转发给 apps/feedback-worker，本组件和 IPC
- * payload 都不接触 GitHub Token（见 electron/main/services/feedbackService.ts）。
- * 纯浏览器直开（无 chatApi）时渲染为空，因为反馈必须走 main 签名，没有
- * 绕过的降级路径。底部小字明示「会附带应用版本与系统信息」——main 确实
- * 在补这些字段，用户应当知情。
+ * platform/osVersion，走 authedPost 提交给 sub2api 的 `/api/v1/feedback`
+ * （JWT 鉴权，见 electron/main/services/feedbackService.ts）。后端从 token
+ * 解出当前用户，admin 面板能看到提交人的用户名/邮箱，不需要客户端上报身份。
+ * 未登录时提交会报「请先登录」——弹窗本身对未登录用户仍可打开填写，只在
+ * 提交那一刻才需要登录态。纯浏览器直开（无 chatApi）时渲染为空，因为反馈
+ * 必须走 main 发起鉴权请求，没有绕过的降级路径。底部小字明示「会附带应用
+ * 版本与系统信息」——main 确实在补这些字段，用户应当知情。
  *
  * 截图压缩复用 chat 侧 imageAttachmentAdapter 的 processImageFile——同一套
- * 尺寸/体积预算（Anthropic vision 的 1568px + 3.5MB 上限），恰好落在
- * feedback-worker 每张图 6MB 的收件预算内，不需要另起一份压缩逻辑。
+ * 尺寸/体积预算（Anthropic vision 的 1568px + 3.5MB 上限），落在后端每张图
+ * 6MB 的收件预算内，不需要另起一份压缩逻辑。
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -66,28 +66,21 @@ import { useDialogStore, type FeedbackKind } from '@/src/chat/stores/dialogs'
 
 const MAX_IMAGES = 4
 
-/** 反馈类型。placeholder 按类型引导；prefix 拼进 description 传给 worker
- * ——「问题」留空保持与旧 payload 同形（bug 是默认场景，别让存量 issue
- * 突然都多出一行类型标）。FeedbackKind 本身定义在 stores/dialogs.ts——
+/** 反馈类型。placeholder 按类型引导；kind 本身作为结构化字段随请求提交
+ * （不再拼进 description 前缀）。FeedbackKind 定义在 stores/dialogs.ts——
  * 消息操作栏的喜欢/不喜欢按钮（openFeedbackDialog）也要引用同一个类型。 */
-const KIND_META: Record<
-  FeedbackKind,
-  { label: string; placeholder: string; prefix: string }
-> = {
+const KIND_META: Record<FeedbackKind, { label: string; placeholder: string }> = {
   bug: {
     label: '问题',
-    placeholder: '发生了什么？你原本期望的是什么？',
-    prefix: ''
+    placeholder: '发生了什么？你原本期望的是什么？'
   },
   idea: {
     label: '建议',
-    placeholder: '你希望我们加上或改进什么？',
-    prefix: '类型：建议\n\n'
+    placeholder: '你希望我们加上或改进什么？'
   },
   other: {
     label: '其他',
-    placeholder: '想说什么都可以。',
-    prefix: '类型：其他\n\n'
+    placeholder: '想说什么都可以。'
   }
 }
 const KIND_ORDER: readonly FeedbackKind[] = ['bug', 'idea', 'other']
@@ -101,7 +94,7 @@ interface PendingImage {
 type SubmitState =
   | { kind: 'idle' }
   | { kind: 'submitting' }
-  | { kind: 'success'; issueUrl: string }
+  | { kind: 'success' }
   | { kind: 'error'; message: string }
 
 /** data:image/png;base64,AAAA... → { contentType, dataBase64 } */
@@ -192,9 +185,9 @@ export function FeedbackDialog(): React.JSX.Element | null {
           return { filename: img.file.name || 'screenshot.png', contentType, dataBase64 }
         })
       )
-      // 消息级反馈的隐藏上下文块——与下面 KIND_META[kind].prefix 同一手法
-      // （静默拼接，不进用户可见的 textarea）：把触发这次反馈的 AI 回复
-      // 原文带给处理反馈的人，方便定位是哪条回复的问题。
+      // 消息级反馈的隐藏上下文块（静默拼接，不进用户可见的 textarea）：
+      // 把触发这次反馈的 AI 回复原文带给处理反馈的人，方便定位是哪条回复
+      // 的问题。分类已经是结构化的 kind 字段，不再拼进这里。
       const contextBlock = attachedContext
         ? `> 针对以下 AI 回复：\n\n${attachedContext
             .split('\n')
@@ -202,14 +195,15 @@ export function FeedbackDialog(): React.JSX.Element | null {
             .join('\n')}\n\n---\n\n`
         : ''
       const result = await chatApi.submitFeedback({
-        description: contextBlock + KIND_META[kind].prefix + description.trim(),
+        kind,
+        description: contextBlock + description.trim(),
         images: encodedImages
       })
-      if (!result.issueUrl) {
+      if (!result.ok) {
         setState({ kind: 'error', message: result.error ?? 'unknown error' })
         return
       }
-      setState({ kind: 'success', issueUrl: result.issueUrl })
+      setState({ kind: 'success' })
     } catch (err) {
       setState({ kind: 'error', message: err instanceof Error ? err.message : String(err) })
     }
@@ -220,7 +214,7 @@ export function FeedbackDialog(): React.JSX.Element | null {
   const canSubmit = Boolean(description.trim()) && !submitting
   const maxImagesReached = images.length >= MAX_IMAGES
 
-  // 无 chatApi（纯浏览器直开）——反馈必须走 main 签名转发，没有可降级的路径。
+  // 无 chatApi（纯浏览器直开）——反馈必须走 main 发起鉴权请求，没有可降级的路径。
   if (!chatApi) return null
 
   return (
@@ -455,7 +449,7 @@ export function FeedbackDialog(): React.JSX.Element | null {
                 )}
               </Button>
               {/* 诚实披露：main 会补 appVersion/platform/osVersion，用户
-                * 应当在提交前知情，而不是事后在 issue 里发现。 */}
+                * 应当在提交前知情。 */}
               <p className="text-center text-[11.5px] leading-snug text-muted-foreground/75">
                 提交时会附带应用版本与系统信息，帮助我们定位问题。
               </p>

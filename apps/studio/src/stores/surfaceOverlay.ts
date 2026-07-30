@@ -77,6 +77,24 @@ export const useSurfaceOverlayStore = create<{ open: SurfaceOverlayKind | null }
   () => ({ open: null })
 )
 
+/**
+ * 设置页（`?settings=1`）开着没有 —— 与上面那个 store 同一套「URL 镜像给根层
+ * 组件订阅」的机制，唯一写手同样是 SurfaceHost。
+ *
+ * 为什么单独一个 store 而不是并进 useSurfaceOverlayStore：设置页不是面开关
+ * （理由见 PARAM_BY_KIND 的 ⚠️），把它塞进 `open` 那个联合类型会让「当前放映
+ * 哪个面」凭空多出一个不是面的取值，rail 里所有 `open === 'market'` 式的判定
+ * 都得跟着改。两个 store 并列、各自语义干净。
+ *
+ * 为什么需要它：RailShell 的常驻按钮组是 portal 到 body 末尾的 fixed 元素
+ * （z-[140]），而设置页是 canvas 树内部的全屏 overlay、层级压不过它——设置页
+ * 揭开时那组按钮会浮在设置页导航栏上（2026-07-30 用户反馈）。它们指向的东西
+ * （rail 折叠态、会话搜索、新建会话）此刻全被设置页盖着，显示出来纯属干扰，
+ * 故整组按 settings 隐藏。判定不能在 RailShell 里自己 useSearchParams——它不
+ * 在 Suspense 内，理由同上一个 store。
+ */
+export const useSettingsOverlayStore = create<{ open: boolean }>(() => ({ open: false }))
+
 /** 打开一个面（rail 的「插件」「知识库」按钮 + `/plugins` 斜杠命令共用）。 */
 export function openSurfaceOverlay(kind: SurfaceOverlayKind): void {
   const url = new URL(window.location.href)

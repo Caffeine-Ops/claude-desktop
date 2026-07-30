@@ -39,7 +39,7 @@ import { Button } from '@/src/components/ui/button'
 import { useUnreadIdsKey } from '@/src/chat/stores/unread'
 import { useDialogStore } from '@/src/chat/stores/dialogs'
 import { useRailStore } from '@/src/stores/rail'
-import { closeSurfaceOverlay } from '@/src/stores/surfaceOverlay'
+import { closeSurfaceOverlay, useSettingsOverlayStore } from '@/src/stores/surfaceOverlay'
 import { cn } from '@/src/lib/utils'
 
 export function RailShell() {
@@ -61,12 +61,22 @@ export function RailShell() {
   // 图标排（125）几何不相交（一个右上一个左上），无碰撞。
   const pathname = usePathname()
   const isChat = pathname.startsWith('/chat')
+  // 设置页（?settings=1）揭开时整组常驻按钮隐藏——它是 canvas 树内的全屏
+  // overlay，把 rail 连同内容区一起盖住，而本组按钮 portal 在 body 末尾、
+  // z 压得过它，不隐藏就会浮在设置页自己的导航栏上（2026-07-30 用户反馈）。
+  // 三个钮指向的东西此刻全被盖着：折叠开关切的是看不见的 rail、搜索/新建
+  // 属于底下的聊天面。设置页自带「返回应用」作为退出口，不需要这组。
+  // 订阅镜像 store 而非自己 useSearchParams：RailShell 在根 layout、不在
+  // Suspense 内，理由见 stores/surfaceOverlay.ts。
+  const settingsShowing = useSettingsOverlayStore((s) => s.open)
   // 收起态下 AppRail 临时浮出。展开态永远为 false（collapsed 翻回 false 时
   // 一并清掉，否则钉住展开后残留的 peek=true 会让下次收起瞬间又浮出）。
+  // 设置页揭开时同样强制清掉：进设置前若正浮着，不清则 rail 会盖在设置页上
+  // （下面的左边缘热区也一并停掉，切断新的触发源）。
   const [peek, setPeek] = useState(false)
   useEffect(() => {
-    if (!collapsed) setPeek(false)
-  }, [collapsed])
+    if (!collapsed || settingsShowing) setPeek(false)
+  }, [collapsed, settingsShowing])
 
   // Portal 目标只在客户端挂载后可用（SSR 无 document.body；且首帧渲染时
   // 若直接 createPortal 到 body 会与 hydration 打架）。挂载后置真，触发一次
@@ -138,6 +148,7 @@ export function RailShell() {
    * 间距 gap 自动排布，无需手算。 */
   const railTopButtons =
     mounted &&
+    !settingsShowing &&
     createPortal(
       <div
         className={cn(
@@ -228,11 +239,18 @@ export function RailShell() {
       {/* 左边缘 hover 热区：一条贴着视口左边的透明竖条，进入即触发浮出。
         * fixed 定位盖在内容卡最左侧上方（z 高于内容卡但低于 overlay）。
         * 顶部 48px 让给红绿灯 + 窗口拖拽（top-12）——否则热区会截胡红绿灯
-        * 那一横的窗口拖拽/点击。 */}
-      <div
-        className="fixed left-0 top-12 z-30 h-[calc(100%-3rem)] w-3"
-        onMouseEnter={() => setPeek(true)}
-      />
+        * 那一横的窗口拖拽/点击。
+        *
+        * 设置页揭开时不挂：它是盖住一切的全屏 overlay，此时把 rail 浮出来
+        * 只会糊在设置页左侧（上面的 effect 负责清掉已浮出的，这里负责断掉
+        * 新的触发；overlay 本体保持挂载——peek 恒 false 时它 -translate-x-full
+        * 藏在屏外、也不标 no-drag，零可见影响，不必多一次卸载/重挂）。 */}
+      {!settingsShowing && (
+        <div
+          className="fixed left-0 top-12 z-30 h-[calc(100%-3rem)] w-3"
+          onMouseEnter={() => setPeek(true)}
+        />
+      )}
 
       {/* 浮出的 overlay：完整 AppRail（含红绿灯净空条、顶部收起按钮、列表、
         * 设置）。fixed 贴左，默认 -translate-x-full 藏在屏外，peek 时滑入。

@@ -2166,8 +2166,8 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  // 问题反馈提交。main 补 appVersion/platform/osVersion + 签名后转发给
-  // apps/feedback-worker，渲染层和 IPC payload 都不碰 GitHub Token。
+  // 问题反馈提交。main 补 appVersion/platform/osVersion，走 authedPost
+  // 提交给 sub2api 的 /api/v1/feedback（JWT 鉴权，admin 面板可查看）。
   ipcMain.handle(
     IPC_CHANNELS.FEEDBACK_SUBMIT,
     async (

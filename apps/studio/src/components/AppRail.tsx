@@ -543,6 +543,19 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
           <Icon className="size-4" /> {label}
         </Button>
       ))}
+      {/* 问题反馈——rail 主列表里的常驻直达入口（2026-07-30 用户要求），
+        * 与账户菜单里已有的「帮助与反馈」（下方 CircleHelp 那一项）打开
+        * 同一个全局弹窗（useDialogStore('feedback')），两个入口不冲突，
+        * 图标复用 CircleHelp 保持同一动作视觉一致。不区分聊天/画布面
+        * （两面都常显）：反馈不是某个 surface 专属的能力，且它只是弹一个
+        * 对话框、不产生「当前面」意义上的选中态，不需要跟着 isChat 过滤。 */}
+      <Button
+        variant="ghost"
+        className="mb-2 justify-start gap-2 px-3 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+        onClick={() => useDialogStore.getState().openDialog('feedback')}
+      >
+        <CircleHelp className="size-4" /> 问题反馈
+      </Button>
       {/* 新建项目（2026-07-04 从画布首页 EntryNavRail 迁入，那条 rail 已
         * 退役）——只在画布面显示，落位「新画布」下方。NewProjectModal 归
         * EntryShell 所有（canvas 树），跨树触达走「事件 + pending 信箱」
