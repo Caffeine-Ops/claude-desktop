@@ -74,6 +74,7 @@ import { getLastCanvasPath, rememberCanvasPath } from '@/src/stores/canvasNav'
 import {
   closeSurfaceOverlay,
   hasSurfaceOverlay,
+  openSettingsOverlay,
   openSurfaceOverlay,
   useSurfaceOverlayStore
 } from '@/src/stores/surfaceOverlay'
@@ -330,21 +331,12 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
     }
   }, [])
 
-  // 打开设置 overlay（?settings=1）——账户菜单里「设置」与「偏好设置」子项
-  // 共用这一个入口，机制见调用处注释（shallow pushState + canvas 响应式读参）。
-  //
-  // 参数挂在**当前 URL** 上而不是跳 '/?settings=1'：设置是 overlay，不是
-  // 面切换——pathname 保持不动，rail tab 高亮 / 中段列表 / data-surface
-  // 全程不变，关闭 back() 剥参回到原地。旧方案把 pathname 拽到 '/'，rail
-  // 在全屏设置页底下默默切到画布态，「返回应用」揭开的瞬间 tab 再从
-  // 工作画布翻回智能助手——一次可见的假切换（2026-07-08 用户实锤）。
-  // settings=1 时由 SurfaceHost 强制放映 canvas 面（设置页的宿主），与
-  // pathname 解耦。用 URL API 合并 query，保住 ?host=desktop 之类 boot 参数。
-  const openSettings = () => {
-    const url = new URL(window.location.href)
-    url.searchParams.set('settings', '1')
-    window.history.pushState(null, '', url.pathname + url.search)
-  }
+  // 打开设置 overlay——账户菜单「设置」入口。2026-07-31 起是纯内存 store 开关
+  // （`openSettingsOverlay`，见 stores/surfaceOverlay.ts 头注释），不再挂
+  // URL query：不动 pathname，不进历史栈，「返回应用」不再可能落错面（旧
+  // URL 机制下 back() 落点依赖历史栈形状，出过好几次事故，2026-07-08 那次
+  // 假切换是其中之一）。
+  const openSettings = openSettingsOverlay
   // 打开订阅购买页 overlay（UpgradeScreen 常驻根 layout，store 翻开关即现）。
   const setUpgradeOpen = useUpgradeStore((s) => s.setOpen)
   const openUpgrade = () => setUpgradeOpen(true)
@@ -510,8 +502,9 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
         * 早期版本插件入口 navigate 到 canvas 的 `/market` 路由：pathname 一被
         * 拽走 SurfaceHost 就翻到画布面，用户在聊天面点插件会被踢去工作画布
         *（2026-07-17 实锤，同 2026-07-08 设置页 pathname 假切换那一族）。现在
-        * 两个入口与 openSettings 同为「query 挂当前 pathname」，pathname 全程
-        * 不动。机制与形态取舍见 stores/surfaceOverlay.ts。
+        * 两个入口是「query 挂当前 pathname」，pathname 全程不动（设置页
+        * 2026-07-31 起换成纯 store 开关，连 query 都不挂，机制更彻底）。
+        * 机制与形态取舍见 stores/surfaceOverlay.ts。
         *
         * **插件例外（2026-07-20 用户要求）**：上面「不按当前面分流」的纪律
         * 对知识库依旧成立，但插件入口现在只在聊天面显示——画布面本来就是
@@ -587,7 +580,8 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
         * usePathname 同步，选中态无需本地 state。 */}
       {/* 选中态仍按 pathname 派生：市场面（?market=1）开着时高亮**保持原面**
         * ——它是挂在当前 pathname 上的 overlay，语义上是「我在智能助手，顺手
-        * 开了插件市场」，同 settings=1/kb=1 的既定取向（见 openSettings 注释）。 */}
+        * 开了插件市场」，同 kb=1 的既定取向。设置页 2026-07-31 起不挂 pathname
+        * 也不挂 query（纯 store 开关），不参与这里的判定。 */}
       <Tabs value={activeSurface}>
         {/* 「毛玻璃浮起」segmented（2026-07-20，替换 07-18 的静态毛玻璃；先出
           * HTML 原型六选一后定稿）：选中态不再靠 radix 每段各自淡入，而是一块
@@ -813,9 +807,9 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
               </div>
               <DropdownMenuSeparator className="mx-2 bg-border/70" />
               <DropdownMenuGroup>
-                {/* 设置：走 canvas App 的 overlay 模式（?settings=1 → 全屏
-                  * 设置页）。shallow pushState：canvas 的 isSettingsOverlay
-                  * 用 useSearchParams 响应式读取，overlay 即开零刷新。 */}
+                {/* 设置：走 canvas App 的 overlay 模式（全屏设置页）。2026-07-31
+                  * 起 openSettingsOverlay() 只翻 store 布尔，零 URL、零刷新，
+                  * 见 stores/surfaceOverlay.ts 头注释。 */}
                 <DropdownMenuItem
                   onSelect={openSettings}
                   className="gap-2.5 rounded-[9px] px-2.5 py-[7px] text-[13px]"

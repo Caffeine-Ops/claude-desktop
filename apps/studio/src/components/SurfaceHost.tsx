@@ -86,33 +86,32 @@ const KnowledgeBaseSurface = dynamic(
 
 export function SurfaceHost() {
   const pathname = usePathname()
-  // settings=1 的判定收在这里（而不是 canvas App 根组件自己订阅
-  // useSearchParams）：本组件树很小，随 URL 重渲染便宜；canvas 元素的
-  // memo 只依赖 settingsOverlay，chat/画布切换（query 不变）不会再把
-  // 整棵 canvas 树拖着 re-render。
+  // 面开关（?market=1 插件市场 / ?kb=1 知识库）：query 挂当前 pathname，
+  // **不是** canvas 内部的全屏 overlay，而是下面与 chat/canvas 平级的独立面
+  // （本组件已在 rail 右侧的 stage 里，故它们天然不盖 rail）。机制与形态取舍
+  // 详见 src/stores/surfaceOverlay.ts 头注释。
   const searchParams = useSearchParams()
-  const settingsOverlay = searchParams?.get('settings') === '1'
-  // 面开关（?market=1 插件市场 / ?kb=1 知识库）：与 settings 同一套「query 挂
-  // 当前 pathname」机制，但**不是** canvas 内部的全屏 overlay，而是下面与
-  // chat/canvas 平级的独立面（本组件已在 rail 右侧的 stage 里，故它们天然不盖
-  // rail）。机制与形态取舍详见 src/stores/surfaceOverlay.ts 头注释。
   const marketOverlay = searchParams?.get('market') === '1'
   const kbOverlay = searchParams?.get('kb') === '1'
+  // 设置页开关：2026-07-31 起是纯内存 store（真相源，不再挂 URL query）——
+  // 理由、迁移前的坑、代价全写在 useSettingsOverlayStore 头注释里，别在这里
+  // 猜。本组件仍是它在渲染层的唯一消费者（决定 chatShowing/canvasFace）。
+  const settingsOverlay = useSettingsOverlayStore((s) => s.open)
   const isProbe = pathname.startsWith('/chat-probe')
   const isChat = !isProbe && pathname.startsWith('/chat')
   // 哪个面正在「放映」：设置页是 canvas App 渲染的全屏 overlay（fixed inset-0
-  // + 不透明底），settings=1 时无论 pathname 在哪都必须放映 canvas 面。所有
-  // overlay 参数都挂在**当前 pathname** 上（AppRail 的 openSettings /
-  // openSurfaceOverlay），打开/关闭 pathname 全程不动——rail tab 高亮、rail
-  // 中段列表、back() 的落点都保持原面（2026-07-08「返回应用时 tab 从工作画布
-  // 切到智能助手」的根修：旧方案 pushState('/?settings=1') 把 pathname 拽到
-  // '/'，rail 在设置页底下默默切到画布态，揭开时再翻回，用户看到一次假切换）。
-  // 本组件所有可见性判定一律用 chatShowing，isChat 只是它的原料。
+  // + 不透明底），store 为真时无论 pathname 在哪都必须放映 canvas 面——这与
+  // market/kb 的「挂在当前 pathname 上」不同，设置页开合完全不动 pathname，
+  // rail tab 高亮、rail 中段列表天然不受影响（不存在旧 URL 机制下「back() 落
+  // 错面」那类问题，因为设置页压根不进历史栈）。本组件所有可见性判定一律用
+  // chatShowing，isChat 只是它的原料。
   //
   // 面开关（market/kb）优先级最高：它们盖住 chat/canvas 任一面（参数可以挂在
   // 两个面的 pathname 上）。四者互斥、恰有一个在放映——两个面开关同时出现在
   // URL 上是不可能的（openSurfaceOverlay 开新面时先剥旧面），万一手工构造出
-  // 这种 URL，下面的 || 顺序让 market 赢，不会两个一起渲染。
+  // 这种 URL，下面的 || 顺序让 market 赢，不会两个一起渲染。settings 与
+  // market/kb 的互斥由 openSettingsOverlay() 自己保证（先剥面再开，见
+  // surfaceOverlay.ts），本组件不需要再处理这层优先级。
   const marketShowing = !isProbe && marketOverlay
   const kbShowing = !isProbe && kbOverlay && !marketShowing
   const overlayShowing = marketShowing || kbShowing
@@ -166,11 +165,18 @@ export function SurfaceHost() {
     })
   }, [marketShowing, kbShowing])
 
-  // 设置页同理镜像一份：RailShell 的常驻按钮组要靠它整组隐藏（那组 portal 到
-  // body、z 压过设置页，不隐藏就会浮在设置页导航栏上）。同样只有本组件写。
+  // 幽灵参数清理：设置页迁 store 前（2026-07-31 前）遗留的书签/深链可能还带
+  // 着 `?settings=1`，本组件已不读它，但 canvas 的 navigate() 会把 query
+  // 原样带着跨导航传播（stripSurfaceOverlayParams 不管 settings）——不主动
+  // 清掉，这个死参数会跟用户一辈子。挂载时一次性 replaceState 剥掉，不产生
+  // 历史条目、不影响当前渲染（settingsOverlay 已经是 store 值，与这个参数
+  // 无关）。
   useEffect(() => {
-    useSettingsOverlayStore.setState({ open: settingsOverlay })
-  }, [settingsOverlay])
+    if (!window.location.search.includes('settings=1')) return
+    const url = new URL(window.location.href)
+    url.searchParams.delete('settings')
+    window.history.replaceState(null, '', url.pathname + url.search + url.hash)
+  }, [])
 
   // ── 切面**不再**做任何 region-refresh 脉冲（2026-07-14 拖拽机制重构，删）──
   // 历史上这里有个切面 effect：瞬时给 documentElement 挂 `.region-refresh` 类

@@ -10,8 +10,8 @@ import { SessionSearchDialog } from './components/dialogs/SessionSearchDialog'
 import { useLogsStore } from './stores/logs'
 import { useWorkspaceStore } from './stores/workspace'
 import { useI18n } from './i18n'
-import { useSettingsStore } from './stores/settings'
 import { useDialogStore } from './stores/dialogs'
+import { openSettingsOverlay } from '@/src/stores/surfaceOverlay'
 import { SettingsView } from './components/settings/SettingsView'
 import { KbManagerView } from './components/kb/KbManagerView'
 import { ChatLoadingSkeleton } from '@/src/components/ChatLoadingSkeleton'
@@ -81,11 +81,17 @@ function App(): React.JSX.Element {
   // open the settings overlay, open the logs dialog, or toggle language.
   // Only the active chat tab receives these. We read/dispatch via getState so
   // this effect has no store deps and runs exactly once.
+  //
+  // 2026-07-31：'open-settings' 改调根层 openSettingsOverlay()（canvas 全屏
+  // 设置页），不再落 chat 树遗留的 useSettingsStore/SettingsView——菜单栏
+  // 「设置」与齿轮/Cmd+, 现在打开的是同一套 UI，不再是两套互不相通的设置页。
+  // SettingsView 组件本身与 ProposalPaper 的直达入口暂未退役，仍可用其它
+  // 方式触达。
   useEffect(() => {
     if (!window.chatApi?.onShellMenuAction) return
     return window.chatApi.onShellMenuAction((action) => {
       if (action === 'open-settings') {
-        useSettingsStore.getState().openSettings()
+        openSettingsOverlay()
       } else if (action === 'open-logs') {
         useDialogStore.getState().openDialog('logs')
       } else if (action === 'toggle-lang') {

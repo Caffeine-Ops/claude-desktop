@@ -10,7 +10,8 @@ import type {
 } from '@open-design/contracts';
 
 import { Icon } from '../shared/Icon';
-import { leaveSettingsOverlay, navigate } from '../../router';
+import { navigate } from '../../router';
+import { closeSettingsOverlay } from '../../../stores/surfaceOverlay';
 import { useT } from '../../i18n';
 import type { Dict } from '../../i18n/types';
 
@@ -426,7 +427,7 @@ function RunHistory({
                 // (reuse mode) all resolve to the same default
                 // conversation in the project view, which made earlier
                 // runs look "absorbed" by the latest one.
-                leaveSettingsOverlay();
+                closeSettingsOverlay();
                 navigate({
                   kind: 'project',
                   projectId: r.projectId,

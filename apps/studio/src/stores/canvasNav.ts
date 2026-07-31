@@ -20,9 +20,10 @@ let lastCanvasPath: string | null = null
 
 /**
  * 覆盖 URL 切到聊天面前调用：记住当前画布 pathname（不含 query）。
- * 刻意只存 pathname：?settings=1/?kb=1 是 overlay 开关态，切走时开着、切回
- * 不该还原（canvas 的 parseRoute 也只吃 pathname）。已在 '/chat*' 则不记
- * （那是聊天面路径，不是画布视图）。
+ * 刻意只存 pathname：?market=1/?kb=1 是面开关态，切走时开着、切回不该还原
+ * （canvas 的 parseRoute 也只吃 pathname）。设置页 2026-07-31 起是纯 store
+ * 开关，压根不挂 URL，不在这个考虑范围内。已在 '/chat*' 则不记（那是聊天
+ * 面路径，不是画布视图）。
  */
 export function rememberCanvasPath(): void {
   const current = window.location.pathname

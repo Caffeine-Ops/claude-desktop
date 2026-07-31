@@ -20,7 +20,8 @@ import type {
 } from '@open-design/contracts';
 
 import { Icon, type IconName } from '../shared/Icon';
-import { leaveSettingsOverlay, navigate } from '../../router';
+import { navigate } from '../../router';
+import { closeSettingsOverlay } from '../../../stores/surfaceOverlay';
 import { useI18n } from '../../i18n';
 import type { Dict } from '../../i18n/types';
 import type { SkillSummary } from '../../types';
@@ -596,7 +597,7 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
       }
       const j = await res.json().catch(() => null);
       if (j?.projectId) {
-        leaveSettingsOverlay();
+        closeSettingsOverlay();
         navigate({
           kind: 'project',
           projectId: j.projectId,
@@ -772,7 +773,7 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
                             type="button"
                             className="automation-inline-link"
                             onClick={() => {
-                              leaveSettingsOverlay();
+                              closeSettingsOverlay();
                               navigate({
                                 kind: 'project',
                                 projectId: r.lastRun!.projectId,
@@ -1247,7 +1248,7 @@ function AutomationRunHistory({
                 type="button"
                 className="automation-history__open"
                 onClick={() => {
-                  leaveSettingsOverlay();
+                  closeSettingsOverlay();
                   navigate({
                     kind: 'project',
                     projectId: run.projectId,

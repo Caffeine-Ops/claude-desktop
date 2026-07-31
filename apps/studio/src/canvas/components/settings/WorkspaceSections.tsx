@@ -20,8 +20,9 @@ import { TasksView } from '../automations/TasksView';
  * 数据/动作来源分两类：
  * - `SettingsWorkspaceHost`：App.tsx 在渲染 SettingsDialog 时打包传入的
  *   数据快照 + 现成 handler。跳转型动作（打开项目等）直接复用 App 的
- *   handler——它们内部 navigate() 改 URL，?settings=1 随之消失，设置
- *   overlay 自动关闭，无需手动 close。
+ *   handler——它们内部先调 closeSettingsOverlay()（2026-07-31 起是纯 store
+ *   开关，见 stores/surfaceOverlay.ts）再 navigate()，设置页同步关闭，
+ *   调用方无需自己再 close 一次。
  * - 连接器列表：设置 overlay 模式下 EntryView 未挂载（App 提前 return），
  *   没人喂 connectors，所以 AutomationsSection 像 EntryView 一样自取
  *   （fetchConnectors）。

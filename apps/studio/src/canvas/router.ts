@@ -157,17 +157,18 @@ export function navigate(route: Route, opts: { replace?: boolean } = {}): void {
   // Preserve the existing query string across in-app view switches. Routes
   // only carry pathname info, but boot-time flags like `?host=desktop`
   // (set by the Electron shell so the embedded web tab can hide its
-  // duplicate settings cog) and `?settings=1` must survive navigation —
-  // otherwise pushState would drop them and the flag-gated UI would flip
-  // back on the first nav.
+  // duplicate settings cog) must survive navigation — otherwise pushState
+  // would drop them and the flag-gated UI would flip back on the first nav.
+  // （设置页 2026-07-31 起不再挂 query，不在这条保留名单里，见
+  // stores/surfaceOverlay.ts 的 useSettingsOverlayStore 头注释。）
   //
   // **面开关**（`?market=1` 插件市场 / `?kb=1` 知识库）是**例外，必须剥掉**
-  // （2026-07-17）：上面那些参数是「跟着画布面走的状态」（host flag、canvas
-  // 自己的设置 overlay），而面开关是 SurfaceHost 层**盖在画布面之上的另一个
-  // 面**——语义相反。不剥的话：rail 的项目列表点一个项目 → navigate →
-  // market=1 被带到 /projects/xxx 上 → 那个面继续盖着，用户以为「点了没反应」。
-  // 在这里剥而不是让每个调用方各自 close：canvas 导航的入口很多（rail 项目
-  // 列表、面包屑、卡片、返回按钮…），逐个打补丁必漏——「我要去画布的某个视图」
+  // （2026-07-17）：上面那个参数是「跟着画布面走的状态」（host flag），而
+  // 面开关是 SurfaceHost 层**盖在画布面之上的另一个面**——语义相反。不剥
+  // 的话：rail 的项目列表点一个项目 → navigate → market=1 被带到
+  // /projects/xxx 上 → 那个面继续盖着，用户以为「点了没反应」。在这里剥而
+  // 不是让每个调用方各自 close：canvas 导航的入口很多（rail 项目列表、
+  // 面包屑、卡片、返回按钮…），逐个打补丁必漏——「我要去画布的某个视图」
   // 这个意图本身就蕴含「面让位」，收在唯一出口最稳。剥哪些参数由
   // stores/surfaceOverlay.ts 的 PARAM_BY_KIND 单点决定，加面不用改这里。
   const search = stripSurfaceOverlayParams(window.location.search);
@@ -181,29 +182,6 @@ export function navigate(route: Route, opts: { replace?: boolean } = {}): void {
     window.history.pushState(null, '', targetWithQuery);
   }
   window.dispatchEvent(new PopStateEvent('popstate'));
-}
-
-/**
- * 跳转型 handler 在调用 navigate() 之前必须先调这个：上面 navigate() 的注释
- * 说了 `?settings=1` 是刻意跨导航保留的，所以任何「从设置页跳出去看别的东西」
- * 的动作，如果直接调 navigate()，会把 settings=1 一起带到目标路径上——
- * isSettingsOverlay 判定只看 query 不看 pathname，overlay 永远关不掉（CDP
- * 实测 /projects/<id>?settings=1 卡死在设置页）。
- *
- * replaceState 剥参不产生额外历史项，Next 的 native history 集成会同步
- * useSearchParams，isSettingsOverlay 随之翻 false；紧随其后的 navigate()
- * 派发 popstate。没有 settings=1 时是安全的 no-op，任何场景（含设置页外）
- * 调用都不会有副作用——不需要按「是否在设置页里」分场景包一层。
- *
- * 2026-07-31：从 App.tsx 的 settingsWorkspaceHost 闭包里抽出来导出，原因是
- * TasksView.tsx / RoutinesSection.tsx 里的「打开对话」类按钮直接 import 了
- * 这里的 navigate() 却漏调了这个，复现的正是上面注释描述的同一个卡死。
- */
-export function leaveSettingsOverlay(): void {
-  const url = new URL(window.location.href);
-  if (!url.searchParams.has('settings')) return;
-  url.searchParams.delete('settings');
-  window.history.replaceState(null, '', url.pathname + url.search + url.hash);
 }
 
 export function useRoute(): Route {
