@@ -70,7 +70,7 @@ import {
 } from '@/src/components/ui/dropdown-menu'
 import { useAppearanceStore } from '@/src/chat/stores/appearance'
 import { useUpgradeStore } from '@/src/stores/upgrade'
-import { getLastCanvasPath, rememberCanvasPath } from '@/src/stores/canvasNav'
+import { getLastCanvasPath, goChat } from '@/src/stores/canvasNav'
 import {
   closeSurfaceOverlay,
   hasSurfaceOverlay,
@@ -97,30 +97,6 @@ const SURFACE_TABS: { value: 'chat' | 'canvas'; label: string; icon: ReactNode }
 ]
 
 /**
- * 记住离开工作画布时的 canvas 路径（模块级，跨 rail 重挂载存活）。
- * 背景（2026-07-14，删多标签工作区顶栏的连带修复）：切到聊天面时
- * goChatShallow 用 pushState('/chat') 覆盖了 canvas 的当前 URL（如
- * '/project/xxx'），canvas 之前的路径就丢了。切回工作画布若硬编码
- * navigate({home})，就回不到用户刚才打开的项目——多标签栏还在时，用户
- * 能从 tab 栏点回去，栏一删这个「回到上次画布视图」的能力就必须由这里
- * 接管：切走前记住画布路径，切回时 parseRoute 还原。'/chat*' 不记
- * （那是聊天面路径，不是画布视图）。 */
-/**
- * 切到聊天面 —— **原生 pushState（shallow）**而非 router.push：两个面都
- * 常驻在 SurfaceHost、page 全是空壳，切换其实不需要 Next 做任何导航工作
- * （dev 下 router.push 的 RSC 请求 + 内部处理实测占 ~276ms EvaluateScript）。
- * Next 16 官方支持原生 History API：usePathname/useSearchParams 照常同步
- * （SurfaceHost 因此切面），但零 RSC fetch、零 page 切换。canvas 侧的
- * navigate() 本来就是同款机制。
- * 覆盖 URL 前先 rememberCanvasPath()，供画布 tab 切回时还原上次画布视图
- * （2026-07-14 删多标签栏连带修复，见 stores/canvasNav.ts）。
- */
-function goChatShallow(): void {
-  rememberCanvasPath()
-  window.history.pushState(null, '', '/chat')
-}
-
-/**
  * rail 的两个 surface tab 的**唯一**导航入口（TabsTrigger 的 onClick，不是
  * Tabs 的 onValueChange——理由见调用处注释）。因为 onClick 无条件触发，这里
  * 必须自己判断「点的是不是当前面」，否则重复 pushState 会往历史里塞垃圾。
@@ -139,9 +115,11 @@ function goSurface(value: 'chat' | 'canvas'): void {
   if (value === 'chat') {
     // 已经在聊天面、且没有面盖着 → 真 no-op（别重复 push 同一条 URL）
     if (onChat && !overlayOpen) return
-    // goChatShallow 的 pushState('/chat') 写死路径不带 query，天然剥掉所有
-    // 面开关参数，不需要额外 closeSurfaceOverlay()。
-    goChatShallow()
+    // goChat（stores/canvasNav.ts，2026-07-31 与 RailSessionList 合并
+    // 共享）：pushState('/chat') 写死路径不带 query，天然剥掉所有面开关
+    // 参数，不需要额外 closeSurfaceOverlay()；覆盖 URL 前自带
+    // rememberCanvasPath()，供画布 tab 切回时还原上次画布视图。
+    goChat()
     return
   }
 

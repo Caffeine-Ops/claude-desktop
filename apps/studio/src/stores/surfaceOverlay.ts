@@ -189,8 +189,8 @@ export function hasSurfaceOverlay(): boolean {
  * 为什么需要显式剥而不是靠导航自然覆盖：canvas 的 navigate()
  * （src/canvas/router.ts）**故意保留整个 query string**（保住 ?host=desktop，
  * 见其注释），面开关会被一起带到目标路径上——「切到工作画布，插件市场跟着
- * 过去了」。goChatShallow 那边是 pushState('/chat') 写死路径、不带 query，
- * 天然剥掉，不需要这个。
+ * 过去了」。canvasNav.ts 的 goChat() 那边是 pushState('/chat') 写死路径、
+ * 不带 query，天然剥掉，不需要这个。
  */
 export function closeSurfaceOverlay(): void {
   if (!hasSurfaceOverlay()) return
