@@ -284,6 +284,43 @@ export function WritingDocPanel(): React.JSX.Element | null {
     []
   )
 
+  // 撤销在飞：防连点。连点会让第二次拿着已经被第一次改掉的 mtime 去写，必撞假冲突。
+  const [undoing, setUndoing] = useState(false)
+  const undoDepth = useWritingStore((s) => s.undoStack.length)
+
+  /**
+   * 撤销上一步。把栈顶那一节的旧内容**再写一次盘**（而不是只改 store）——磁盘是这个技能
+   * 事实上的真相源：质检脚本、续写工作流、导出全都直接读盘，只改 store 会让屏幕上和盘上
+   * 分家，用户以为撤销了，AI 续写时接的还是没撤销的那版。
+   *
+   * 基准取**当前** store 里那一节的 mtime（不是栈里存的）：撤销的语义是「把它现在变回
+   * 旧样子」。若这中间 AI 又改过这一节，乐观锁会拦下并提示，不静默覆盖。
+   */
+  const undoLast = useCallback(async (): Promise<void> => {
+    if (undoing) return
+    const st = useWritingStore.getState()
+    const entry = st.popUndo()
+    if (!entry) return
+    const sec = st.sections.find((s) => s.name === entry.sectionName)
+    if (!sec) {
+      st.setConflictMsg('这一节的文件已不在了，撤销未生效。')
+      return
+    }
+    setUndoing(true)
+    try {
+      const outcome = await commitSection({
+        sectionName: entry.sectionName,
+        markdown: entry.markdown,
+        expectedMtimeMs: sec.mtimeMs
+      })
+      // 撤销失败不把 entry 塞回栈：塞回去用户会以为还能再撤一次，而失败原因（这一节被
+      // 改过 / 文件没了）多半下一次还在，只是让他再撞一次。冲突提示已经说清了发生什么。
+      if (outcome !== 'ok') return
+    } finally {
+      setUndoing(false)
+    }
+  }, [commitSection, undoing])
+
   /**
    * 应用改写：重定位 → 拼回整节 → 乐观锁写盘。冲突时不覆盖，提示用户并刷新到最新。
    *
@@ -537,6 +574,20 @@ export function WritingDocPanel(): React.JSX.Element | null {
 
         {/* no-drag 一次盖住右侧整组（导出反馈 + 导出下拉 trigger）。 */}
         <div className="flex min-w-0 items-center gap-2 [-webkit-app-region:no-drag]">
+          {/* 撤销上一步。落在这个 no-drag 分组内（新增控件自动继承挖洞，不必逐个挖）——
+              顶栏整条在根 .window-drag-strip 里，漏挖的表现是「按钮点了没反应、按住会拖动
+              窗口」且控制台零报错。 */}
+          {undoDepth > 0 && (
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={undoing}
+              onClick={() => void undoLast()}
+              title={`撤销上一步修改（还可撤销 ${undoDepth} 步）`}
+            >
+              {undoing ? '撤销中…' : '撤销'}
+            </Button>
+          )}
           {exportMsg && (
             <span
               className={cn(
