@@ -121,9 +121,9 @@ export interface SettingsDialogProps {
   onSectionChange?: (section: SettingsSection) => void;
   /**
    * 「工作区」sections（projects/automations/plugins）的数据与动作包。
-   * 由 canvas App 在渲染设置时打包传入（数据在 App state、handler 内部
-   * navigate() 会让 ?settings=1 消失从而自动关 overlay）。不传时这三节
-   * 渲染为空——见 WorkspaceSections.tsx 头注释。
+   * 由 canvas App 在渲染设置时打包传入（数据在 App state、handler 内部先
+   * closeSettingsOverlay() 关掉设置页再 navigate()）。不传时这三节渲染为
+   * 空——见 WorkspaceSections.tsx 头注释。
    */
   workspaceHost?: SettingsWorkspaceHost;
 }

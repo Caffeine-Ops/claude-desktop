@@ -61,13 +61,14 @@ export function RailShell() {
   // 图标排（125）几何不相交（一个右上一个左上），无碰撞。
   const pathname = usePathname()
   const isChat = pathname.startsWith('/chat')
-  // 设置页（?settings=1）揭开时整组常驻按钮隐藏——它是 canvas 树内的全屏
-  // overlay，把 rail 连同内容区一起盖住，而本组按钮 portal 在 body 末尾、
-  // z 压得过它，不隐藏就会浮在设置页自己的导航栏上（2026-07-30 用户反馈）。
-  // 三个钮指向的东西此刻全被盖着：折叠开关切的是看不见的 rail、搜索/新建
-  // 属于底下的聊天面。设置页自带「返回应用」作为退出口，不需要这组。
-  // 订阅镜像 store 而非自己 useSearchParams：RailShell 在根 layout、不在
-  // Suspense 内，理由见 stores/surfaceOverlay.ts。
+  // 设置页揭开时整组常驻按钮隐藏——它是 canvas 树内的全屏 overlay，把 rail
+  // 连同内容区一起盖住，而本组按钮 portal 在 body 末尾、z 压得过它，不隐藏
+  // 就会浮在设置页自己的导航栏上（2026-07-30 用户反馈）。三个钮指向的东西
+  // 此刻全被盖着：折叠开关切的是看不见的 rail、搜索/新建属于底下的聊天面。
+  // 设置页自带「返回应用」作为退出口，不需要这组。
+  // 订阅 useSettingsOverlayStore（2026-07-31 起是真相源，不是 URL 镜像，
+  // 见其头注释）而非自己读 URL：RailShell 在根 layout、不在 Suspense 内，
+  // 理由见 stores/surfaceOverlay.ts。
   const settingsShowing = useSettingsOverlayStore((s) => s.open)
   // 收起态下 AppRail 临时浮出。展开态永远为 false（collapsed 翻回 false 时
   // 一并清掉，否则钉住展开后残留的 peek=true 会让下次收起瞬间又浮出）。

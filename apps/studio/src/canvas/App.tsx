@@ -53,6 +53,7 @@ import {
 } from './providers/registry';
 import { RUNS_CHANGED_EVENT, listProjectRuns } from './providers/daemon';
 import { navigate, useRoute } from './router';
+import { closeSettingsOverlay, openSettingsOverlay } from '../stores/surfaceOverlay';
 import {
   fetchDaemonConfig,
   DEFAULT_PET,
@@ -266,25 +267,28 @@ export function App({
   settingsOverlay = false,
 }: {
   /**
-   * Settings-overlay mode: `?settings=1` renders ONLY the settings UI over
-   * the normal App init (config load, daemon sync, agents all still run so
-   * SettingsDialog has real data) — no workspace/entry chrome.
+   * Settings-overlay mode: renders ONLY the settings UI over the normal App
+   * init (config load, daemon sync, agents all still run so SettingsDialog
+   * has real data) — no workspace/entry chrome.
    *
-   * 由宿主（SurfaceHost）经 props 传入而不是本组件自己 useSearchParams：
-   * 根组件订阅 searchParams 意味着**每次 URL 变化**（包括 chat/画布切换的
-   * shallow pushState）整棵 canvas 树都要 re-render 一遍（实测 ~276ms 的
-   * FunctionCall 大块）。SurfaceHost 树很小，由它订阅并 memo 住本组件的
-   * 元素（依赖仅 settingsOverlay），只有设置状态真正翻转时 canvas 树才
-   * 重渲染。响应性不变：进/出设置依旧零刷新。
+   * 由宿主（SurfaceHost）经 props 传入而不是本组件自己订阅
+   * `useSettingsOverlayStore`：SurfaceHost 树很小，由它订阅并 memo 住本组件
+   * 的元素（依赖仅 settingsOverlay），只有设置状态真正翻转时 canvas 树才
+   * 重渲染，不需要本组件自己再挂一次订阅。2026-07-31 前这里挂的是
+   * `?settings=1` query（避免每次 URL 变化都重渲染整棵 canvas 树）；迁到
+   * 纯内存 store 后原因不变，只是订阅源从 searchParams 换成了 zustand。
    */
   settingsOverlay?: boolean;
   /*
-   * 注：曾有第二个 prop `knowledgeBaseOverlay`（`?kb=1`，与 settingsOverlay
-   * 同一套机制，在下方提前 return 一个全屏 KnowledgeBaseDialog）。2026-07-17
-   * 知识库改造成 SurfaceHost 的第四个面（rail 常驻 + 右侧内容区换成知识库，
-   * 同插件市场）后，它不再经 canvas 树，prop 与分支一并删除——见
-   * src/stores/surfaceOverlay.ts 与 components/knowledge-base/
-   * KnowledgeBaseSurface.tsx。设置页仍留在这套 overlay 机制里。
+   * 注：曾有第二个 prop `knowledgeBaseOverlay`（`?kb=1`，当时与
+   * settingsOverlay 同一套「query 挂 URL」机制，在下方提前 return 一个全屏
+   * KnowledgeBaseDialog）。2026-07-17 知识库改造成 SurfaceHost 的第四个面
+   * （rail 常驻 + 右侧内容区换成知识库，同插件市场）后，它不再经 canvas 树，
+   * prop 与分支一并删除——见 src/stores/surfaceOverlay.ts 与
+   * components/knowledge-base/KnowledgeBaseSurface.tsx。设置页当时仍留在
+   * URL overlay 机制里，2026-07-31 起也迁出（改纯 store，见
+   * useSettingsOverlayStore 头注释），但没有跟着知识库一起变成「面」——
+   * 仍是盖住 rail 的全屏 overlay，原因见 stores/surfaceOverlay.ts 里的对比。
    */
 } = {}) {
   const { t } = useI18n();
@@ -296,12 +300,13 @@ export function App({
   const latestPersistedConfigRef = useRef(config);
   latestPersistedConfigRef.current = config;
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // 「返回应用」防重入（见 handleOverlayClose）：studio 单视图下关闭设置
-  // 是异步导航——history.back() 到 popstate 有实测 ~350ms 的空窗，期间
-  // 设置 UI 刻意保持挂载（否则闪画布面，2026-07-08），用户若在空窗里再点
-  // 一次会多退一层历史、落到 /chat 更早的 entry。首次点击后置 true 吞掉
-  // 后续点击，重新进入 overlay（isSettingsOverlay 翻 true）时复位。
-  const overlayBackFiredRef = useRef(false);
+  // 2026-07-31 前这里有一把「返回应用」防重入锁（overlayBackFiredRef）：
+  // 关闭设置走 history.back()，popstate 到达前有 ~350ms 异步空窗，且落点
+  // 依赖历史栈形状——隐藏 canvas 树的程序化 navigate() 会在用户不知情时
+  // 改写栈中条目，曾导致锁被永久闩死（返回按钮点不动）或落错面。设置页改
+  // 走纯内存 store（closeSettingsOverlay，见 stores/surfaceOverlay.ts 头
+  // 注释）后，关闭是一次同步 setState、不产生也不依赖任何历史栈状态，这类
+  // 问题按构造不可能再发生，锁与超时兜底一并删除，不用留着当纪念。
   const [settingsWelcome, setSettingsWelcome] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSection>('execution');
   const [integrationInitialTab, setIntegrationInitialTab] = useState<IntegrationTab>('mcp');
@@ -1308,7 +1313,19 @@ export function App({
       const list = await listProjects();
       if (cancelled) return;
       setProjects(list);
-      if (!list.find((p) => p.id === route.projectId)) {
+      // keep-alive 隐藏画布树时守卫：chat 面在台前时不写 URL。canvas 是
+      // keep-alive 常驻的，隐藏树的这个 effect 照样会跑（deps 含
+      // projects/daemonLive，跟 URL 变化无关）——用户在聊天面时 daemon
+      // 上线一次就可能替用户在背后 replaceState，曾是「返回应用落错面」的
+      // 写手之一（history.back() 落点被这类隐藏导航悄悄改写）。补拉
+      // getProject/listProjects 是良性的不拦，只拦这一行跳转。被拦的
+      // bounce 不会自动补跑——用户切回画布时 URL 可能还停在已删除项目的
+      // 路径上，但那时 activeProject 已是 null，EntryView 兜底渲染，
+      // 自洽只是 URL 不够新鲜，下次真正的路由变化会覆盖它。
+      if (
+        !list.find((p) => p.id === route.projectId) &&
+        !window.location.pathname.startsWith('/chat')
+      ) {
         navigate({ kind: 'home', view: 'home' }, { replace: true });
       }
     })();
@@ -1339,22 +1356,20 @@ export function App({
   // 的不透明底）。注意：这个类曾触发「html 强制透明」（多视图时代遗留），
   // 该规则已因暗档进设置白闪删除——见 base.css 同名注释，别加回来。
   //
-  // Default to the **appearance** section, NOT execution: the desktop-only
-  // controls migrated from Electron's native settings (UI/code font size,
-  // pointer cursor, CLI backend) live inside AppearanceSection, plus the
-  // daemon-backed theme/accent. Landing the gear click straight on Appearance
-  // is what makes those desktop settings discoverable — opening on execution
-  // hid them behind a sidebar click the user never knew to make.
+  // Default to the sidebar's **first** section (account), matching what the
+  // user sees first when the settings window opens — 2026-07-31 改回列表
+  // 首项。此前（见 git 历史）曾故意钉死落在 appearance，理由是把从 Electron
+  // 原生设置迁移来的桌面专属项（字号/指针/CLI backend）暴露出来；但用户反馈
+  // 齿轮点击应落在视觉上的"第一个菜单"，与列表顺序保持直觉一致，故改回。
   useEffect(() => {
     if (!isSettingsOverlay) return;
-    overlayBackFiredRef.current = false;
-    setSettingsInitialSection('appearance');
+    setSettingsInitialSection('account');
     setSettingsOpen(true);
     document.documentElement.classList.add('settings-overlay');
     return () => {
-      // isSettingsOverlay 现在随软导航翻转（不再只在卸载时清理）：退出
-      // overlay 必须同步收起 settingsOpen——它还兼管普通模式的内嵌设置
-      // dialog，不清的话 history.back() 回到画布会误弹一个设置框。
+      // isSettingsOverlay 随 closeSettingsOverlay() 的 store 翻转同步变化
+      // （不只是卸载时清理）：退出 overlay 必须同步收起 settingsOpen——它还
+      // 兼管普通模式的内嵌设置 dialog，不清的话切回画布会误弹一个设置框。
       setSettingsOpen(false);
       document.documentElement.classList.remove('settings-overlay');
     };
@@ -1378,18 +1393,25 @@ export function App({
   // Cmd+, (mac) / Ctrl+, (win/linux) opens Settings. Capture phase so we
   // beat the browser's default Preferences dialog. Platform-gated so
   // meta/ctrl don't conflict across OS.
+  //
+  // 调 openSettingsOverlay()（store 真相源）而非本地的 openSettings()（内嵌
+  // dialog，只在 canvas 树自己可见时才看得见）：canvas 是 keep-alive 常驻的，
+  // chat 面在台前时 canvas 树仍在背后跑 JS，按 Cmd+, 会在隐藏树里悄悄开一个
+  // 看不见的内嵌 dialog，切回画布时它突然冒出来。走 openSettingsOverlay() 后
+  // SurfaceHost 会强制放映 canvas 面来承载全屏设置页，两个面下按快捷键行为
+  // 一致（2026-07-31 修）。
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const primary = isMacPlatform() ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
       if (primary && !e.shiftKey && !e.altKey && e.key === ',') {
         if (e.isComposing) return;
         e.preventDefault();
-        openSettings();
+        openSettingsOverlay();
       }
     };
     window.addEventListener('keydown', onKeyDown, { capture: true });
     return () => window.removeEventListener('keydown', onKeyDown, { capture: true });
-  }, [openSettings]);
+  }, []);
 
   // Explicit enabled toggle — true = wake, false = tuck. Persists to
   // localStorage so the overlay state survives across reloads. We keep
@@ -1497,57 +1519,45 @@ export function App({
   // state/homePromptHandoff.ts）。
   // ⚠️ 必须定义在 isSettingsOverlay 提前 return 之前（hooks 顺序）。
   //
-  // 跳转型 handler 必须先 leaveSettingsOverlay()：canvas router 的
-  // navigate() 刻意保留整个 query string（?host=desktop 时代的约定，见
-  // router.ts 注释），?settings=1 会跟着到达新路由、overlay 永远关不掉
-  // （CDP 实测 /projects/<id>?settings=1 卡死在设置页）。replaceState 剥参
-  // 不产生额外历史项，Next 的 native history 集成会同步 useSearchParams，
-  // isSettingsOverlay 随之翻 false；紧随其后的 navigate() 派发 popstate。
-  // 删除/重命名不跳转，不剥参——操作完留在设置页里继续管理是正确交互。
+  // 跳转型 handler 必须先 closeSettingsOverlay()：设置页 2026-07-31 起是纯
+  // store 开关（stores/surfaceOverlay.ts），关闭不再是「剥 URL 参数」而是
+  // 直接翻状态，但纪律不变——「离开设置页去看别的东西」的动作必须显式关，
+  // 不能指望副作用自动带走。
+  // 删除/重命名不跳转，不用调用它——操作完留在设置页里继续管理是正确交互。
   const settingsWorkspaceHost = useMemo<SettingsWorkspaceHost>(() => {
-    const leaveSettingsOverlay = () => {
-      const url = new URL(window.location.href);
-      if (!url.searchParams.has('settings')) return;
-      url.searchParams.delete('settings');
-      window.history.replaceState(
-        null,
-        '',
-        url.pathname + url.search + url.hash,
-      );
-    };
     return {
       projects,
       skills: enabledSkills,
       designTemplates: enabledDesignTemplates,
       designSystems: enabledDS,
       onOpenProject: (id) => {
-        leaveSettingsOverlay();
+        closeSettingsOverlay();
         handleOpenProject(id);
       },
       onOpenLiveArtifact: (projectId, artifactId) => {
-        leaveSettingsOverlay();
+        closeSettingsOverlay();
         handleOpenLiveArtifact(projectId, artifactId);
       },
       onDeleteProject: handleDeleteProject,
       onRenameProject: handleRenameProject,
       onCreatePlugin: (goal?: string) => {
-        leaveSettingsOverlay();
+        closeSettingsOverlay();
         stashHomePromptHandoff(createPluginAuthoringHandoff(Date.now(), goal));
         navigate({ kind: 'home', view: 'home' });
       },
       onUsePlugin: (record, action) => {
-        leaveSettingsOverlay();
+        closeSettingsOverlay();
         stashHomePromptHandoff(
           createPluginUseHandoff(Date.now(), record.id, { action }),
         );
         navigate({ kind: 'home', view: 'home' });
       },
-      // 剥参发生在创建之前：成功路径 handler 尾部 navigate 进新项目；失败
+      // 关闭发生在创建之前：成功路径 handler 尾部 navigate 进新项目；失败
       // 路径用户落回画布（overlay 已关、错误提示随宿主卸载丢失）——share
       // 创建失败罕见，接受这个次优。想改进得把 navigate 从共享 handler 里
       // 拆出来，不值得为此加复杂度。
       onCreatePluginShareProject: async (pluginId, action, locale) => {
-        leaveSettingsOverlay();
+        closeSettingsOverlay();
         return handleCreatePluginShareProject(pluginId, action, locale);
       },
     };
@@ -1719,27 +1729,23 @@ export function App({
       />
     );
   }
-  // Settings-overlay mode: render ONLY the settings dialog over a dimming
-  // scrim — no workspace/entry chrome. The hosting WebContentsView is
-  // transparent, so the scrim dims the desktop tab showing through behind
-  // it. SettingsDialog already renders as a centered modal; closing it tells
-  // the desktop shell (via the `settings` preload bridge) to tear the
-  // overlay view down. All the normal App init above still ran, so the
-  // dialog has real config / agents / daemon data.
+  // Settings-overlay mode: render ONLY the settings dialog — no workspace/
+  // entry chrome. All the normal App init above still ran, so the dialog
+  // has real config / agents / daemon data.
   if (isSettingsOverlay) {
     return (
-      // Settings is now a full-screen page that paints its own opaque
-      // surface (see index.css `.modal-backdrop:has(.modal-settings)`), so
-      // the old `bg-black/40` dimming scrim is dropped — it would just tint
-      // the whole page. The container only positions the page over the
-      // transparent host WebContentsView.
+      // Settings is a full-screen page that paints its own opaque surface,
+      // positioned over the (now-hidden, per SurfaceHost) canvas/chat face.
       <div className="fixed inset-0 z-50">
         {settingsOpen
           ? (() => {
-              // Persist on close (same as the in-app dialog), then ask the
-              // desktop shell to remove the overlay view. In a plain browser
-              // `electronSettings` is absent and the call no-ops. Shared by
-              // the V1 and V2 dialogs below.
+              // Persist on close (same as the in-app dialog), then flip the
+              // settings store shut. 2026-07-31：以前这里是 history.back()
+              // （URL 态 + 防重入锁 + 800ms 超时兜底），落点依赖历史栈形状，
+              // 出过「返回按钮永久失效」「返回落错面」两类事故（根因见
+              // stores/surfaceOverlay.ts 的 useSettingsOverlayStore 头
+              // 注释）。closeSettingsOverlay() 是一次同步 setState，不产生
+              // 也不依赖任何历史状态，这类问题按构造不可能再发生。
               const handleOverlayClose = () => {
                 const next = resolveSettingsCloseConfig(
                   config,
@@ -1751,34 +1757,7 @@ export function App({
                   void syncConfigToDaemon(next);
                   setConfig(next);
                 }
-                if (window.electronSettings) {
-                  // 桌面多视图（独立 settings overlay view）：关闭没有 URL
-                  // 语义，直接拆 UI 并让壳收掉 overlay view。
-                  setSettingsOpen(false);
-                  window.electronSettings.close?.();
-                  return;
-                }
-                // studio 单视图（无 electronSettings preload）：settings 是
-                // URL 态（?settings=1 挂在当前 pathname 上，AppRail 软导航
-                // pushState 进来），关闭 = 回上一页（剥参回原面）。软导航
-                // 历史下 back() 是同文档回退（Next 处理 popstate，
-                // isSettingsOverlay 随之翻回 false），不会整页刷新；无历史
-                // （deep link 直开）则原地剥参硬跳，留在同一个面。
-                //
-                // ⚠️ 这条路径**不能**提前 setSettingsOpen(false)：back() 的
-                // popstate 是异步的（CDP 实测 dev 下 back→popstate ~350ms），
-                // 提前拆设置 UI 会留出一段「URL 还带 settings=1 但设置树已
-                // 卸载」的空窗——SurfaceHost 仍强制放映 canvas 面（空 fixed
-                // 容器）而目标面还藏着，闪一帧空白/画布再落地（2026-07-08
-                // 「返回应用先跳工作画布再跳智能助手」实锤）。设置树保持
-                // 挂载，等 popstate 后 isSettingsOverlay 翻 false，由 overlay
-                // effect 的 cleanup 统一收 settingsOpen + html 类——URL 驱动
-                // 的同一次 commit 里完成「设置卸载 + 面切换」，无中间帧。
-                // 防重入 ref 语义见其声明处注释。
-                if (overlayBackFiredRef.current) return;
-                overlayBackFiredRef.current = true;
-                if (window.history.length > 1) window.history.back();
-                else window.location.assign(window.location.pathname);
+                closeSettingsOverlay();
               };
               const SettingsComponent = settingsV2Enabled()
                 ? SettingsDialogV2

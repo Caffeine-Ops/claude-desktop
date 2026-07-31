@@ -160,7 +160,7 @@ const NAV_GROUPS: NavGroup[] = [
 ];
 
 export function SettingsDialogV2(props: SettingsDialogV2Props): React.JSX.Element {
-  const { initialSection = 'appearance', onClose } = props;
+  const { initialSection = 'account', onClose } = props;
   const { t } = useI18n();
   // tt: translate with a literal fallback so a not-yet-added i18n key shows
   // the Chinese label instead of the raw key.

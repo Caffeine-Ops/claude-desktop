@@ -23,6 +23,7 @@ import {
   DialogHeader,
   DialogTitle
 } from '@/src/components/ui/dialog'
+import { GLASS_DIALOG_SURFACE } from '@/src/components/ui/glassDialogSurface'
 import { Input } from '@/src/components/ui/input'
 import { Label } from '@/src/components/ui/label'
 
@@ -1557,14 +1558,17 @@ function ChatHeader(): React.JSX.Element {
           上面这套 brightness-125 提亮只在暗档验证过——亮档 --background
           本身接近纯白，同样提亮会把身后内容乘溢出到 255、反而漂白，改成
           brightness-100（不调整）+ dark:brightness-125，理由见 dropdown-
-          menu.tsx 头注释第四条，全项目 ~15 处同配方一起改。 */}
+          menu.tsx 头注释第四条，全项目 ~15 处同配方一起改。
+          2026-07-31：整套 className 抽进 GLASS_DIALOG_SURFACE 常量（四处同规格
+          弹窗共用一个字符串），同时修掉亮档糊成灰板的问题——成因是黑幕而非
+          brightness，完整推导见该常量的头注释。 */}
       <Dialog
         open={renameOpen}
         onOpenChange={(open) => {
           if (!open) setRenameOpen(false)
         }}
       >
-        <DialogContent className="rounded-2xl border border-white/15 bg-background/55 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.4),0_8px_24px_-12px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-100 dark:backdrop-brightness-125 sm:max-w-[440px]">
+        <DialogContent className={GLASS_DIALOG_SURFACE}>
           <form
             onSubmit={(e) => {
               e.preventDefault()

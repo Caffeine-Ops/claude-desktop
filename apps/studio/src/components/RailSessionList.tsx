@@ -39,7 +39,6 @@
  */
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { usePathname } from 'next/navigation'
 import {
   Clapperboard,
   Copy,
@@ -54,8 +53,8 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import type { ComponentType, ReactNode } from 'react'
 import type { ThreadSummary } from '@desktop-shared/types'
 
-import { rememberCanvasPath } from '@/src/stores/canvasNav'
-import { hasSurfaceOverlay, useSurfaceOverlayStore } from '@/src/stores/surfaceOverlay'
+import { goChat } from '@/src/stores/canvasNav'
+import { useSurfaceOverlayStore } from '@/src/stores/surfaceOverlay'
 import { stripMessageMarker } from '@/src/chat/lib/messageMarkers'
 import { condenseFileMentions } from '@/src/chat/lib/mentionDisplay'
 import { useChatStore, useRunningSessionIdsKey } from '@/src/chat/stores/chat'
@@ -85,6 +84,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle
 } from '@/src/components/ui/alert-dialog'
+import { GLASS_DIALOG_SURFACE } from '@/src/components/ui/glassDialogSurface'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -247,8 +247,6 @@ function SessionMenuItems({
 }
 
 export function RailSessionList() {
-  const pathname = usePathname()
-
   // Sessions with an assistant turn in flight — drives the per-row
   // running spinner. Subscribed as a stable comma-joined key (see the
   // hook) and rebuilt into a Set here so row lookups are O(1) and the
@@ -370,22 +368,6 @@ export function RailSessionList() {
       offSwitch?.()
     }
   }, [reload])
-
-  const goChat = useCallback(() => {
-    // shallow pushState 而非 router.push：两面常驻 SurfaceHost、page 是
-    // 空壳，Next 无需做任何导航工作（见 AppRail goChatShallow 注释）。
-    // 切走前记住画布路径（2026-07-14，删多标签栏连带修复）：这也是「从画布
-    // 切到聊天」的入口之一，不记的话切回画布会用陈旧的 lastCanvasPath。
-    const onChat = pathname.startsWith('/chat')
-    // 已在聊天面**且**没有面（插件市场/知识库）盖着 → 真 no-op。
-    // 面开关（?market=1 / ?kb=1）挂在当前 pathname 上，开在聊天面时 pathname
-    // 仍是 '/chat'——只判 pathname 的话这里直接 return，参数不被剥掉、面继续
-    // 盖着，用户点会话「没反应」（2026-07-17 用户实锤）。pushState('/chat')
-    // 写死路径不带 query，天然剥掉所有面开关。同族陷阱见 AppRail 的 goSurface。
-    if (onChat && !hasSurfaceOverlay()) return
-    if (!onChat) rememberCanvasPath()
-    window.history.pushState(null, '', '/chat')
-  }, [pathname])
 
   /** 点击行：高亮 + 导航到聊天 + 通知 main 切 runtime + 清未读。 */
   const switchTo = useCallback(
@@ -739,8 +721,9 @@ export function RailSessionList() {
           * brightness-125 提亮背后模糊内容、blur-xl（比 2xl 浅一档，保留纹理
           * 更看得出"透视感"）+ border-white/15 固定白描边（装饰性非语义色，
           * 同保存按钮渐变里的 inset 高光做法），具体理由见 ThreadView.tsx
-          * 同处更长的注释。 */}
-        <DialogContent className="rounded-2xl border border-white/15 bg-background/55 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.4),0_8px_24px_-12px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-100 dark:backdrop-brightness-125 sm:max-w-[440px]">
+          * 同处更长的注释。2026-07-31 整套抽进 GLASS_DIALOG_SURFACE 常量并
+          * 修掉亮档发灰，推导见该常量头注释。 */}
+        <DialogContent className={GLASS_DIALOG_SURFACE}>
           <form
             onSubmit={(e) => {
               e.preventDefault()
@@ -815,8 +798,9 @@ export function RailSessionList() {
           * 也要玻璃质感，于是原样搬重命名弹窗那份 className 覆盖（/55 不透明
           * 度 + backdrop-brightness-125 提亮 + backdrop-blur-xl + border-
           * white/15 固定白描边），具体理由见 ThreadView.tsx 重命名弹窗同处
-          * 长注释。 */}
-        <AlertDialogContent className="rounded-2xl border border-white/15 bg-background/55 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.4),0_8px_24px_-12px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-100 dark:backdrop-brightness-125 sm:max-w-[440px]">
+          * 长注释。2026-07-31 起与另外三处共用 GLASS_DIALOG_SURFACE 常量
+          * ——「原样搬」这个动作本身就是漏改事故的土壤，改成引用同一个字符串。 */}
+        <AlertDialogContent className={GLASS_DIALOG_SURFACE}>
           <AlertDialogHeader>
             <AlertDialogTitle className="text-[19px]">
               删除这个对话？
