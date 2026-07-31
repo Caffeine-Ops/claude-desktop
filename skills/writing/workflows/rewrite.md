@@ -66,6 +66,20 @@ $WRITING_PY ${SKILL_DIR}/scripts/source_to_md.py <原文文件或URL> --out-dir 
 
 **识别不出来就直接问用户**：「这篇你是当公众号推文 / 短篇故事 / 观察文章来改？定位不同改法差很多。」——**别硬猜体裁**，猜错了整套诊断都用错标准。题材（带货？悬疑？行业观察？）同理，认不出就问。
 
+**判完 genre 后，立刻写一份最小写作契约**（`<项目>/spec_lock.md`），只要两行：
+
+```markdown
+## 体裁
+- genre: wechat
+```
+
+段名 `## 体裁` 与字段名 `genre` 必须逐字用这一套（`update_spec.py` 认死八个固定段名），
+否则后续要改契约时脚本认不出。桌面端写作工作区也读这一行决定排版皮肤——不写的话，
+一篇公众号推文会被按职场公文的版式显示给用户。
+
+（小说改写另有更高要求：`continuity_check.py` 需要完整的人物档案与伏笔表，见下面 Step 2 的
+逆向补契约那条，那种情况下这份最小契约会被完整契约取代。）
+
 ---
 
 ## Step 3 · 三脚本 + 按体裁人工诊断，产出三级清单（路径 A 核心）
@@ -137,9 +151,13 @@ $WRITING_PY ${SKILL_DIR}/scripts/continuity_check.py <项目>/sources/original.m
 
 ---
 
-## Step 4 · 改写、进 output/、逐处标注（用户点头后）
+## Step 4 · 改写、进 drafts/、逐处标注（用户点头后）
 
-用户确认要改哪些后，切润色角色，**只按确认的清单条目改**，改完落 `<项目>/output/`。
+用户确认要改哪些后，切润色角色，**只按确认的清单条目改**，改完落 `<项目>/drafts/`。
+
+> 落 `drafts/` 而不是 `output/`：`drafts/` 是「正在打磨的正文」，`output/` 是「定稿与导出物
+> （.docx / .html）」——主管线本来就这么分。桌面端写作工作区只扫 `drafts/`，落错地方的
+> 后果是用户跑完整条改写流程、右栏却一片空白（2026-07-31 修）。
 
 **改写稿必须标注「改了哪里、为什么」**——这是改写和创作的分水岭，用户要能逐条对账。在改写稿末尾附一张**改动对照表**：
 
@@ -161,7 +179,7 @@ $WRITING_PY ${SKILL_DIR}/scripts/continuity_check.py <项目>/sources/original.m
 **改完重跑脚本验收**：
 
 ```bash
-$WRITING_PY ${SKILL_DIR}/scripts/ai_slop_checker.py <项目>/output/rewrite.md
+$WRITING_PY ${SKILL_DIR}/scripts/ai_slop_checker.py <项目>/drafts/rewrite.md
 ```
 
 确认五维回到 35 以上、🔴 全清。脚本达标只是及格线，「读着顺不顺」最终靠人拍板。
@@ -170,7 +188,7 @@ $WRITING_PY ${SKILL_DIR}/scripts/ai_slop_checker.py <项目>/output/rewrite.md
 
 ```markdown
 ## ✅ 改写完成
-- [x] 原文已存 sources/，改写稿在 output/
+- [x] 原文已存 sources/，改写稿在 drafts/
 - [x] 改写稿附了改动对照表（每处：原文 → 改后 → 对应清单 → 为什么）
 - [x] 只动了用户确认的清单项，没顺手改清单外、没推翻重写（除非用户要求换体裁）
 - [x] 重跑 ai_slop_checker 五维 ≥35
