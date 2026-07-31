@@ -380,8 +380,14 @@ export function WritingDocPanel(): React.JSX.Element | null {
          * 独立的兜底 effect（见其头注释「M-8/④」）会因为块结构性消失而自动把编辑框
          * 关掉——「先复制内容再按 Esc」这句话会变成一句自相矛盾的假话：编辑框根本
          * 不会等到用户去按 Esc。这里现读一次新内容判断块是否还在，两种情况给两条
-         * 不同的话；WritingPaper 那条兜底 effect 发现 conflictMsg 已经被设置过时会
-         * 让路，不会用它自己更笼统的兜底文案覆盖这里更准确的措辞。
+         * 不同的话。真正拦住 M-8 用它自己更笼统的兜底文案覆盖这里措辞的，不是
+         * 「M-8 让路」（那套机制已在上一轮删除）——是 WritingPaper `commitEdit`
+         * 的 else 分支自己在 `await onEditBlock` 的续体里抢先判断「块是否结构性
+         * 消失」并提前关框（`setEditing(null)`）：这段续体是微任务，稳定抢在
+         * M-8 所在的下一次渲染 effect（走 React Scheduler，是宏任务）之前跑完，
+         * editing 先被清空，M-8 的 `if (!editing) return` 因此直接短路，永远看
+         * 不到非空的 editing，也就没有机会覆盖这里刚设好的措辞。这条时序前提
+         * 详见 WritingPaper.tsx `commitEdit` 尾部注释。
          */
         const freshSec = useWritingStore.getState().sections.find((s) => s.name === input.sectionName)
         const stillHasBlock = !!freshSec && input.blockIndex < splitBlocks(freshSec.markdown).length

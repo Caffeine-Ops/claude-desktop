@@ -304,6 +304,26 @@ export function WritingPaper({
          * `editing === null`，根本不会为这次事件二次决策；它就只剩下真正独立
          * 的场景（轮询刷新来的 AI 重写、用户点了顶栏撤销……）要处理，不需要
          * 任何「这是不是我自己的锅」的信号。
+         *
+         * 【2026-07-31 复审 I-5：这段「抢在 M-8 前面关框」的时序前提没写下来过，
+         * 补在这里】这里能稳定抢在 M-8 之前跑完，靠的是一条隐藏的调度前提：
+         * `onEditBlock`（即 `WritingDocPanel.editBlock`）内部 `commitSection` 成功
+         * 调用 `replaceSectionMarkdown` 触发的 zustand 状态更新，会让 React 把 M-8
+         * 所在的这个 effect 排进 Scheduler 队列（本质是一个**宏任务**，真正执行
+         * 要等到下一轮事件循环）；而这里 `await onEditBlock(...)` 之后的续体是
+         * 一次 **promise 微任务**——JS 事件循环规则是「本轮所有微任务必须排空，
+         * 才轮到下一个宏任务」，所以不管中间套了几层纯 promise 链，这段续体永远
+         * 先于 M-8 的 effect 跑完，`editing` 先被清掉，M-8 才看到 `!editing` 短路。
+         *
+         * 这条前提**会被打破**：如果谁在 `editBlock`（或它调用的 `commitSection`）
+         * 结尾、`replaceSectionMarkdown` 已经执行之后，新加一个真正跨宏任务的
+         * `await`（比如又一次 IPC 往返、`setTimeout`、或任何不是纯 promise 链的
+         * 异步源），那么在这个新 await 等待期间，事件循环可能先去处理已经排队的
+         * M-8 effect——M-8 会抢先看到非空的 `editing`、判定块结构性消失、用它自己
+         * 更笼统的兜底文案覆盖掉 `editBlock` 早就设好的准确文案（且提前关框），
+         * 等这里的续体终于跑到时 `editing` 已经是 null，一切静默发生、没有任何
+         * 报错。改 `editBlock` 或 `commitSection` 时，新加的 `await` 必须放在
+         * `replaceSectionMarkdown` **之前**，不能插在它和函数返回之间。
          */
         const freshSec = useWritingStore.getState().sections.find((s) => s.name === mine.sectionName)
         const stillValid = !!freshSec && blockSourceAt(freshSec.markdown, mine.blockIndex) !== null
