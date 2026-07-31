@@ -56,7 +56,7 @@ bun run build:mac    # 只打 Electron 壳：verify:fusion + build:icons + prebu
 
 **发版必须走 `dist:*` 不是 `build:*`**：`build:mac` 的 prebundle 只是拷贝 daemon dist 与 studio out/ 的现成产物，不重新构建它们——改了前端/daemon/契约包后直接 `build:mac`，打进安装包的是陈旧代码且零报错。
 
-包内脚本约定（apps/studio）：`dev` = 整个桌面应用；`dev:next`/`build:next` = Next 前端独立入口（main 的 spawnStudioDev 调 `dev:next`，root 的 `prebuild:resources` 调 `build:next`）；刻意没有裸 `build`。改完代码以 `bun run typecheck` 为准——**没有单元测试、没有 ESLint**，类型检查是唯一的自动化防线。
+包内脚本约定（apps/studio）：`dev` = 整个桌面应用；`dev:next`/`build:next` = Next 前端独立入口（main 的 spawnStudioDev 调 `dev:next`，root 的 `prebuild:resources` 调 `build:next`）；刻意没有裸 `build`。改完代码以 `bun run typecheck` 为准——**没有 ESLint**，类型检查是唯一的全局防线；另有 `bun test`（在 apps/studio 下跑）覆盖 `electron/`、`src/chat/lib`、`src/chat/composer` 三个目录的纯函数，新写的纯逻辑放进这三处才会被测到。
 
 ## 内置写作技能
 
