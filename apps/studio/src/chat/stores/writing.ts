@@ -10,6 +10,7 @@ import {
   toolResultText,
   type WritingToolPart
 } from '../lib/writingDocSource'
+import { pushBounded } from '../lib/writingEdit'
 import type { WritingRevisionTarget } from '../lib/writingRevision'
 import { useChatStore } from './chat'
 
@@ -20,6 +21,24 @@ type WritingStatus = 'idle' | 'ready' | 'missing' | 'error'
 
 /** 排队软上限。与 proposal 的 MAX_REVISION_QUEUE 对齐——同一个数只写一处，提示文案引用它。 */
 export const MAX_WRITING_REVISION_QUEUE = 10
+
+/**
+ * 撤销栈上限。20 步足够覆盖「刚才手滑那几下」，而这是个纯内存栈（关窗即失），
+ * 不设上限的话长时间写一篇长文会把每一节的历史全副本堆在内存里。
+ */
+export const MAX_WRITING_UNDO = 20
+
+/**
+ * 一步可撤销的修改：**改之前**那一节长什么样。
+ *
+ * 刻意不存 mtime：撤销的语义是「把它现在变回旧样子」，写盘基准应取**撤销那一刻**盘上的
+ * 最新 mtime，而不是当初改动前的。存了反而会诱使实现去用那个陈旧值——那样一来，用户改了
+ * 三步再撤销，基准是三步之前的，乐观锁必然误报冲突。
+ */
+export interface WritingUndoEntry {
+  sectionName: string
+  markdown: string
+}
 
 /** 排队中的改写。**不存最终块序号**：排队期间前面的改写可能落地、序号会漂，排空时用
  *  target.beforeMarkdown 重新定位（range 只当多处命中时"哪一处离原位置最近"的裁决提示）。 */
@@ -94,6 +113,14 @@ interface WritingState {
   review: WritingRevisionReview | null
   /** 一次性提示条（写盘冲突 / 排队项定位失败 / 队列满）。展示后由用户或下一次操作清掉。 */
   conflictMsg: string
+  /**
+   * 撤销栈。**AI 改写「应用」与手动编辑共用**——用户心里只有一个「后悔」的概念，
+   * 不该因为这次改动来自哪条通道而行为不同。只在内存，不持久化（关窗即失）。
+   */
+  undoStack: WritingUndoEntry[]
+  pushUndo: (entry: WritingUndoEntry) => void
+  /** 弹出栈顶；空栈回 null。弹出即消费，撤销失败也不回填——不做重做。 */
+  popUndo: () => WritingUndoEntry | null
   /** 切换文档源：清空旧内容，避免上一篇的正文闪现在新文档里。 */
   setSource: (source: WritingDocSource | null) => void
   /**
@@ -130,6 +157,7 @@ export const useWritingStore = create<WritingState>((set, get) => ({
   queue: [],
   review: null,
   conflictMsg: '',
+  undoStack: [],
   setSource: (source) =>
     set({
       source,
@@ -148,7 +176,11 @@ export const useWritingStore = create<WritingState>((set, get) => ({
       pendingRevision: null,
       queue: [],
       review: null,
-      conflictMsg: ''
+      conflictMsg: '',
+      // 换源 = 换了篇稿子，旧稿的 sectionName 对新稿没有意义。留着它撤销会把上一篇的
+      // 内容写进这一篇的同名文件——这类跨文档串台是不可逆的正文损坏，与上面 pending/queue
+      // 必须跟着清空是同一个理由。
+      undoStack: []
     }),
   bindSession: (sessionId) => {
     if (get().sessionId === sessionId) return
@@ -187,7 +219,15 @@ export const useWritingStore = create<WritingState>((set, get) => ({
     return head
   },
   setReview: (review) => set({ review }),
-  setConflictMsg: (conflictMsg) => set({ conflictMsg })
+  setConflictMsg: (conflictMsg) => set({ conflictMsg }),
+  pushUndo: (entry) => set((s) => ({ undoStack: pushBounded(s.undoStack, entry, MAX_WRITING_UNDO) })),
+  popUndo: () => {
+    const stack = get().undoStack
+    if (stack.length === 0) return null
+    const top = stack[stack.length - 1]
+    set({ undoStack: stack.slice(0, -1) })
+    return top
+  }
 }))
 
 /**

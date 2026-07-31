@@ -349,12 +349,18 @@ export function WritingDocPanel(): React.JSX.Element | null {
     }
     setApplying(true)
     try {
+      const before = sec.markdown
       const next = applyRevision(sec.markdown, range, r.after)
       const outcome = await commitSection({
         sectionName: r.target.sectionName,
         markdown: next,
         expectedMtimeMs: r.baseMtimeMs
       })
+      // 只在真的写进去了才压栈：冲突/失败时磁盘没变，压进去会让「撤销」把一个从未生效的
+      // 状态写回磁盘——那不是撤销，是凭空改稿。
+      if (outcome === 'ok') {
+        useWritingStore.getState().pushUndo({ sectionName: r.target.sectionName, markdown: before })
+      }
       // 成功与冲突都收掉对照卡：成功已落地；冲突时卡上的 range 与 before 已对不上盘上的
       // 内容，留着它用户只会再点一次、再撞一次同样的墙。
       // **写盘失败（error）时刻意保留对照卡** —— 那是「磁盘暂时写不进去」（权限 / 磁盘满），
