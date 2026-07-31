@@ -23,6 +23,7 @@ import {
   type WritingRevisionTarget
 } from '../../lib/writingRevision'
 import { sendWritingMessage } from '../../lib/sendWritingMessage'
+import { replaceBlockAt } from '../../lib/writingEdit'
 import { writingStyleFor } from '../../lib/writingGenreStyle'
 import { renderProposalPdfHtml } from '../../lib/renderProposalPdfHtml'
 import { deriveWritingExportBaseName } from '../../lib/writingExportInput'
@@ -320,6 +321,46 @@ export function WritingDocPanel(): React.JSX.Element | null {
       setUndoing(false)
     }
   }, [commitSection, undoing])
+
+  /**
+   * 手动编辑落地。与 AI 改写「应用」共用 commitSection 与撤销栈——两条通道的差别只在
+   * 「新内容从哪来」。
+   *
+   * 返回 false 时纸面会停在编辑态让用户重试，所以这里**不能吞掉失败**：
+   * 越界（编辑期间这一节被换掉了）与写盘冲突都要如实回 false 并留下提示。
+   */
+  const editBlock = useCallback(
+    async (input: {
+      sectionName: string
+      blockIndex: number
+      nextBlockMarkdown: string
+      baseMtimeMs: number
+    }): Promise<boolean> => {
+      const st = useWritingStore.getState()
+      const sec = st.sections.find((s) => s.name === input.sectionName)
+      if (!sec) {
+        st.setConflictMsg('这一节的文件已不在了，改动未写入。')
+        return false
+      }
+      const next = replaceBlockAt(sec.markdown, input.blockIndex, input.nextBlockMarkdown)
+      if (next === null) {
+        // replaceBlockAt 越界回 null（它刻意不夹紧）：这一节在编辑期间被换掉了，
+        // 硬写会把用户的字落进他没选的那一段。
+        st.setConflictMsg('这一节的内容已经变了，改动未写入，请重新编辑。')
+        return false
+      }
+      const before = sec.markdown
+      const outcome = await commitSection({
+        sectionName: input.sectionName,
+        markdown: next,
+        expectedMtimeMs: input.baseMtimeMs
+      })
+      if (outcome !== 'ok') return false
+      useWritingStore.getState().pushUndo({ sectionName: input.sectionName, markdown: before })
+      return true
+    },
+    [commitSection]
+  )
 
   /**
    * 应用改写：重定位 → 拼回整节 → 乐观锁写盘。冲突时不覆盖，提示用户并刷新到最新。
@@ -674,6 +715,7 @@ export function WritingDocPanel(): React.JSX.Element | null {
           writing={writing}
           busy={streaming || pendingRevision !== null}
           onRevise={(target, instruction) => void submitRevision(target, instruction)}
+          onEditBlock={editBlock}
         />
       </div>
 
