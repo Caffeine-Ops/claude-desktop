@@ -249,12 +249,38 @@ export function WritingDocPanel(): React.JSX.Element | null {
     }): Promise<'ok' | 'conflict' | 'conflict-missing' | 'error'> => {
       const src = useWritingStore.getState().source
       if (!src) return 'error'
-      const res = await window.chatApi.writingWriteSection({
-        source: src,
-        name: input.sectionName,
-        markdown: input.markdown,
-        expectedMtimeMs: input.expectedMtimeMs
-      })
+      /**
+       * 【2026-07-31 复审 I-1：IPC 是 reject，不是回 `{ ok: false }`】
+       * `ipcRenderer.invoke` 在 main 侧 handler 抛异常、或通道压根没注册时，返回的 promise
+       * 是 **reject** 的——不会走下面任何一条 `res.ok === false` 分支。不接住的话，异常会
+       * 一路穿过 `editBlock` / `applyReview` / `undoLast`，最终落在调用点的 `void
+       * commitEdit()` / `void undoLast()` 上变成 unhandled rejection：**用户一条提示都
+       * 看不到**。
+       *
+       * 撤销那条最糟：`undoLast` 里 `popUndo()` 已经把栈顶消费掉了，用户看到的是「撤销按钮
+       * 的计数少了一格、稿子却纹丝没动、界面零反馈」——他会以为撤销生效了。
+       *
+       * 【为什么接在这里而不是在每个 `void` 调用点补 `.catch`】三个调用方
+       * （`editBlock` / `applyReview` / `undoLast`）**已经**都会处理 `'error'` 返回值
+       * （给提示、不压撤销栈、保留编辑框）。在这里归一成 `'error'`，那三条已验证过的失败
+       * 处理路径原样复用；在调用点各补一个 `.catch` 则是三份新代码、三处可能漂的文案。
+       */
+      let res: Awaited<ReturnType<typeof window.chatApi.writingWriteSection>>
+      try {
+        res = await window.chatApi.writingWriteSection({
+          source: src,
+          name: input.sectionName,
+          markdown: input.markdown,
+          expectedMtimeMs: input.expectedMtimeMs
+        })
+      } catch (err) {
+        // 原始错误进 console 供排查；界面上给一句人话——IPC 层的错误文本（通道名、
+        // 序列化失败）对用户没有意义，但「你的改动没存上」这件事必须说清。
+        console.error('[writing-write-section]', err)
+        const m = err instanceof Error ? err.message : String(err)
+        useWritingStore.getState().setConflictMsg(`写入失败（与后台通信出错）：${m}`)
+        return 'error'
+      }
       const after = useWritingStore.getState()
       if (res.ok) {
         after.replaceSectionMarkdown(input.sectionName, input.markdown, res.mtimeMs)
@@ -665,15 +691,40 @@ export function WritingDocPanel(): React.JSX.Element | null {
               顶栏整条在根 .window-drag-strip 里，漏挖的表现是「按钮点了没反应、按住会拖动
               窗口」且控制台零报错。 */}
           {undoDepth > 0 && (
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={undoing}
-              onClick={() => void undoLast()}
-              title={`撤销上一步修改（还可撤销 ${undoDepth} 步）`}
+            /**
+             * 【2026-07-31 复审 I-2：撤销必须跟「进入编辑」共用同一道 `writing` 闸】
+             * 手动编辑那条通道明文规定「AI 正在落字时不许进编辑」（见 WritingPaper 的
+             * beginEdit），但撤销走的是同一条写盘链、原先却完全不判 `writing`——两条
+             * 通道的安全模型在这里是对不齐的，而对不齐的那一边会毁数据：
+             *   1. AI 刚把第 3 节重写完落盘；
+             *   2. 轮询（2s）把这一版连同新 mtime 刷进 store；
+             *   3. 用户点撤销 —— `expectedMtimeMs` 取的是**当前** store 里的
+             *      `sec.mtimeMs`（撤销的语义就是「把它现在变回旧样子」，基准本来就该
+             *      是现在），于是它恒等于盘上的值 → **乐观锁必然放行**；
+             *   4. AI 刚写的那一节被一个更早的旧快照整段覆盖，而且没有 redo。
+             * 乐观锁在这条路上帮不上忙：它拦的是「基准过期」，而撤销的基准按设计就是最新的。
+             * 唯一的拦法就是不让用户在 AI 落字期间按下去。
+             * 禁用而不是隐藏：按钮消失会让用户以为撤销记录没了，title 里说清原因更好。
+             */
+            <span
+              // title 挂在**外层 span** 而不是 button 上：Chromium 对 `disabled` 的
+              // 按钮不派发鼠标事件，title 提示框根本不会浮出来——而这条 title 恰恰只在
+              // 禁用时才有话要说（「为什么点不了」），挂在按钮上等于写了个看不见的解释。
+              title={
+                writing
+                  ? 'AI 正在写这篇稿子，暂时不能撤销（撤销会把 AI 刚写的内容覆盖掉）'
+                  : `撤销上一步修改（还可撤销 ${undoDepth} 步）`
+              }
             >
-              {undoing ? '撤销中…' : '撤销'}
-            </Button>
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={undoing || writing}
+                onClick={() => void undoLast()}
+              >
+                {undoing ? '撤销中…' : '撤销'}
+              </Button>
+            </span>
           )}
           {exportMsg && (
             <span
