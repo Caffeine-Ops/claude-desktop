@@ -1313,7 +1313,19 @@ export function App({
       const list = await listProjects();
       if (cancelled) return;
       setProjects(list);
-      if (!list.find((p) => p.id === route.projectId)) {
+      // keep-alive 隐藏画布树时守卫：chat 面在台前时不写 URL。canvas 是
+      // keep-alive 常驻的，隐藏树的这个 effect 照样会跑（deps 含
+      // projects/daemonLive，跟 URL 变化无关）——用户在聊天面时 daemon
+      // 上线一次就可能替用户在背后 replaceState，曾是「返回应用落错面」的
+      // 写手之一（history.back() 落点被这类隐藏导航悄悄改写）。补拉
+      // getProject/listProjects 是良性的不拦，只拦这一行跳转。被拦的
+      // bounce 不会自动补跑——用户切回画布时 URL 可能还停在已删除项目的
+      // 路径上，但那时 activeProject 已是 null，EntryView 兜底渲染，
+      // 自洽只是 URL 不够新鲜，下次真正的路由变化会覆盖它。
+      if (
+        !list.find((p) => p.id === route.projectId) &&
+        !window.location.pathname.startsWith('/chat')
+      ) {
         navigate({ kind: 'home', view: 'home' }, { replace: true });
       }
     })();

@@ -1061,6 +1061,15 @@ export function ProjectView({
       : null;
     const nextKey = `${activeConversationId ?? ''}:${target ?? ''}`;
     if (nextKey === lastSyncedRouteKeyRef.current) return;
+    // keep-alive 隐藏画布树时守卫：canvas 是 keep-alive 常驻的，chat 面在
+    // 台前时这个 effect 照样会跑（deps 是 tab/会话状态，跟 URL 变化无关）
+    // ——不拦的话会在用户不知情时 replaceState，是「返回应用落错面」的写手
+    // 之一（history.back() 落点被这类隐藏导航悄悄改写）。必须放在下面
+    // ref 写入**之前** return：写了 ref 再拦，这次同步会被永久吞掉，deps
+    // 不再变化就再也补不上；不写 ref，下次 deps 真正变化时还会重试。残余：
+    // 切回画布前 URL 可能停在旧形态（少 conversationId/fileName 段）直到
+    // 下一次 tab/会话切换，只影响 reload/深链保真度，可接受。
+    if (window.location.pathname.startsWith('/chat')) return;
     lastSyncedRouteKeyRef.current = nextKey;
     lastSyncedConversationIdRef.current = activeConversationId;
     // PerishCode + Codex P1 on PR #1508: the prior version of this
