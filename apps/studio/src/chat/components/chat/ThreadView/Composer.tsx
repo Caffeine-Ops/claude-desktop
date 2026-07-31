@@ -56,6 +56,7 @@ import {
 import { useKbStore } from '../../../stores/kb'
 import { ensurePptSkillReady, isPptSkillCommand } from '../../../stores/pptSkill'
 import { PptSkillGate } from '../PptSkillGate'
+import { PptSkillMiniChip } from '../PptSkillMiniChip'
 
 /* ───────────────────── Composer ────────────────────────────── */
 
@@ -519,9 +520,11 @@ export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero'
 
   return (
     <div className="mx-auto w-full max-w-4xl">
-      {/* PPT 组件下载进度层。挂在这里而不是 hero 分支内：它 portal 到 body，
-          且 dock 态（variant='default'）同样可能触发下载，两个 variant 都要有。 */}
+      {/* PPT 组件下载进度层 + 「后台继续」后的迷你进度胶囊。挂在这里而不是
+          hero 分支内：都 portal 到 body，且 dock 态（variant='default'）同样
+          可能触发下载，两个 variant 都要有。 */}
       <PptSkillGate />
+      <PptSkillMiniChip />
       {/* Two-row composer (per docs/ui-prototype-composer.html): a large
           multi-line input on top, then a dedicated toolbar row below. The
           PermissionModePicker moved OUT of a strip above the card and INTO
