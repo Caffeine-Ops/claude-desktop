@@ -228,6 +228,63 @@ export function WritingDocPanel(): React.JSX.Element | null {
   }, [streaming, pendingRevision, review, queueLen, submitRevision])
 
   /**
+   * 把一节的新内容写回磁盘，并按结果更新 store / 提示文案。
+   *
+   * **AI 改写「应用」与手动编辑共用这一条**（2026-07-31 抽出）：两条通道的差别只在
+   * 「新内容从哪来」，写盘、乐观锁冲突处理、store 更新、提示文案完全一样。两处各写一份
+   * 必然在文案与更新顺序上漂——而这里每一条文案都对应一种「你的改动没生效」的具体原因，
+   * 漂了就等于给用户指错下一步。
+   *
+   * `expectedMtimeMs` 一律由**调用方**传入，绝不在函数内部现读最新值：基准必须与调用方
+   * 当初看到的那一版同源同刻，否则乐观锁只覆盖「最后一次轮询到写盘」那 2 秒，
+   * 「期间被 AI 改过」这个最该拦的场景恰好漏掉（完整推演见 stores/writing.ts 的
+   * baseMtimeMs 字段注释）。
+   */
+  const commitSection = useCallback(
+    async (input: {
+      sectionName: string
+      markdown: string
+      expectedMtimeMs: number
+    }): Promise<'ok' | 'conflict' | 'error'> => {
+      const src = useWritingStore.getState().source
+      if (!src) return 'error'
+      const res = await window.chatApi.writingWriteSection({
+        source: src,
+        name: input.sectionName,
+        markdown: input.markdown,
+        expectedMtimeMs: input.expectedMtimeMs
+      })
+      const after = useWritingStore.getState()
+      if (res.ok) {
+        after.replaceSectionMarkdown(input.sectionName, input.markdown, res.mtimeMs)
+        after.setConflictMsg('')
+        return 'ok'
+      }
+      if (res.conflict) {
+        // 乐观锁拦下：不覆盖，把盘上最新的灌回来。
+        // res.current 为 null = 文件没了（被删/改名），不是「被改过」——两种情况必须两条
+        // 文案：说成「已刷新到最新内容，请重新选中修改」会让用户再操作一次、再撞同样的墙。
+        if (res.current) {
+          after.replaceSectionMarkdown(
+            input.sectionName,
+            res.current.markdown,
+            res.current.mtimeMs
+          )
+        }
+        after.setConflictMsg(
+          res.current
+            ? '这一节刚被 AI 改过，你的改动未生效。已刷新到最新内容，请重新选中修改。'
+            : '这一节的文件已不存在（可能被删除或改名），改动未生效。'
+        )
+        return 'conflict'
+      }
+      after.setConflictMsg(`写入失败：${res.error}`)
+      return 'error'
+    },
+    []
+  )
+
+  /**
    * 应用改写：重定位 → 拼回整节 → 乐观锁写盘。冲突时不覆盖，提示用户并刷新到最新。
    *
    * 两条容易写错、写错就静默毁正文的规矩：
@@ -293,48 +350,20 @@ export function WritingDocPanel(): React.JSX.Element | null {
     setApplying(true)
     try {
       const next = applyRevision(sec.markdown, range, r.after)
-      const res = await window.chatApi.writingWriteSection({
-        source: src,
-        name: r.target.sectionName,
+      const outcome = await commitSection({
+        sectionName: r.target.sectionName,
         markdown: next,
         expectedMtimeMs: r.baseMtimeMs
       })
-      const after = useWritingStore.getState()
-      if (res.ok) {
-        after.replaceSectionMarkdown(r.target.sectionName, next, res.mtimeMs)
-        after.setReview(null)
-        after.setConflictMsg('')
-        return
-      }
-      if (res.conflict) {
-        // 乐观锁拦下：AI 在用户裁决期间又改过这一节。**不覆盖**，把盘上最新的灌回来。
-        //
-        // 【为什么必须按 res.current 分两条文案】main 侧 writeWritingSection 在**两种**情况下
-        // 都回 conflict：mtime 对不上（文件还在、能读回最新内容 → current 非空），以及
-        // statSync/readFileSync 失败（文件被删除或改名 → current 为 null）。后者说到底不是
-        // 「被改过」，而是「没了」——此时既没有刷新、也没有可重新选中的内容，若照旧说
-        // 「已刷新到最新内容，请重新选中修改」，用户会按提示再操作一次、再撞一次同样的墙。
-        // 提示的价值全在「下一步该干什么」，说错了比不说更费人。
-        if (res.current) {
-          after.replaceSectionMarkdown(
-            r.target.sectionName,
-            res.current.markdown,
-            res.current.mtimeMs
-          )
-        }
-        after.setConflictMsg(
-          res.current
-            ? '这一节刚被 AI 改过，你的改动未生效。已刷新到最新内容，请重新选中修改。'
-            : '这一节的文件已不存在（可能被删除或改名），改动未生效。'
-        )
-        after.setReview(null)
-        return
-      }
-      after.setConflictMsg(`写入失败：${res.error}`)
+      // 成功与冲突都收掉对照卡：成功已落地；冲突时卡上的 range 与 before 已对不上盘上的
+      // 内容，留着它用户只会再点一次、再撞一次同样的墙。
+      // **写盘失败（error）时刻意保留对照卡** —— 那是「磁盘暂时写不进去」（权限 / 磁盘满），
+      // 内容本身仍然有效，收掉卡等于让用户白等一轮 AI。这是原实现的行为，纯重构必须原样保留。
+      if (outcome !== 'error') useWritingStore.getState().setReview(null)
     } finally {
       setApplying(false)
     }
-  }, [])
+  }, [commitSection])
 
   // 导出反馈条 4s 后自动收起（同 ProposalDocPanel 的 exportMsg 约定）——它只是「刚才那次
   // 导出/复制成功与否」的一次性回执，不是需要用户手动确认的告警（那种用上面的 conflictMsg 条）。
