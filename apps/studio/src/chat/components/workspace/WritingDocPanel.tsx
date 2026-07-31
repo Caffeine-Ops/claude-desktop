@@ -355,6 +355,28 @@ export function WritingDocPanel(): React.JSX.Element | null {
         markdown: next,
         expectedMtimeMs: input.baseMtimeMs
       })
+      if (outcome === 'conflict') {
+        /**
+         * 【2026-07-31 复审 I-4：commitSection 的冲突文案对手动编辑通道是个死胡同】
+         * commitSection 冲突分支已经把 store 里这一节刷新成盘上最新版本（见其函数头
+         * 注释），但纸面编辑框里的 `base`/`baseMtimeMs` 是调用方（WritingPaper）在
+         * *进入编辑那一刻*快照的，不会跟着这次刷新变——纸面按规格「失败不关编辑框」，
+         * 于是用户往后每点一次别处都会拿着同一个旧 `baseMtimeMs` 再提交一次、再撞
+         * 同一堵墙，唯一走得出去的路是按 Esc（等于亲手销毁自己刚敲的字）。
+         * commitSection 那句「已刷新到最新内容，请重新选中修改」是写给 AI 改写通道
+         * 的（那边一冲突就会收起对照卡，「重新选中」说得通）；手动编辑通道需要一条
+         * 点破这个死胡同的文案，明确提醒用户「先把字复制出来，再放弃这次编辑」。
+         * 不改 commitSection 本身的文案——那是两条通道共用的一段，选区改写通道的
+         * 措辞并没有问题，不该被这里的需求牵连着改掉。
+         */
+        useWritingStore
+          .getState()
+          .setConflictMsg(
+            '这一节刚被 AI 改过，你刚才编辑框里的改动没能存上（内容已刷新到最新版本）。' +
+              '请先把编辑框里的文字复制出来，再按 Esc 关掉编辑框重新编辑。'
+          )
+        return false
+      }
       if (outcome !== 'ok') return false
       useWritingStore.getState().pushUndo({ sectionName: input.sectionName, markdown: before })
       return true

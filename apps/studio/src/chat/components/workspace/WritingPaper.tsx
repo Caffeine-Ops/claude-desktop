@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { splitBlocks } from '@desktop-shared/proposalBlocks'
 import { cn } from '@/src/lib/utils'
@@ -78,7 +78,22 @@ export function WritingPaper({
     draft: string
     baseMtimeMs: number
   } | null>(null)
-  const [saving, setSaving] = useState(false)
+  /**
+   * 正在写盘的是哪一块（`"节名:块序号"`，而不是一个裸 boolean）。
+   *
+   * 【2026-07-31 复审 I-2：boolean 会把无关的块也锁住】双击 A 改字、还没等它存完就
+   * 直接双击 B 的真实事件顺序是：B 的 mousedown 让 A 失焦 → onBlur 触发 A 的
+   * commitEdit（**异步**）→ B 的 dblclick 触发 beginEdit(B) → B 的 textarea 挂载
+   * → A 的 await 这才返回、清掉这面全局 boolean。若这面 flag 是裸 boolean，B 的
+   * textarea 在整段等待期间会被 `disabled={saving}` 一起锁住——更糟的是
+   * **`autoFocus` 对已经 disabled 的元素不生效**，B 解禁之后也不会补聚焦，用户看到
+   * 编辑框已经打开却打不进字，得再手动点一下。改成「记录具体是哪一块在存」后，
+   * B 的 key 与 A 的 key 不同，不会被误锁。
+   */
+  const [savingKey, setSavingKey] = useState<string | null>(null)
+  // 防重入用的 ref（配合下面 commitEdit 里的说明）：**不能用 state 当闸**，state
+  // 更新是异步的，重入调用发生在同一个事件循环 tick 里，读到的还是更新前的值。
+  const savingRef = useRef(false)
 
   // 每节切块。sections 变才重算——流式期间 2s 一次，代价可忽略。
   const blocks = useMemo(
@@ -86,7 +101,7 @@ export function WritingPaper({
     [sections]
   )
 
-  /** 双击进入编辑。AI 正在落字时不许进（见下面的 canEdit 判据）。 */
+  /** 双击进入编辑。AI 正在落字时不许进（见本函数开头的判据）。 */
   const beginEdit = useCallback(
     (sectionName: string, blockIndex: number): void => {
       if (!onEditBlock || writing) return
@@ -109,6 +124,26 @@ export function WritingPaper({
   )
 
   /**
+   * 【2026-07-31 复审 M-8】轮询 / 撤销可能把某一节的块数改少（AI 重写、用户点了顶栏
+   * 撤销……），若正编辑的那个 `blockIndex` 因此越界，这一块在 `blocks` 里已经渲染
+   * 不出来了，但 `editing` 还非 null——表现为 textarea 静默消失、草稿静默丢失，
+   * 且选区改写气泡因为下面 `editing === null` 的判据被一直压着不出来，界面像卡死
+   * 一样，直到用户凑巧再双击别的块才恢复。这里做一次结构性兜底：块本身已经不在了，
+   * 就没有「保留草稿」的意义，只能清掉。
+   *
+   * 注意这与「AI 正在落字时不踢出已在编辑的用户」（见 beginEdit 开头的判据）是两回事：
+   * 那条防的是 `writing` 变 true 本身不该清 `editing`；这里防的是块**结构性消失**
+   * （下标越界），只要块还在，`writing` 再怎么变都不会走到这个分支。
+   */
+  useEffect(() => {
+    if (!editing) return
+    const sec = blocks.find((s) => s.name === editing.sectionName)
+    if (!sec || editing.blockIndex >= sec.items.length) {
+      setEditing(null)
+    }
+  }, [blocks, editing])
+
+  /**
    * 提交当前编辑。返回 true = 可以离开这一块（存成功、或内容压根没变）。
    *
    * 内容没变时直接返回 true 不写盘：省掉一次无意义 IPC，也省掉一格撤销额度——用户点开
@@ -116,7 +151,20 @@ export function WritingPaper({
    */
   const commitEdit = useCallback(async (): Promise<boolean> => {
     if (!editing || !onEditBlock) return true
+    /**
+     * 【2026-07-31 复审 I-3：disabled 会让浏览器对聚焦元素派发 blur，从而重入】
+     * 保存期间给 textarea 加 `disabled`，浏览器对「已聚焦元素被禁用」这件事会自己
+     * 派发一次 blur，而 onBlur 又挂着 `void commitEdit()`——这一次调用与正在进行
+     * 的那次共享同一个 `editing` 闭包（这段时间内 `editing` 没变，`commitEdit`
+     * 这个函数引用本身也不会变，没有别的东西能拦住它），于是同一块内容会用同一个
+     * `baseMtimeMs` 再写一次盘。第二次写必然撞乐观锁（第一次已经把 mtime 往前推
+     * 了），用户看到的是「刚存成功」紧跟着一条误导性的「这一节刚被 AI 改过」。
+     * 用 ref 而非 state 判重入：state 更新是异步的，重入发生在同一个 tick 里，
+     * 读到的还是这次调用开始前的旧值，拦不住。
+     */
+    if (savingRef.current) return false
     const mine = editing
+    const mineKey = `${mine.sectionName}:${mine.blockIndex}`
     /**
      * 只在「当前编辑态还是我这一块」时才关掉编辑框。
      *
@@ -136,7 +184,8 @@ export function WritingPaper({
       closeIfStillMine()
       return true
     }
-    setSaving(true)
+    savingRef.current = true
+    setSavingKey(mineKey)
     try {
       const ok = await onEditBlock({
         sectionName: mine.sectionName,
@@ -147,7 +196,11 @@ export function WritingPaper({
       if (ok) closeIfStillMine()
       return ok
     } finally {
-      setSaving(false)
+      savingRef.current = false
+      // 只清「还是我这一份」的 savingKey：理论上（见上面 I-3 注释）重入已经被
+      // savingRef 挡住，不会有第二份 in-flight 覆盖它，这里的现读比较仅作为
+      // 双重保险，不依赖它也不会错。
+      setSavingKey((cur) => (cur === mineKey ? null : cur))
     }
   }, [editing, onEditBlock])
 
@@ -224,6 +277,8 @@ export function WritingPaper({
           sec.items.map((block, i) => {
             const isEditing =
               editing !== null && editing.sectionName === sec.name && editing.blockIndex === i
+            const blockKey = `${sec.name}:${i}`
+            const isSavingThis = isEditing && savingKey === blockKey
             return (
               <div
                 key={`${sec.name}:${i}`}
@@ -242,13 +297,21 @@ export function WritingPaper({
                     <textarea
                       autoFocus
                       value={editing.draft}
-                      disabled={saving}
+                      disabled={isSavingThis}
                       // 函数式更新：onChange 高频触发，吃闭包里的 editing 会用到过期快照。
                       onChange={(e) => {
                         const v = e.target.value
                         setEditing((cur) => (cur ? { ...cur, draft: v } : cur))
                       }}
                       onKeyDown={(e) => {
+                        // 【2026-07-31 复审 I-1：中文输入法组词期间的 Esc 不是「取消编辑」】
+                        // `isComposing`（true = 拼音已经敲了字符、汉字还没上屏那一小段
+                        // 组词窗口）为真时，用户按 Esc 十有八九是在关输入法自己的候选词
+                        // 弹窗，不是要放弃这段编辑。这是中文写作产品里极高频的操作——
+                        // 不判这一条，中文用户敲字敲到一半按 Esc 收起候选词，会被误判成
+                        // 整段丢弃、无确认无撤销。`keyCode === 229` 是部分浏览器 / 输入法组合
+                        // 下 `isComposing` 已经变回 false、但 keyCode 仍报 229 的兼容兜底。
+                        if (e.nativeEvent.isComposing || e.keyCode === 229) return
                         if (e.key === 'Escape') {
                           e.preventDefault()
                           cancelEdit()
@@ -266,7 +329,7 @@ export function WritingPaper({
                       className="w-full resize-none rounded-md border border-accent bg-muted/40 px-2 py-1.5 font-mono text-[13px] leading-relaxed text-foreground outline-none"
                     />
                     <div className="mt-1 text-[11px] text-muted-foreground">
-                      {saving ? '保存中…' : 'Esc 取消 · 点击别处保存'}
+                      {isSavingThis ? '保存中…' : 'Esc 取消 · 点击别处保存'}
                     </div>
                   </div>
                 ) : (
