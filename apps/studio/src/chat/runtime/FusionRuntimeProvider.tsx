@@ -402,15 +402,17 @@ export function FusionRuntimeProvider({
   // gets a fresh `language` hint. A thin logging wrapper sits on
   // top so every lifecycle event lands in the LogsDialog.
   const lang = useI18n((s) => s.lang)
-  const dictationAdapter = useMemo(() => {
-    const inner = createOpenAIWhisperDictationAdapter({
-      language: lang
-    })
-    pushUiLog('dictation:adapter-ready', {
-      engine: 'openai-whisper',
-      language: lang
-    })
-    return wrapDictationWithLogging(inner)
+  const dictationAdapter = useMemo(
+    () => wrapDictationWithLogging(createOpenAIWhisperDictationAdapter({ language: lang })),
+    [lang]
+  )
+  // 【日志必须留在 effect 里，别挪回上面那个 useMemo】useMemo 的回调在**渲染期间**执行，
+  // 而 pushUiLog 是一次 zustand set —— 渲染 A 组件的过程中改了 B 组件（订阅日志的
+  // LogsDialog）的状态，React 会报 "Cannot update a component while rendering a different
+  // component"。副作用（写 store / 发请求 / 打日志）一律进 effect，useMemo 只许做纯计算。
+  // 依赖与上面那个 useMemo 同为 [lang]，故仍是「每次重建适配器就记一条」的原语义。
+  useEffect(() => {
+    pushUiLog('dictation:adapter-ready', { engine: 'openai-whisper', language: lang })
   }, [lang])
 
   // ── ExternalStoreRuntime wiring ─────────────────────────────────────
