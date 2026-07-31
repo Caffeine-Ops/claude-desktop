@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { Button } from '@/src/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/src/components/ui/dropdown-menu'
 import { cn } from '@/src/lib/utils'
 import { splitBlocks } from '@desktop-shared/proposalBlocks'
 import { joinWritingSections, shouldPageBreak } from '@desktop-shared/writing'
@@ -22,6 +28,16 @@ import { sendWritingMessage } from '../../lib/sendWritingMessage'
 import { writingStyleFor } from '../../lib/writingGenreStyle'
 import { renderProposalPdfHtml } from '../../lib/renderProposalPdfHtml'
 import { deriveWritingExportBaseName } from '../../lib/writingExportInput'
+// 顶栏图标与方案面板同源（proposalIcons 是历史位置，不代表只归方案用）——两处右栏
+// 的视图切换与导出入口要长成一套，图标就不能各挑各的。
+import {
+  ChevronDownIcon,
+  EyeIcon,
+  FileCodeIcon,
+  FileIcon,
+  FileTextIcon,
+  PencilIcon
+} from './proposalIcons'
 import { WritingPaper } from './WritingPaper'
 import { WritingPreview } from './WritingPreview'
 import { WritingRevisionReviewCard } from './WritingRevisionReview'
@@ -92,6 +108,21 @@ export function WritingDocPanel(): React.JSX.Element | null {
   const conflictMsg = useWritingStore((s) => s.conflictMsg)
   // 写盘在飞：禁用对照卡按钮防重入（同一条改写写两遍，第二遍必撞乐观锁刷出假冲突）。
   const [applying, setApplying] = useState(false)
+
+  // 顶栏活性徽章。三态与 ProposalDocPanel 的 badge 同构（live 品牌绿呼吸 / wait 琥珀 /
+  // idle 中性灰），但触发条件按写作端自己的状态机映射——方案端的 wait 是「等你确认目录」，
+  // 写作端对应的「卡着等你操作」有两种：待裁决的改写，和排队中的改写。
+  //
+  // 优先级 live > wait > idle 且 live 顺带带上排队数：AI 在写的同时可能还压着几条改写，
+  // 两个信号都得说出来。**排队数原先是顶栏右侧一条游离的小字**，收进徽章后右侧只剩导出
+  // 一个控件，与方案端右侧的形状对齐（否则「N 条改写排队中」会把新的导出下拉挤出栏外）。
+  const badge: { tone: 'live' | 'wait' | 'idle'; text: string } | null = writing
+    ? { tone: 'live', text: queueLen > 0 ? `撰写中 · ${queueLen} 条排队` : '撰写中' }
+    : review
+      ? { tone: 'wait', text: '待你裁决' }
+      : queueLen > 0
+        ? { tone: 'wait', text: `${queueLen} 条改写排队中` }
+        : null
 
   /**
    * 派发或排队。AI 忙时排队——写作是长流水线，AI 大部分时间在写下一节，照搬 proposal
@@ -454,41 +485,82 @@ export function WritingDocPanel(): React.JSX.Element | null {
           48px，与左列 46px 差 2px）。
           【本栏整条落在根 .window-drag-strip（fixed 全宽 46px、app-region:drag）里，
           栏内每个交互控件都必须 no-drag 挖洞，否则点击被原生窗口拖拽整个吞掉】——
-          这不是样式洁癖：漏挖洞的表现是「按钮点了没反应、按住会拖动窗口」，五个按钮
-          （文稿 / 打印预览 / 导出 Word / 导出 PDF / 复制公众号 HTML）会一起哑掉，且
-          控制台零报错。CLAUDE.md 里这是 errors/ 记了 7 条的同族事故。挖洞按「组」挖
-          （tab 一组、右侧一组），不逐个按钮挖：新增按钮时自动继承，不会漏。
+          这不是样式洁癖：漏挖洞的表现是「按钮点了没反应、按住会拖动窗口」，栏内所有控件
+          （文稿 / 打印预览 / 导出下拉）会一起哑掉，且控制台零报错。CLAUDE.md 里这是
+          errors/ 记了 7 条的同族事故。挖洞按「组」挖（segmented 一组、右侧一组），不逐个
+          挖：新增控件时自动继承，不会漏。
           注意顶栏本身仍**不标 drag** —— 全应用唯一的拖拽面是根 .window-drag-strip，
-          组件顶栏再标会复发「整窗拖不动 + 双击不缩放」。 */}
-      <div className="flex h-[46px] shrink-0 items-center gap-1 border-b border-border px-3">
-        <div className="flex items-center gap-1 [-webkit-app-region:no-drag]">
-          <Button
-            variant={tab === 'doc' ? 'secondary' : 'ghost'}
-            size="sm"
+          组件顶栏再标会复发「整窗拖不动 + 双击不缩放」。
+
+          布局与 ProposalDocPanel 顶栏对齐成同一套（2026-07-31）：左=标题+活性徽章、
+          中=segmented 视图切换、右=单一导出下拉。三段用 justify-between 撑开，不再用
+          ml-auto——后者在中段出现后会把 segmented 挤成左对齐。 */}
+      <div className="flex h-[46px] shrink-0 select-none items-center justify-between gap-2 border-b border-border px-3 text-xs text-muted-foreground">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="whitespace-nowrap text-[13px] font-semibold text-foreground">写作草稿</span>
+          {/* 活性徽章。品牌绿（--brand）是身份/活性色，刻意不用会随用户主题变的 --accent
+              ——「在干活」的信号不该跟着主题色跑（与方案端同一条纪律）。 */}
+          {badge && (
+            <span
+              className={cn(
+                'inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px]',
+                badge.tone === 'live' && 'bg-brand/10 text-brand',
+                badge.tone === 'wait' && 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
+                badge.tone === 'idle' && 'bg-muted text-muted-foreground'
+              )}
+            >
+              {badge.tone === 'live' ? (
+                <span className="relative flex size-1.5 shrink-0">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-60" />
+                  <span className="relative inline-flex size-1.5 rounded-full bg-brand" />
+                </span>
+              ) : (
+                <span
+                  className={cn(
+                    'size-1.5 shrink-0 rounded-full',
+                    badge.tone === 'wait' ? 'bg-amber-500' : 'bg-muted-foreground/50'
+                  )}
+                />
+              )}
+              {badge.text}
+            </span>
+          )}
+        </span>
+
+        {/* 文稿 ｜ 打印预览 segmented：muted 槽底 + 选中项白卡浮起（bg-card + shadow）。
+            与方案端「编辑 ｜ 预览」是同一个东西——可编辑视图 vs 只读预览，故连图标都用同一对
+            （PencilIcon / EyeIcon），不另挑。 */}
+        <div className="inline-flex shrink-0 rounded-lg bg-muted p-0.5 [-webkit-app-region:no-drag]">
+          <button
+            className={cn(
+              'inline-flex items-center gap-1 whitespace-nowrap rounded-md px-3 py-1 transition-colors',
+              tab === 'doc'
+                ? 'bg-card font-medium text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            )}
             onClick={() => setTab('doc')}
           >
-            文稿
-          </Button>
-          <Button
-            variant={tab === 'preview' ? 'secondary' : 'ghost'}
-            size="sm"
+            <PencilIcon /> 文稿
+          </button>
+          <button
+            className={cn(
+              'inline-flex items-center gap-1 whitespace-nowrap rounded-md px-3 py-1 transition-colors',
+              tab === 'preview'
+                ? 'bg-card font-medium text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            )}
             onClick={() => setTab('preview')}
           >
-            打印预览
-          </Button>
+            <EyeIcon /> 打印预览
+          </button>
         </div>
-        {/* 右侧一组：排队计数 + 导出反馈 + 导出按钮。包一层 ml-auto 而不是挂在排队计数上——
-            排队计数是条件渲染，若把 ml-auto 放它身上，队列一空右侧这组就会贴着 tab 按钮，
-            导出按钮组的位置会跟着队列有无跳动。no-drag 同样一次盖住整组（见上）。 */}
-        <div className="ml-auto flex items-center gap-2 [-webkit-app-region:no-drag]">
-          {/* 排队计数放顶栏：气泡发完就收起，没有它用户看不出「我排的那几条还在不在」。 */}
-          {queueLen > 0 && (
-            <span className="text-[11px] text-muted-foreground">{queueLen} 条改写排队中</span>
-          )}
+
+        {/* no-drag 一次盖住右侧整组（导出反馈 + 导出下拉 trigger）。 */}
+        <div className="flex min-w-0 items-center gap-2 [-webkit-app-region:no-drag]">
           {exportMsg && (
             <span
               className={cn(
-                'max-w-[220px] truncate text-[11px]',
+                'max-w-[140px] truncate text-[11px]',
                 exportMsg.tone === 'ok' && 'text-emerald-600 dark:text-emerald-400',
                 exportMsg.tone === 'err' && 'text-rose-600 dark:text-rose-400',
                 exportMsg.tone === 'muted' && 'text-muted-foreground'
@@ -498,22 +570,56 @@ export function WritingDocPanel(): React.JSX.Element | null {
               {exportMsg.text}
             </span>
           )}
-          <Button variant="ghost" size="xs" disabled={exportingDocx} onClick={() => void exportDocx()}>
-            导出 Word
-          </Button>
-          <Button variant="ghost" size="xs" disabled={exportingPdf} onClick={() => void exportPdf()}>
-            导出 PDF
-          </Button>
-          {genre === 'wechat' && (
-            <Button
-              variant="ghost"
-              size="xs"
-              disabled={copyingWechat}
-              onClick={() => void copyWechat()}
-            >
-              复制公众号 HTML
-            </Button>
-          )}
+          {/* 导出下拉：取代原先平铺的「导出 Word / 导出 PDF / 复制公众号 HTML」三枚小按钮
+              ——方案端早就收敛过这一步（其代码注释原话是取代「两处散落」的混乱布局），写作端
+              此前还停在那个旧形态。每项带一句用途说明，让「这个按钮干嘛用」一目了然。
+              写作端刻意**没有** Markdown 项：drafts/ 下本来就是 md 原文，用户直接拿即可，
+              造一个导出等于把同一份东西复制一遍。 */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md bg-accent px-2.5 py-1 font-medium text-white shadow-sm hover:opacity-90 disabled:opacity-50"
+                disabled={exportingDocx || exportingPdf || copyingWechat}
+                title="导出文稿（Word / PDF）"
+              >
+                {exportingDocx || exportingPdf || copyingWechat ? (
+                  '导出中…'
+                ) : (
+                  <>
+                    导出
+                    <ChevronDownIcon />
+                  </>
+                )}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-60">
+              <DropdownMenuItem className="items-start" onSelect={() => void exportDocx()}>
+                <FileTextIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0">
+                  <span className="block font-medium">Word（.docx）</span>
+                  <span className="block text-[11px] text-muted-foreground">投稿、交付，可继续编辑</span>
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem className="items-start" onSelect={() => void exportPdf()}>
+                <FileIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0">
+                  <span className="block font-medium">PDF</span>
+                  <span className="block text-[11px] text-muted-foreground">定稿发送、排版固定</span>
+                </span>
+              </DropdownMenuItem>
+              {genre === 'wechat' && (
+                <DropdownMenuItem className="items-start" onSelect={() => void copyWechat()}>
+                  <FileCodeIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0">
+                    <span className="block font-medium">复制公众号 HTML</span>
+                    <span className="block text-[11px] text-muted-foreground">
+                      粘进公众号编辑器，保留排版
+                    </span>
+                  </span>
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
