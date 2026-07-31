@@ -111,28 +111,6 @@ export function WritingPaper({
     [sections]
   )
 
-  /** 双击进入编辑。AI 正在落字时不许进（见本函数开头的判据）。 */
-  const beginEdit = useCallback(
-    (sectionName: string, blockIndex: number): void => {
-      if (!onEditBlock || writing) return
-      const sec = sections.find((s) => s.name === sectionName)
-      if (!sec) return
-      const source = blockSourceAt(sec.markdown, blockIndex)
-      if (source === null) return
-      // 清掉浏览器选区：双击本身会选中一个词，不清的话选区改写气泡会同时冒出来，
-      // 两条修改通道各有一套定位，同时开着必然打架。
-      window.getSelection()?.removeAllRanges()
-      setEditing({
-        sectionName,
-        blockIndex,
-        base: source,
-        draft: source,
-        baseMtimeMs: sec.mtimeMs
-      })
-    },
-    [onEditBlock, writing, sections]
-  )
-
   /**
    * 【2026-07-31 复审 M-8】轮询 / 撤销可能把某一节的块数改少（AI 重写、用户点了顶栏
    * 撤销……），若正编辑的那个 `blockIndex` 因此越界，这一块在 `blocks` 里已经渲染
@@ -344,8 +322,101 @@ export function WritingPaper({
     }
   }, [editing, onEditBlock])
 
+  /**
+   * 双击进入编辑。AI 正在落字时不许进（`writing` 判据见组件头注释）。
+   *
+   * 【2026-07-31 复审 I-3：进新块之前必须先把旧块的草稿处理掉，否则它会静默消失】
+   * 「双击另一块 = 先存当前块、再进新块」是设计里已确认的行为，此前它**完全依赖 textarea
+   * 的 onBlur** 来触发那次保存——而恰恰在最该保住草稿的那个场景里，onBlur 不会来：
+   *   1. 用户在 A 块改字，点别处触发保存；
+   *   2. 保存失败（冲突 / 写盘错），按规格**保留编辑框**让用户重试；
+   *   3. 但保存期间 textarea 挂着 `disabled`，浏览器已经把焦点从它身上拿走了，
+   *      `autoFocus` 只在挂载那一次生效、不会补回来 —— **此刻页面上没有任何东西是聚焦的**；
+   *   4. 用户去双击 B 块：没有焦点就没有 blur，`commitEdit` 一次都不会被调用，
+   *      `setEditing(B)` 直接覆盖掉 A 的编辑态 —— A 里那段刚敲的、还没存上的字**无声蒸发**。
+   * 所以这道守卫不能只写在 onBlur 上，必须写在「进入」这一侧：真要换块了，就在这里
+   * 亲自把上一块提交掉，失败就不跳走（用户留在 A、看得见错误、字还在）。
+   *
+   * 【为什么 `savingRef.current === curKey` 时要跳过这次提交，而不是也 await 一遍】
+   * 正常的「双击 B 换块」时序里 onBlur 是会来的，而且**先于** dblclick：
+   * B 的 mousedown → A 失焦 → `void commitEdit()`（异步在飞）→ B 的 dblclick → 这里。
+   * 此时 A 的提交已经有人在做了，再调一次 `commitEdit` 会被它自己的同 key 重入闸挡下、
+   * 返回 `false`——若照着 `if (!ok) return` 处理，B 将**永远打不开**（正常路径被自己
+   * 的守卫锁死）。所以只在「没有人正在提交这一块」时才由这里代劳，否则放行给在飞的那次
+   * 收尾（那条路径本来就跑通了，有 `closeIfStillMine` 与 A→B 基准刷新兜着）。
+   */
+  const beginEdit = useCallback(
+    async (sectionName: string, blockIndex: number): Promise<void> => {
+      if (!onEditBlock || writing) return
+      const cur = editing
+      const switching =
+        cur !== null && !(cur.sectionName === sectionName && cur.blockIndex === blockIndex)
+      let committed = false
+      if (switching) {
+        const curKey = `${cur.sectionName}:${cur.blockIndex}`
+        if (savingRef.current !== curKey) {
+          const ok = await commitEdit()
+          // 存盘失败：停在原块。失败原因由 onEditBlock 的每条分支写进 conflictMsg
+          // （见 WritingDocPanel.editBlock），这里只负责「不跳走」，不再叠一条提示。
+          if (!ok) return
+          committed = true
+        }
+      }
+      /**
+       * `committed` 时必须现读 store，不能吃渲染期的 `sections` 闭包：上面那次 await
+       * 里 `replaceSectionMarkdown` 已经把这一节的正文与 mtime 换成了新的，闭包里那份
+       * 是**提交之前**的快照。用旧 mtime 当新块的乐观锁基准，用户下一次保存必然撞一个
+       * 纯属自造的假冲突（与 commitEdit 里 A→B 基准刷新要修的是同一颗地雷）。
+       * 没提交时保持读闭包 `sections`——那是当前这一帧渲染出来的内容，与用户手指点到的
+       * 那一块严格同源，不引入新的时序面。
+       */
+      const list = committed ? useWritingStore.getState().sections : sections
+      const sec = list.find((s) => s.name === sectionName)
+      if (!sec) return
+      const source = blockSourceAt(sec.markdown, blockIndex)
+      if (source === null) return
+      // 清掉浏览器选区：双击本身会选中一个词，不清的话选区改写气泡会同时冒出来，
+      // 两条修改通道各有一套定位，同时开着必然打架。
+      window.getSelection()?.removeAllRanges()
+      setEditing({
+        sectionName,
+        blockIndex,
+        base: source,
+        draft: source,
+        baseMtimeMs: sec.mtimeMs
+      })
+    },
+    [onEditBlock, writing, sections, editing, commitEdit]
+  )
+
   /** Esc 取消：丢弃修改，不写盘。 */
   const cancelEdit = useCallback((): void => setEditing(null), [])
+
+  /**
+   * 让编辑框的高度贴着内容长。
+   *
+   * 【2026-07-31 复审 I-5：`rows` 数换行符，对中文正文恒等于没做】原写法是
+   * `rows={Math.max(2, draft.split('\n').length + 1)}`——它数的是**换行符个数**，而中文
+   * 正文的一个自然段就是一行没有任何换行符的长文本，于是恒定拿到 `rows=2`：框只有两行高，
+   * 里面套一根滚动条。设计文档明写「textarea 高度随内容自适应，不出现滚动条套滚动条」，
+   * 这条规格此前对**最主要的使用形态**（改一个中文段落里的错别字）完全没达成。
+   *
+   * 【为什么用 scrollHeight 而不是 CSS `field-sizing: content`】后者是最省事的写法，但
+   * 它的可用性完全取决于 Electron 内置的 Chromium 版本——版本不够就静默失效、零报错，
+   * 表现回到「两行高 + 滚动条」，而这类静默降级正是本仓反复踩过的坑。`scrollHeight`
+   * 是老得不能再老的 DOM 属性，哪个版本都在。
+   *
+   * 【为什么要补 `offsetHeight - clientHeight`】Tailwind 全局 `box-sizing: border-box`，
+   * 行内 `height` 含边框，而 `scrollHeight` 不含——直接赋值会短掉上下两条 1px 边框的高度，
+   * 结果就是那根本来要消掉的滚动条又冒出来一点点。先把 height 置 `auto` 再量，是为了让
+   * 缩短内容（删掉几行）时框也能跟着收回去，否则 scrollHeight 永远不小于当前高度、只涨不落。
+   */
+  const autoSize = useCallback((el: HTMLTextAreaElement | null): void => {
+    if (!el) return
+    el.style.height = 'auto'
+    const borders = el.offsetHeight - el.clientHeight
+    el.style.height = `${el.scrollHeight + borders}px`
+  }, [])
 
   if (status === 'missing') {
     return (
@@ -405,7 +476,16 @@ export function WritingPaper({
         <div className="sticky top-0 z-10 border-b border-border bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-700 backdrop-blur-sm dark:text-amber-400">
           刷新文稿失败，下面显示的可能不是最新内容{errMsg ? `：${errMsg}` : ''}
         </div>
-      ) : writing && onEditBlock ? (
+      ) : /**
+       * 【2026-07-31 复审 I-6：有编辑态时这条必须让位，否则两条提示互相打脸】
+       * 这条原先只判 `writing && onEditBlock`，于是 AI 落字期间用户手里正开着编辑框时，
+       * 顶栏说「暂时不能编辑」、编辑框上方那条黄条同时说「AI 正在改这篇稿子，保存时可能
+       * 冲突」——用户的手正放在一个能打字的输入框里，却被告知不能编辑。
+       * 真实规则是「AI 落字期间**不许新进入**编辑，但已经在编辑的块不踢出」，所以这条
+       * 只对「还没进编辑」的人才说得通。有编辑态时直接不显示它：那种情况下真正相关的
+       * 风险提示（保存可能冲突）就贴在编辑框正上方，离用户视线更近，也不必在顶栏复述一遍。
+       */
+      writing && onEditBlock && editing === null ? (
         <div className="sticky top-0 z-10 border-b border-border bg-muted/60 px-3 py-1.5 text-[11px] text-muted-foreground backdrop-blur-sm">
           AI 正在写这篇稿子，暂时不能编辑
         </div>
@@ -419,13 +499,35 @@ export function WritingPaper({
               editing !== null && editing.sectionName === sec.name && editing.blockIndex === i
             const blockKey = `${sec.name}:${i}`
             const isSavingThis = isEditing && savingKey === blockKey
+            // 【2026-07-31 复审 M-10：这块能不能双击进编辑，决定它长什么样】
+            // 只有真的可编辑时才给「可编辑」的外观（见下面 className/title 的注释）——
+            // AI 落字期间 beginEdit 会直接 return，此时还摆出文本光标 + hover 底色，
+            // 就是在演一个点了没反应的按钮。
+            const editable = !!onEditBlock && !writing && !isEditing
             return (
               <div
                 key={`${sec.name}:${i}`}
                 data-section-name={sec.name}
                 data-block-index={i}
-                className="writing-block"
-                onDoubleClick={isEditing ? undefined : () => beginEdit(sec.name, i)}
+                /**
+                 * 【2026-07-31 复审 M-10：双击原先是一个完全不可见的交互】
+                 * `writing-block` 此前全仓没有任何 CSS：没有光标变化、没有 hover 反馈、
+                 * 没有一句提示——P0-2 这整个功能的价值全押在「用户知道双击能改」上，而
+                 * 界面上找不到任何线索，等于上线即隐身。补三样最省的可发现性信号：
+                 *  - `cursor-text`：鼠标移上去变成文本光标，这是「这里的字能动」的通用暗示；
+                 *  - hover 淡底：告诉用户「段落」是一个整体、是可点的最小单元（也预告了
+                 *    双击改的是整块，不是你选中的那半句）；
+                 *  - `title`：悬停一秒给出明确说明，替代还没做的键盘入口/新手引导。
+                 * 三样都是 Tailwind utility + 原生属性，不新增全局 CSS 规则——写作面板在
+                 * `.chat-app` 子树下，canvas 那套裸元素 reset 天然豁免（CLAUDE.md 样式铁律）。
+                 * `writing-block` 这个类名保留：它仍是选区改写定位用的稳定钩子。
+                 */
+                className={cn(
+                  'writing-block',
+                  editable && 'cursor-text rounded transition-colors hover:bg-muted/50'
+                )}
+                title={editable ? '双击这一段可直接编辑它的 Markdown 源码' : undefined}
+                onDoubleClick={isEditing ? undefined : () => void beginEdit(sec.name, i)}
               >
                 {isEditing ? (
                   <div className="my-1">
@@ -438,9 +540,13 @@ export function WritingPaper({
                       autoFocus
                       value={editing.draft}
                       disabled={isSavingThis}
+                      // ref 回调只在挂载时跑一次，负责「刚进编辑就把高度撑到内容那么高」；
+                      // 之后的增删由下面 onChange 里的同一个 autoSize 维持。
+                      ref={autoSize}
                       // 函数式更新：onChange 高频触发，吃闭包里的 editing 会用到过期快照。
                       onChange={(e) => {
                         const v = e.target.value
+                        autoSize(e.currentTarget)
                         setEditing((cur) => (cur ? { ...cur, draft: v } : cur))
                       }}
                       onKeyDown={(e) => {
@@ -464,9 +570,13 @@ export function WritingPaper({
                         }
                       }}
                       onBlur={() => void commitEdit()}
-                      // 高度随内容长：不这么做就是滚动条套滚动条（纸面本身已经是滚动容器）。
-                      rows={Math.max(2, editing.draft.split('\n').length + 1)}
-                      className="w-full resize-none rounded-md border border-accent bg-muted/40 px-2 py-1.5 font-mono text-[13px] leading-relaxed text-foreground outline-none"
+                      // rows 只是「还没跑 autoSize 时」的初值兜底，真正的高度由 autoSize
+                      // 按 scrollHeight 设成行内 style（见 autoSize 上的注释）。
+                      rows={1}
+                      // overflow-hidden：高度已经贴着内容，任何情况下都不该冒出滚动条；
+                      // 万一 autoSize 因故没跑（例如未来有人改成非受控），宁可裁掉也不要
+                      // 在纸面这个滚动容器里再套一层滚动条。
+                      className="w-full resize-none overflow-hidden rounded-md border border-accent bg-muted/40 px-2 py-1.5 font-mono text-[13px] leading-relaxed text-foreground outline-none"
                     />
                     <div className="mt-1 text-[11px] text-muted-foreground">
                       {isSavingThis ? '保存中…' : 'Esc 取消 · 点击别处保存'}
