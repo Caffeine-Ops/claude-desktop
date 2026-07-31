@@ -155,20 +155,19 @@ export function WritingPaper({
        * 字、还没来得及存盘，这一段却要被强制清场——不吭声就是「用户的字凭空消失」，
        * 比任何一条提示都糟。
        *
-       * 【为什么要判「conflictMsg 是不是已经有内容」】块结构性消失最常见的一条路径
-       * 就是手动编辑自己撞了乐观锁冲突（见 WritingDocPanel.editBlock 的 ② 修复）：
-       * 那条分支在返回 false 之前，已经现读过新内容判断了这一块还在不在，给出过
-       * 一条更准确的提示（还在 = 提示去复制内容再 Esc；不在了 = 提示无法保留）。
-       * 若这里不加判断、无脑再 setConflictMsg 一次，会把那条更贴切的措辞覆盖成
-       * 下面这条不知道「是不是冲突导致」的通用兜底——两条消息打架，条子上最终
-       * 显示的反而是信息量更少的那条。只有当块消失**不是**经过 editBlock 这条路径
-       * （比如轮询刷新来的 AI 重写、或用户点了顶栏撤销）、没人设过 conflictMsg 时，
-       * 才轮到这条通用兜底出场。
+       * 【这条通用兜底为什么不会跟 commitEdit 里手动编辑自己触发的结构性消失打架
+       * ——2026-07-31 复审 Minor 修正】最初的写法是「只在 conflictMsg 为空时才提示」，
+       * 想避免盖掉 editBlock 冲突分支（② 修复）已经给出的更准确措辞；但提示条设计
+       * 成**不自动消失**（要用户点「知道了」），一条更早、无关的陈旧提示（比如
+       * 「排队已满」）同样会让 conflictMsg 非空，把这里本该出现的提示整条吞掉——
+       * 反而复现了④要修的失败模式。现在换了根本上不同的做法：`commitEdit` 自己
+       * 那次提交若失败、且失败恰好也让这一块结构性消失，会在**那一刻**直接把
+       * `editing` 清空（见 commitEdit 尾部注释），不会走到这个 effect 里来
+       * ——所以这里只要真的执行到「清空 + 提示」，就必然是**跟任何一次提交都无关**
+       * 的独立事件（轮询刷新来的 AI 重写、用户点了顶栏撤销……），不需要再判断
+       * 「是不是刚有人已经解释过了」，因为这种情况下从来没有人解释过。
        */
-      if (
-        !isBlockUnchanged(editing.base, editing.draft) &&
-        !useWritingStore.getState().conflictMsg
-      ) {
+      if (!isBlockUnchanged(editing.base, editing.draft)) {
         useWritingStore.getState().setConflictMsg('这一段已被改写或删除，你未保存的编辑无法保留')
       }
       setEditing(null)
@@ -247,18 +246,71 @@ export function WritingPaper({
          *      我们自己内部的时序坑。
          * 修法：A 写盘成功后，若此刻编辑态仍然存在、且落在**同一节**（不管是不是
          * 同一块——若是同一块，上面的 closeIfStillMine 早已把它关掉，走到这里的
-         * 必然是像 B 这样的另一块），就现读一次 store 里这一节最新的 mtime，把
+         * 必然是像 B 这样的另一块），就现读一次 store 里这一节最新的内容，把
          * 编辑态的 `baseMtimeMs` 顺势补成这个新值。这不是放宽乐观锁——补的是「这
          * 一份编辑真正应该用的基准」，B 后续提交时锁判的还是它自己有没有跟当下的
          * 盘面对齐，只是不再被 A 抢先写盘这件事株连出一个假冲突。
+         *
+         * 这里读到的 `freshSec.mtimeMs` 恒等于本次写盘刚返回的值：从 commitSection 里
+         * `replaceSectionMarkdown(res.mtimeMs)` 到这里现读 store，中间只隔着
+         * promise 续体（微任务），全落在同一个 macrotask 的同一次微任务排空里；
+         * 轮询的 `setSections` 是另一个 IPC 消息 macrotask 的续体，插不进来，
+         * 不会出现读到的是轮询而非本次写盘那个值的情况。
+         *
+         * 【2026-07-31 复审 Critical：光刷 mtime 不够，必须先核对块序号还指不指向
+         * 同一份内容】块序号会漂：A 的这次编辑如果改变了块数——清空编辑框（=删除
+         * 这一段，是明文的产品约定）会让 A 从 1 块切成 0 块，加一个空行会让 A 拆成
+         * 2 块——A 之后所有块的序号都会整体位移。若这里只比 mtime、不管序号对不对
+         * 就把 B 的 `baseMtimeMs` 刷成新值，B 提交时乐观锁会在 `blockIndex` 已经
+         * 漂到别的块头上时被「合法通过」：`replaceBlockAt` 不越界也不报错，B 的字
+         * 会静默覆盖掉它没有选中的那一块，原内容无声消失——这比撞一次假冲突严重
+         * 得多。`blockSourceAt(新正文, cur.blockIndex) === cur.base` 核对的正是
+         * 「B 当初快照的那份源码，现在是不是还待在同一个下标上」；对不上就**保留**
+         * 过期的 `baseMtimeMs`，宁可让乐观锁照旧把 B 的提交拒掉——那是一次安全的
+         * 失败（用户会看到"这一节刚被改过"，需要重新双击进这一块编辑一次），换来
+         * 的是绝不会把字写错地方。手动编辑通道本来就没有 `applyReview` 那套逐字节
+         * 自检（`writingEdit.ts` 头注释的理由是「编辑窗口内块序号稳定 + mtime 锁
+         * 兜底」），这条核对就是补上这唯一的兜底，不能省。
+         *
+         * **不在这里顺手做「索引重定位」**（拿 `cur.base` 去新正文里搜它现在在第几
+         * 块）——那是另一个改动、有它自己的风险（比如同一段内容出现两次导致的多义
+         * 匹配）。这次只保证「不写错块」，重定位留给以后单独评估。
          */
-        const freshMtime = useWritingStore
-          .getState()
-          .sections.find((s) => s.name === mine.sectionName)?.mtimeMs
-        if (freshMtime !== undefined) {
+        const freshSec = useWritingStore.getState().sections.find((s) => s.name === mine.sectionName)
+        if (freshSec) {
+          setEditing((cur) => {
+            if (!cur || cur.sectionName !== mine.sectionName) return cur
+            if (blockSourceAt(freshSec.markdown, cur.blockIndex) !== cur.base) return cur
+            return cur.baseMtimeMs === freshSec.mtimeMs
+              ? cur
+              : { ...cur, baseMtimeMs: freshSec.mtimeMs }
+          })
+        }
+      } else {
+        /**
+         * 【2026-07-31 复审④/Minor：失败若也让这一块结构性消失，在这里直接关掉，
+         * 不留给 M-8 兜底 effect 去猜】`onEditBlock` 的每条失败分支（见
+         * WritingDocPanel.editBlock 头注释「不能吞掉失败」）都已经调用过
+         * `setConflictMsg` 给出具体原因；若这次失败恰好也让当前块结构性消失
+         * （比如②修复里"内容刷新但块没了"那种冲突），继续留着 `editing` 不动就是
+         * 把「什么时候关、关的时候提示什么」这个决定甩给下一次渲染时的 M-8 effect
+         * ——而 M-8 没法区分"这次消失是不是刚才那次失败造成的"，用什么信号去判断
+         * 都容易在时间上跟别的事件串起来出错（最初试过「conflictMsg 是否非空」，
+         * 但提示条不自动消失，会被一条无关的陈旧提示误伤，把这里的提示吞掉）。
+         * 干脆不留这道判断题：失败之后立刻现读一次新内容，若这一块自己已经不在了，
+         * 就地把 `editing` 清空（复用 `closeIfStillMine` 同款「还是不是我这一份」
+         * 判据，只是不再受 `ok` 条件限制）——`editBlock` 已经设好的提示原样保留，
+         * 不用再叠一层。这样 M-8 effect 在它自己的下一次运行里看到的已经是
+         * `editing === null`，根本不会为这次事件二次决策；它就只剩下真正独立
+         * 的场景（轮询刷新来的 AI 重写、用户点了顶栏撤销……）要处理，不需要
+         * 任何「这是不是我自己的锅」的信号。
+         */
+        const freshSec = useWritingStore.getState().sections.find((s) => s.name === mine.sectionName)
+        const stillValid = !!freshSec && blockSourceAt(freshSec.markdown, mine.blockIndex) !== null
+        if (!stillValid) {
           setEditing((cur) =>
-            cur && cur.sectionName === mine.sectionName && cur.baseMtimeMs !== freshMtime
-              ? { ...cur, baseMtimeMs: freshMtime }
+            cur && cur.sectionName === mine.sectionName && cur.blockIndex === mine.blockIndex
+              ? null
               : cur
           )
         }
