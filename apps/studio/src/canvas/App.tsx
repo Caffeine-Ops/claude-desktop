@@ -52,7 +52,7 @@ import {
   uploadProjectFiles,
 } from './providers/registry';
 import { RUNS_CHANGED_EVENT, listProjectRuns } from './providers/daemon';
-import { navigate, useRoute } from './router';
+import { leaveSettingsOverlay, navigate, useRoute } from './router';
 import {
   fetchDaemonConfig,
   DEFAULT_PET,
@@ -300,8 +300,17 @@ export function App({
   // 是异步导航——history.back() 到 popstate 有实测 ~350ms 的空窗，期间
   // 设置 UI 刻意保持挂载（否则闪画布面，2026-07-08），用户若在空窗里再点
   // 一次会多退一层历史、落到 /chat 更早的 entry。首次点击后置 true 吞掉
-  // 后续点击，重新进入 overlay（isSettingsOverlay 翻 true）时复位。
+  // 后续点击，正常情况下靠 isSettingsOverlay 翻 true 的 mount effect 复位。
+  //
+  // 2026-07-31：这把锁曾经只靠 mount effect 复位，一旦 back() 落回的历史项
+  // 仍带 ?settings=1（某处跳转型 handler 漏调 leaveSettingsOverlay，
+  // isSettingsOverlay 没有翻转）就会永久锁死——「返回应用」从此点不动，直到
+  // 整个设置树卸载重挂载（根因见 automations 的「打开对话」漏调
+  // leaveSettingsOverlay 那次事故）。加一个有界超时兜底：不管 mount effect
+  // 有没有复位，锁最多卡 800ms（> 实测 350ms 的 popstate 空窗，留够余量）
+  // 就自动放行，未来再有类似的漏调也只退化成「多点一次」而不是彻底失效。
   const overlayBackFiredRef = useRef(false);
+  const overlayBackFiredTimeoutRef = useRef<number | null>(null);
   const [settingsWelcome, setSettingsWelcome] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSection>('execution');
   const [integrationInitialTab, setIntegrationInitialTab] = useState<IntegrationTab>('mcp');
@@ -1339,16 +1348,19 @@ export function App({
   // 的不透明底）。注意：这个类曾触发「html 强制透明」（多视图时代遗留），
   // 该规则已因暗档进设置白闪删除——见 base.css 同名注释，别加回来。
   //
-  // Default to the **appearance** section, NOT execution: the desktop-only
-  // controls migrated from Electron's native settings (UI/code font size,
-  // pointer cursor, CLI backend) live inside AppearanceSection, plus the
-  // daemon-backed theme/accent. Landing the gear click straight on Appearance
-  // is what makes those desktop settings discoverable — opening on execution
-  // hid them behind a sidebar click the user never knew to make.
+  // Default to the sidebar's **first** section (account), matching what the
+  // user sees first when the settings window opens — 2026-07-31 改回列表
+  // 首项。此前（见 git 历史）曾故意钉死落在 appearance，理由是把从 Electron
+  // 原生设置迁移来的桌面专属项（字号/指针/CLI backend）暴露出来；但用户反馈
+  // 齿轮点击应落在视觉上的"第一个菜单"，与列表顺序保持直觉一致，故改回。
   useEffect(() => {
     if (!isSettingsOverlay) return;
     overlayBackFiredRef.current = false;
-    setSettingsInitialSection('appearance');
+    if (overlayBackFiredTimeoutRef.current !== null) {
+      window.clearTimeout(overlayBackFiredTimeoutRef.current);
+      overlayBackFiredTimeoutRef.current = null;
+    }
+    setSettingsInitialSection('account');
     setSettingsOpen(true);
     document.documentElement.classList.add('settings-overlay');
     return () => {
@@ -1497,24 +1509,11 @@ export function App({
   // state/homePromptHandoff.ts）。
   // ⚠️ 必须定义在 isSettingsOverlay 提前 return 之前（hooks 顺序）。
   //
-  // 跳转型 handler 必须先 leaveSettingsOverlay()：canvas router 的
-  // navigate() 刻意保留整个 query string（?host=desktop 时代的约定，见
-  // router.ts 注释），?settings=1 会跟着到达新路由、overlay 永远关不掉
-  // （CDP 实测 /projects/<id>?settings=1 卡死在设置页）。replaceState 剥参
-  // 不产生额外历史项，Next 的 native history 集成会同步 useSearchParams，
-  // isSettingsOverlay 随之翻 false；紧随其后的 navigate() 派发 popstate。
+  // 跳转型 handler 必须先 leaveSettingsOverlay()（2026-07-31 起从这里抽到
+  // router.ts 导出，供 TasksView.tsx / RoutinesSection.tsx 等设置页外组件
+  // 复用——理由与用法见该函数的文档注释）。
   // 删除/重命名不跳转，不剥参——操作完留在设置页里继续管理是正确交互。
   const settingsWorkspaceHost = useMemo<SettingsWorkspaceHost>(() => {
-    const leaveSettingsOverlay = () => {
-      const url = new URL(window.location.href);
-      if (!url.searchParams.has('settings')) return;
-      url.searchParams.delete('settings');
-      window.history.replaceState(
-        null,
-        '',
-        url.pathname + url.search + url.hash,
-      );
-    };
     return {
       projects,
       skills: enabledSkills,
@@ -1777,6 +1776,10 @@ export function App({
                 // 防重入 ref 语义见其声明处注释。
                 if (overlayBackFiredRef.current) return;
                 overlayBackFiredRef.current = true;
+                overlayBackFiredTimeoutRef.current = window.setTimeout(() => {
+                  overlayBackFiredRef.current = false;
+                  overlayBackFiredTimeoutRef.current = null;
+                }, 800);
                 if (window.history.length > 1) window.history.back();
                 else window.location.assign(window.location.pathname);
               };

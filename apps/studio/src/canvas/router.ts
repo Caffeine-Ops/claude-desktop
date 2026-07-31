@@ -183,6 +183,29 @@ export function navigate(route: Route, opts: { replace?: boolean } = {}): void {
   window.dispatchEvent(new PopStateEvent('popstate'));
 }
 
+/**
+ * 跳转型 handler 在调用 navigate() 之前必须先调这个：上面 navigate() 的注释
+ * 说了 `?settings=1` 是刻意跨导航保留的，所以任何「从设置页跳出去看别的东西」
+ * 的动作，如果直接调 navigate()，会把 settings=1 一起带到目标路径上——
+ * isSettingsOverlay 判定只看 query 不看 pathname，overlay 永远关不掉（CDP
+ * 实测 /projects/<id>?settings=1 卡死在设置页）。
+ *
+ * replaceState 剥参不产生额外历史项，Next 的 native history 集成会同步
+ * useSearchParams，isSettingsOverlay 随之翻 false；紧随其后的 navigate()
+ * 派发 popstate。没有 settings=1 时是安全的 no-op，任何场景（含设置页外）
+ * 调用都不会有副作用——不需要按「是否在设置页里」分场景包一层。
+ *
+ * 2026-07-31：从 App.tsx 的 settingsWorkspaceHost 闭包里抽出来导出，原因是
+ * TasksView.tsx / RoutinesSection.tsx 里的「打开对话」类按钮直接 import 了
+ * 这里的 navigate() 却漏调了这个，复现的正是上面注释描述的同一个卡死。
+ */
+export function leaveSettingsOverlay(): void {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has('settings')) return;
+  url.searchParams.delete('settings');
+  window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+}
+
 export function useRoute(): Route {
   const [route, setRoute] = useState<Route>(() => parseRoute(window.location.pathname));
   useEffect(() => {

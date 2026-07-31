@@ -20,7 +20,7 @@ import type {
 } from '@open-design/contracts';
 
 import { Icon, type IconName } from '../shared/Icon';
-import { navigate } from '../../router';
+import { leaveSettingsOverlay, navigate } from '../../router';
 import { useI18n } from '../../i18n';
 import type { Dict } from '../../i18n/types';
 import type { SkillSummary } from '../../types';
@@ -596,6 +596,7 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
       }
       const j = await res.json().catch(() => null);
       if (j?.projectId) {
+        leaveSettingsOverlay();
         navigate({
           kind: 'project',
           projectId: j.projectId,
@@ -770,14 +771,15 @@ export function TasksView({ skills = [], designTemplates = [], connectors = [] }
                           <button
                             type="button"
                             className="automation-inline-link"
-                            onClick={() =>
+                            onClick={() => {
+                              leaveSettingsOverlay();
                               navigate({
                                 kind: 'project',
                                 projectId: r.lastRun!.projectId,
                                 conversationId: r.lastRun!.conversationId,
                                 fileName: null,
-                              })
-                            }
+                              });
+                            }}
                           >
                             {t('automations.openResult')}
                           </button>
@@ -1244,14 +1246,15 @@ function AutomationRunHistory({
               <button
                 type="button"
                 className="automation-history__open"
-                onClick={() =>
+                onClick={() => {
+                  leaveSettingsOverlay();
                   navigate({
                     kind: 'project',
                     projectId: run.projectId,
                     conversationId: run.conversationId,
                     fileName: null,
-                  })
-                }
+                  });
+                }}
               >
                 {t('automations.openConversation')}
                 <Icon name="chevron-right" size={12} />

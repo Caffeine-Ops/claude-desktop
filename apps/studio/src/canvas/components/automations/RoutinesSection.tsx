@@ -10,7 +10,7 @@ import type {
 } from '@open-design/contracts';
 
 import { Icon } from '../shared/Icon';
-import { navigate } from '../../router';
+import { leaveSettingsOverlay, navigate } from '../../router';
 import { useT } from '../../i18n';
 import type { Dict } from '../../i18n/types';
 
@@ -19,10 +19,6 @@ import type { Dict } from '../../i18n/types';
 type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
 
 type ProjectSummary = { id: string; name: string };
-
-type RoutinesSectionProps = {
-  onClose?: () => void;
-};
 
 type ScheduleKind = RoutineSchedule['kind'];
 
@@ -371,12 +367,10 @@ function ScheduleEditor({
 function RunHistory({
   routineId,
   refreshKey,
-  onClose,
   t,
 }: {
   routineId: string;
   refreshKey: number;
-  onClose?: () => void;
   t: TranslateFn;
 }) {
   const [runs, setRuns] = useState<RoutineRun[] | null>(null);
@@ -432,13 +426,13 @@ function RunHistory({
                 // (reuse mode) all resolve to the same default
                 // conversation in the project view, which made earlier
                 // runs look "absorbed" by the latest one.
+                leaveSettingsOverlay();
                 navigate({
                   kind: 'project',
                   projectId: r.projectId,
                   conversationId: r.conversationId ?? null,
                   fileName: null,
                 });
-                onClose?.();
               }}
               title={t('routines.openProjectTitle')}
             >
@@ -455,7 +449,7 @@ function RunHistory({
   );
 }
 
-export function RoutinesSection({ onClose }: RoutinesSectionProps) {
+export function RoutinesSection() {
   const t = useT();
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -835,7 +829,7 @@ export function RoutinesSection({ onClose }: RoutinesSectionProps) {
                 </div>
                 {isExpanded ? (
                   <div className="routines-item-history">
-                    <RunHistory routineId={r.id} refreshKey={historyTick} onClose={onClose} t={t} />
+                    <RunHistory routineId={r.id} refreshKey={historyTick} t={t} />
                   </div>
                 ) : null}
               </li>
