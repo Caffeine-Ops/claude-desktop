@@ -246,7 +246,7 @@ export function WritingDocPanel(): React.JSX.Element | null {
       sectionName: string
       markdown: string
       expectedMtimeMs: number
-    }): Promise<'ok' | 'conflict' | 'error'> => {
+    }): Promise<'ok' | 'conflict' | 'conflict-missing' | 'error'> => {
       const src = useWritingStore.getState().source
       if (!src) return 'error'
       const res = await window.chatApi.writingWriteSection({
@@ -265,19 +265,24 @@ export function WritingDocPanel(): React.JSX.Element | null {
         // 乐观锁拦下：不覆盖，把盘上最新的灌回来。
         // res.current 为 null = 文件没了（被删/改名），不是「被改过」——两种情况必须两条
         // 文案：说成「已刷新到最新内容，请重新选中修改」会让用户再操作一次、再撞同样的墙。
+        // 【2026-07-31 复审 ②：两种情况现在也要两个返回值】`editBlock` 需要知道具体是
+        // 哪一种才能给出针对手动编辑通道的准确提示——若统一回 'conflict'，它没法区分
+        // 「内容刷新了、原文案说『去复制内容』还讲得通」与「文件已经不在了、压根没有
+        // 刷新到的内容可看」，无条件套用同一句会话在后一种情况下变成两句假话（详见
+        // editBlock 里的调用点）。`applyReview`/`undoLast` 两处调用方判的都是
+        // `outcome !== 'error'` / `outcome === 'ok'`，两种 conflict 变体都落在同一边，
+        // 不受这次拆分影响，不用改。
         if (res.current) {
           after.replaceSectionMarkdown(
             input.sectionName,
             res.current.markdown,
             res.current.mtimeMs
           )
+          after.setConflictMsg('这一节刚被 AI 改过，你的改动未生效。已刷新到最新内容，请重新选中修改。')
+          return 'conflict'
         }
-        after.setConflictMsg(
-          res.current
-            ? '这一节刚被 AI 改过，你的改动未生效。已刷新到最新内容，请重新选中修改。'
-            : '这一节的文件已不存在（可能被删除或改名），改动未生效。'
-        )
-        return 'conflict'
+        after.setConflictMsg('这一节的文件已不存在（可能被删除或改名），改动未生效。')
+        return 'conflict-missing'
       }
       after.setConflictMsg(`写入失败：${res.error}`)
       return 'error'
@@ -368,12 +373,25 @@ export function WritingDocPanel(): React.JSX.Element | null {
          * 点破这个死胡同的文案，明确提醒用户「先把字复制出来，再放弃这次编辑」。
          * 不改 commitSection 本身的文案——那是两条通道共用的一段，选区改写通道的
          * 措辞并没有问题，不该被这里的需求牵连着改掉。
+         *
+         * 【2026-07-31 复审 ②：只有块结构还在时，「去复制内容再 Esc」这条建议才成立】
+         * commitSection 已经把 store 刷新成了盘上最新版本，若刷新后这一块的下标在
+         * 新内容里越界了（AI 顺手把这一段也删了/合并了），WritingPaper 那边有一个
+         * 独立的兜底 effect（见其头注释「M-8/④」）会因为块结构性消失而自动把编辑框
+         * 关掉——「先复制内容再按 Esc」这句话会变成一句自相矛盾的假话：编辑框根本
+         * 不会等到用户去按 Esc。这里现读一次新内容判断块是否还在，两种情况给两条
+         * 不同的话；WritingPaper 那条兜底 effect 发现 conflictMsg 已经被设置过时会
+         * 让路，不会用它自己更笼统的兜底文案覆盖这里更准确的措辞。
          */
+        const freshSec = useWritingStore.getState().sections.find((s) => s.name === input.sectionName)
+        const stillHasBlock = !!freshSec && input.blockIndex < splitBlocks(freshSec.markdown).length
         useWritingStore
           .getState()
           .setConflictMsg(
-            '这一节刚被 AI 改过，你刚才编辑框里的改动没能存上（内容已刷新到最新版本）。' +
-              '请先把编辑框里的文字复制出来，再按 Esc 关掉编辑框重新编辑。'
+            stillHasBlock
+              ? '这一节刚被 AI 改过，你刚才编辑框里的改动没能存上（内容已刷新到最新版本）。' +
+                  '请先把编辑框里的文字复制出来，再按 Esc 关掉编辑框重新编辑。'
+              : '这一节刚被 AI 改过，你刚才编辑的这一段已经不在了，编辑框里未保存的内容无法保留。'
           )
         return false
       }

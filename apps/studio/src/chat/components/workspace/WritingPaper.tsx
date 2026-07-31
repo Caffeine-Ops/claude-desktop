@@ -91,9 +91,19 @@ export function WritingPaper({
    * B 的 key 与 A 的 key 不同，不会被误锁。
    */
   const [savingKey, setSavingKey] = useState<string | null>(null)
-  // 防重入用的 ref（配合下面 commitEdit 里的说明）：**不能用 state 当闸**，state
-  // 更新是异步的，重入调用发生在同一个事件循环 tick 里，读到的还是更新前的值。
-  const savingRef = useRef(false)
+  /**
+   * 防重入用的 ref（配合下面 commitEdit 里的说明）：**不能用 state 当闸**，state
+   * 更新是异步的，重入调用发生在同一个事件循环 tick 里，读到的还是更新前的值。
+   *
+   * 【2026-07-31 复审③：存的是 key 而不是裸 boolean】裸 boolean 是「组件级全局闸」，
+   * 会连累跟这次重入毫无关系的别的块：A 卡着写盘时，用户在 B 敲完字又双击 C，
+   * B 的 blur 提交会被这面全局闸挡下（静默返回 false、不写盘、不提示），紧接着
+   * beginEdit(C) 覆盖掉 editing——B 的草稿就这样悄无声息地丢了。这里要挡的重入
+   * 本来就只发生在**同一块**上（见 commitEdit 里的 I-3 注释：disabled 触发浏览器
+   * 自动 blur、同一块的 commitEdit 顶着同一个 mineKey 又调一次），存 key 后守卫
+   * 改成「只挡同 key 的重入」，不误伤别的块。
+   */
+  const savingRef = useRef<string | null>(null)
 
   // 每节切块。sections 变才重算——流式期间 2s 一次，代价可忽略。
   const blocks = useMemo(
@@ -139,6 +149,28 @@ export function WritingPaper({
     if (!editing) return
     const sec = blocks.find((s) => s.name === editing.sectionName)
     if (!sec || editing.blockIndex >= sec.items.length) {
+      /**
+       * 【2026-07-31 复审④：清掉之前，没保存的改动要出声，不能默默消失】
+       * `draft !== base`（用 isBlockUnchanged 判，跟提交时的判据一致）说明用户敲过
+       * 字、还没来得及存盘，这一段却要被强制清场——不吭声就是「用户的字凭空消失」，
+       * 比任何一条提示都糟。
+       *
+       * 【为什么要判「conflictMsg 是不是已经有内容」】块结构性消失最常见的一条路径
+       * 就是手动编辑自己撞了乐观锁冲突（见 WritingDocPanel.editBlock 的 ② 修复）：
+       * 那条分支在返回 false 之前，已经现读过新内容判断了这一块还在不在，给出过
+       * 一条更准确的提示（还在 = 提示去复制内容再 Esc；不在了 = 提示无法保留）。
+       * 若这里不加判断、无脑再 setConflictMsg 一次，会把那条更贴切的措辞覆盖成
+       * 下面这条不知道「是不是冲突导致」的通用兜底——两条消息打架，条子上最终
+       * 显示的反而是信息量更少的那条。只有当块消失**不是**经过 editBlock 这条路径
+       * （比如轮询刷新来的 AI 重写、或用户点了顶栏撤销）、没人设过 conflictMsg 时，
+       * 才轮到这条通用兜底出场。
+       */
+      if (
+        !isBlockUnchanged(editing.base, editing.draft) &&
+        !useWritingStore.getState().conflictMsg
+      ) {
+        useWritingStore.getState().setConflictMsg('这一段已被改写或删除，你未保存的编辑无法保留')
+      }
       setEditing(null)
     }
   }, [blocks, editing])
@@ -151,6 +183,8 @@ export function WritingPaper({
    */
   const commitEdit = useCallback(async (): Promise<boolean> => {
     if (!editing || !onEditBlock) return true
+    const mine = editing
+    const mineKey = `${mine.sectionName}:${mine.blockIndex}`
     /**
      * 【2026-07-31 复审 I-3：disabled 会让浏览器对聚焦元素派发 blur，从而重入】
      * 保存期间给 textarea 加 `disabled`，浏览器对「已聚焦元素被禁用」这件事会自己
@@ -161,10 +195,12 @@ export function WritingPaper({
      * 了），用户看到的是「刚存成功」紧跟着一条误导性的「这一节刚被 AI 改过」。
      * 用 ref 而非 state 判重入：state 更新是异步的，重入发生在同一个 tick 里，
      * 读到的还是这次调用开始前的旧值，拦不住。
+     *
+     * 【2026-07-31 复审③：判的是「同一个 key」而不是「有没有任何东西在存」】见
+     * `savingRef` 定义处的注释——这里只想挡「同一块」的重入调用，不该连累用户
+     * 正在别的块上做的、完全独立的提交。
      */
-    if (savingRef.current) return false
-    const mine = editing
-    const mineKey = `${mine.sectionName}:${mine.blockIndex}`
+    if (savingRef.current === mineKey) return false
     /**
      * 只在「当前编辑态还是我这一块」时才关掉编辑框。
      *
@@ -184,7 +220,7 @@ export function WritingPaper({
       closeIfStillMine()
       return true
     }
-    savingRef.current = true
+    savingRef.current = mineKey
     setSavingKey(mineKey)
     try {
       const ok = await onEditBlock({
@@ -193,13 +229,45 @@ export function WritingPaper({
         nextBlockMarkdown: mine.draft,
         baseMtimeMs: mine.baseMtimeMs
       })
-      if (ok) closeIfStillMine()
+      if (ok) {
+        closeIfStillMine()
+        /**
+         * 【2026-07-31 复审①：同一节内 A→B 连改，B 的乐观锁基准天生就是过期的】
+         * 时序推演——双击 A、编辑、直接双击 B（都在同一节）：
+         *   1. B 的 mousedown 让 A 失焦 → onBlur 触发 A 的 commitEdit（**异步**，
+         *      要 await 这次 onEditBlock 写盘）。
+         *   2. B 的 dblclick 在 A 的 await 返回**之前**就跑了 beginEdit(B)——此刻
+         *      store 里这一节的 mtime 还是 A 写盘前的旧值（A 还没写完，store 没
+         *      被 replaceSectionMarkdown 更新），于是 B 的 `baseMtimeMs` 从一诞生
+         *      就是过期的，跟 A 存盘前的基准是同一个数字。
+         *   3. A 的 await 落地、mtime 被推到了新值，但没有人回头把 B 手里那份
+         *      已经过期的基准同步过来。
+         *   4. 用户之后提交 B：拿着这个过期基准去写盘，主进程严格相等判定必然
+         *      拒写——用户看到「这一节刚被 AI 改过」，而根本没有 AI 参与，纯粹是
+         *      我们自己内部的时序坑。
+         * 修法：A 写盘成功后，若此刻编辑态仍然存在、且落在**同一节**（不管是不是
+         * 同一块——若是同一块，上面的 closeIfStillMine 早已把它关掉，走到这里的
+         * 必然是像 B 这样的另一块），就现读一次 store 里这一节最新的 mtime，把
+         * 编辑态的 `baseMtimeMs` 顺势补成这个新值。这不是放宽乐观锁——补的是「这
+         * 一份编辑真正应该用的基准」，B 后续提交时锁判的还是它自己有没有跟当下的
+         * 盘面对齐，只是不再被 A 抢先写盘这件事株连出一个假冲突。
+         */
+        const freshMtime = useWritingStore
+          .getState()
+          .sections.find((s) => s.name === mine.sectionName)?.mtimeMs
+        if (freshMtime !== undefined) {
+          setEditing((cur) =>
+            cur && cur.sectionName === mine.sectionName && cur.baseMtimeMs !== freshMtime
+              ? { ...cur, baseMtimeMs: freshMtime }
+              : cur
+          )
+        }
+      }
       return ok
     } finally {
-      savingRef.current = false
-      // 只清「还是我这一份」的 savingKey：理论上（见上面 I-3 注释）重入已经被
-      // savingRef 挡住，不会有第二份 in-flight 覆盖它，这里的现读比较仅作为
-      // 双重保险，不依赖它也不会错。
+      // 只清「还是我这一份」的标志：理论上重入已经被上面的 key 比较挡住，不会有
+      // 第二份 in-flight 覆盖它，这里的现读比较仅作为双重保险，不依赖它也不会错。
+      if (savingRef.current === mineKey) savingRef.current = null
       setSavingKey((cur) => (cur === mineKey ? null : cur))
     }
   }, [editing, onEditBlock])
