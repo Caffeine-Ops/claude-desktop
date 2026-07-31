@@ -78,7 +78,7 @@ export const useImageEditStore = create<ImageEditStore>((set) => ({
  * 决定表格卡片的点击去向：占用时降级回系统应用打开（ThreadView 里预览面板
  * 对这三种分栏让位，点了不弹等于点了没反应）。判定逻辑必须与 ThreadView 的
  * isSplitMode **完全同源**（slides 按会话启动模式标记、proposal 随激活实时
- * 切换、写作按 useWritingWorkspace 的 store.source 判定），放这里而不放
+ * 切换、写作按 useWritingWorkspace 的 store.source + revealed 判定），放这里而不放
  * ThreadView 是避免组件层互相 import。
  *
  * 【为什么必须同源，别嫌麻烦】isSplitMode 决定 ThreadView 是否渲染预览面板
@@ -107,7 +107,9 @@ export function useSplitWorkspaceBusy(): boolean {
  * 逻辑必须与上面的 hook 逐项同步：proposal 半边内联的是
  * useProposalWorkspace 的展开（active + 前台会话匹配 + workspaceOpen，
  * 见 stores/proposal.ts），slides 半边同源，写作半边内联的是
- * useWritingWorkspace 的展开（store.source !== null，见 stores/writing.ts）。
+ * useWritingWorkspace 的展开（store.source !== null && store.revealed，见
+ * stores/writing.ts；**revealed 这一项不能漏**——写作右栏在拿到第一节正文前
+ * 并不占屏幕，此时判 busy 会让表格卡片白白降级去系统应用打开）。
  * 只做一次性读取不订阅——调用方都是「此刻要不要开面板」的瞬时决策，不需要
  * 响应后续变化。
  */
@@ -117,7 +119,8 @@ export function splitWorkspaceBusyNow(): boolean {
   const proposalBusy =
     p.active && p.sessionId !== null && p.sessionId === chatSid && p.workspaceOpen
   const slidesSessions = useComposerModeStore.getState().slidesSessions
-  const writingBusy = useWritingStore.getState().source !== null
+  const w = useWritingStore.getState()
+  const writingBusy = w.source !== null && w.revealed
   return (
     proposalBusy || writingBusy || (chatSid !== null && slidesSessions[chatSid] === true)
   )

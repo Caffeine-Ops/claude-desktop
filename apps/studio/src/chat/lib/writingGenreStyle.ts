@@ -52,7 +52,7 @@ export function writingStyleFor(genre: WritingGenre): ProposalStyleConfig {
 
 /**
  * 体裁 → 纸面皮肤的 Tailwind 类串。屏显的观感与导出预设对齐（缩进、行距、字体家族），
- * 但不追求逐像素一致——那是「打印预览」tab 的职责，它渲染的是真 PDF。
+ * 但不追求逐像素一致——真正逐像素的排版以导出的 PDF / Word 为准。
  */
 export function paperSkinClass(genre: WritingGenre): string {
   switch (genre) {

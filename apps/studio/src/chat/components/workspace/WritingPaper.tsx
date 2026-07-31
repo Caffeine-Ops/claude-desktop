@@ -31,7 +31,7 @@ export function WritingPaper({
   /** AI 忙 / 已有一条改写在飞——只影响气泡按钮文案（「排队改写」），路由由调用方现读 store 决定。 */
   busy?: boolean
   /**
-   * 发起一次选区改写。**省略时纸面就是纯只读的**（打印预览 tab 复用纸面时不该冒出改写气泡），
+   * 发起一次选区改写。**省略时纸面就是纯只读的**（将来若有只读复用场景，不该冒出改写气泡），
    * 故气泡跟着这个 prop 挂载与否，而不是无条件常驻。
    */
   onRevise?: (target: WritingRevisionTarget, instruction: string) => void
@@ -113,7 +113,7 @@ export function WritingPaper({
         </div>
       )}
       {/* writing-paper / writing-block：目前全仓没有对应的 CSS 规则，是留给后续任务
-          （打印预览的样式对齐、选区改写的定位/高亮）的稳定钩子——不要当成废代码清掉。 */}
+          （选区改写的定位/高亮等）的稳定钩子——不要当成废代码清掉。 */}
       <div className={cn('writing-paper', paperSkinClass(genre))}>
         {blocks.map((sec) =>
           sec.items.map((block, i) => (

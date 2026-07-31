@@ -50,7 +50,7 @@ import {
 } from './WorkflowScriptPanel'
 import { ProposalDocPanel } from '../../workspace/ProposalDocPanel'
 import { useProposalWorkspace } from '../../../stores/proposal'
-import { useWritingSource, useWritingWorkspace } from '../../../stores/writing'
+import { useWritingWorkspaceGate } from '../../../stores/writing'
 import { WritingDocPanel } from '../../workspace/WritingDocPanel'
 import { SpreadsheetPreviewPanel } from './SpreadsheetPreviewPanel'
 import { ImageEditPanel } from './ImageEditPanel'
@@ -509,21 +509,14 @@ export function ThreadView(): React.JSX.Element {
   // 不按会话启动模式标记。三者互斥，优先级 proposal > slides > writing——proposal 由
   // slash 显式激活、意图最强；writing 是从工具调用推导出来的，最弱。
   //
-  // 【门控为什么必须是「消息推导 || store 已开」这个或，不能只看 store——反直觉，别"简化"回去】
-  // store.writing.source 的唯一写手是 WritingDocPanel 自己的 effect（面板内推导后 setSource）。
-  // 若门控只看 store：source 为 null → 面板不挂载 → 推导 effect 不跑 → source 永远为 null，
-  // 成环，AI 写完稿子右栏也永远不出现（真机零功能，而类型检查与单测全绿，抓不到）。
-  // 这与 proposal 的差别在于：proposal 的 workspaceOpen 由 slash/引擎事件在面板**之外**置起，
-  // 天生无环；写作的推导器却在面板里面，必须由这里的 useWritingSource() 把门先撞开。
-  //   - writingDerived 负责【开门】：直接从前台会话消息树推导，与面板挂载与否无关。
-  //   - writingOpen 负责【保持开着】：推导值瞬时抖动（切会话中途 messages 短暂为空等）
-  //     时不至于把面板整个抖掉，同时保留「推导为 null → 面板 effect setSource(null) →
-  //     两者同时为假 → 卸载」这条既有拆卸路径。
-  // 面板首帧 storeSource 仍为 null 会 return null（它所有 hook 都在那句 return 之前，
-  // 无 hook 顺序问题），次帧 effect 落库后出内容——这是预期的两帧交接。
-  const writingDerived = useWritingSource() !== null
-  const writingOpen = useWritingWorkspace()
-  const isWritingMode = (writingDerived || writingOpen) && !isProposalMode && !isSlidesMode
+  // 【门控收紧成「有正文才开」（2026-07-31）】写作流水线在探测到文档源之后，还要跑几分钟
+  // 规划/spec_lock/大纲才落下第一节；旧门控一探测到就撑开右栏，用户对着一句「还没有正文」
+  // 干等，像功能卡死。现在由 useWritingWorkspaceGate 统一判定，它同时**兼数据泵**：
+  // 消息推导 → setSource → 轮询拉正文，这三件事无条件先跑（右栏关着也在拉），门只管
+  // 「拉到东西没有」。泵移出面板正是为了解开「门要有正文才开、正文要面板挂载才拉」这个环
+  // ——完整推演见该 hook 的头注释，**别把这些 effect 挪回面板里**。
+  const writingOpen = useWritingWorkspaceGate()
+  const isWritingMode = writingOpen && !isProposalMode && !isSlidesMode
   // 任一分栏模式：chat 列都收窄成固定宽度 rail（共用同一条拖拽宽度）。
   const isSplitMode = isProposalMode || isSlidesMode || isWritingMode
   // Workflow 脚本面板（右栏）：AI 正在写 workflow 脚本时自动弹出，或用户

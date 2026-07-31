@@ -14,8 +14,6 @@ import { useChatStore } from '../../stores/chat'
 import {
   MAX_WRITING_REVISION_QUEUE,
   useWritingInProgress,
-  useWritingPoll,
-  useWritingSource,
   useWritingStore
 } from '../../stores/writing'
 import {
@@ -29,21 +27,19 @@ import { writingStyleFor } from '../../lib/writingGenreStyle'
 import { renderProposalPdfHtml } from '../../lib/renderProposalPdfHtml'
 import { deriveWritingExportBaseName } from '../../lib/writingExportInput'
 // 顶栏图标与方案面板同源（proposalIcons 是历史位置，不代表只归方案用）——两处右栏
-// 的视图切换与导出入口要长成一套，图标就不能各挑各的。
-import {
-  ChevronDownIcon,
-  EyeIcon,
-  FileCodeIcon,
-  FileIcon,
-  FileTextIcon,
-  PencilIcon
-} from './proposalIcons'
+// 的导出入口要长成一套，图标就不能各挑各的。
+import { ChevronDownIcon, FileCodeIcon, FileIcon, FileTextIcon } from './proposalIcons'
 import { WritingPaper } from './WritingPaper'
-import { WritingPreview } from './WritingPreview'
 import { WritingRevisionReviewCard } from './WritingRevisionReview'
 
 /**
- * 写作工作区右栏。两个 tab：文稿（可选区改写的排版纸面）与打印预览（真 PDF / 微信手机宽）。
+ * 写作工作区右栏：一块文稿纸面（可选区改写的排版视图）。
+ *
+ * 【2026-07-31 去掉了「打印预览」tab】原本顶栏有「文稿 ｜ 打印预览」segmented，预览走
+ * 与导出 PDF 完全相同的引擎渲染一份真 PDF。移除后导出仍在（下拉里的 PDF / Word /
+ * 公众号 HTML 一个没少），只是不再在应用内先渲一遍给人看。要恢复的话，组件本体在
+ * git 历史里（WritingPreview.tsx），它依赖的 usePreviewFrame / PreviewStateOverlay
+ * 还留着（方案端预览仍在用）。
  *
  * 顶栏**不标 app-region:drag**：根 layout 的 .window-drag-strip 是全应用唯一的拖拽面，
  * 组件顶栏再标会复发「整窗拖不动 + 双击不缩放」（CLAUDE.md 记了 7 条同族事故）。
@@ -54,13 +50,13 @@ import { WritingRevisionReviewCard } from './WritingRevisionReview'
  * 轮末哨兵抽取（FusionRuntimeProvider）产出对照卡 → 用户点应用 → 乐观锁写盘。
  */
 export function WritingDocPanel(): React.JSX.Element | null {
-  const source = useWritingSource()
-  const setSource = useWritingStore((s) => s.setSource)
+  // 只读 store，不自己灌数据：消息推导 → setSource → 轮询拉正文那一整套泵住在
+  // useWritingWorkspaceGate（ThreadView 调用）里。**别把它们挪回来**——泵在面板里就意味着
+  // 「门要有正文才开、正文要面板挂载才拉」的自锁环，那正是 2026-07-31 这次重构解开的东西。
   const storeSource = useWritingStore((s) => s.source)
   // 只用来决定「复制公众号 HTML」按钮是否显示；导出按钮点击时一律现读 getState()（见
   // buildExportInput），不吃这份渲染期快照。
   const genre = useWritingStore((s) => s.genre)
-  const [tab, setTab] = useState<'doc' | 'preview'>('doc')
   // 导出反馈条：{tone,text} 而非纯字符串——'err' 用醒目色，'ok'/'muted' 用弱化色，与
   // ProposalDocPanel 的 exportMsg 同款约定（同一份代码里两处导出条不该长得不一样）。
   const [exportMsg, setExportMsg] = useState<{ tone: 'ok' | 'err' | 'muted'; text: string } | null>(
@@ -73,27 +69,6 @@ export function WritingDocPanel(): React.JSX.Element | null {
   // 「这一轮在写这篇稿子」而非会话级 streaming——见 useWritingInProgress 头注释，
   // 避免全文写完后用户提问还挂着「正在写第 N 节」的骨架。
   const writing = useWritingInProgress()
-
-  // 会话消息推导出的源与 store 里的不一致时同步（切会话 / 开了新项目）。
-  // 【必须放 useEffect 里】：渲染期间直接调 setState 会触发 React 的
-  // "Cannot update a component while rendering a different component" 警告，
-  // 且在 StrictMode 下会重复执行。用序列化后的字符串当依赖，避免对象引用每帧变化导致死循环。
-  const sourceKey = source ? JSON.stringify(source) : ''
-  const storeSourceKey = storeSource ? JSON.stringify(storeSource) : ''
-  useEffect(() => {
-    if (sourceKey !== storeSourceKey) setSource(source)
-  }, [sourceKey, storeSourceKey, source, setSource])
-
-  // 归属会话补同步。source 是从【前台会话】的消息树推导的，故它非空时归属会话恒等于前台
-  // 会话；但「切到另一个写同一篇稿子的会话」时源字面没变、上面那条 effect 不触发，
-  // sessionId 会留成旧的，之后每次点改写都撞一致性校验静默 no-op（「点了没反应」）。
-  const chatSessionId = useChatStore((s) => s.sessionId)
-  const bindSession = useWritingStore((s) => s.bindSession)
-  useEffect(() => {
-    if (source) bindSession(chatSessionId)
-  }, [source, chatSessionId, bindSession])
-
-  useWritingPoll(storeSource !== null)
 
   // ── 选区改写调度 ────────────────────────────────────────────────────────
   // 会话级 streaming（不是 useWritingInProgress）：排队闸问的是「AI 这会儿忙不忙」，
@@ -485,16 +460,14 @@ export function WritingDocPanel(): React.JSX.Element | null {
           48px，与左列 46px 差 2px）。
           【本栏整条落在根 .window-drag-strip（fixed 全宽 46px、app-region:drag）里，
           栏内每个交互控件都必须 no-drag 挖洞，否则点击被原生窗口拖拽整个吞掉】——
-          这不是样式洁癖：漏挖洞的表现是「按钮点了没反应、按住会拖动窗口」，栏内所有控件
-          （文稿 / 打印预览 / 导出下拉）会一起哑掉，且控制台零报错。CLAUDE.md 里这是
-          errors/ 记了 7 条的同族事故。挖洞按「组」挖（segmented 一组、右侧一组），不逐个
-          挖：新增控件时自动继承，不会漏。
+          这不是样式洁癖：漏挖洞的表现是「按钮点了没反应、按住会拖动窗口」，栏内控件
+          （导出下拉）会哑掉，且控制台零报错。CLAUDE.md 里这是 errors/ 记了 7 条的同族
+          事故。挖洞按「组」挖（右侧整组一次挖），不逐个挖：新增控件时自动继承，不会漏。
           注意顶栏本身仍**不标 drag** —— 全应用唯一的拖拽面是根 .window-drag-strip，
           组件顶栏再标会复发「整窗拖不动 + 双击不缩放」。
 
-          布局与 ProposalDocPanel 顶栏对齐成同一套（2026-07-31）：左=标题+活性徽章、
-          中=segmented 视图切换、右=单一导出下拉。三段用 justify-between 撑开，不再用
-          ml-auto——后者在中段出现后会把 segmented 挤成左对齐。 */}
+          布局：左=标题+活性徽章、右=单一导出下拉，justify-between 撑开（去掉打印预览后
+          中段的 segmented 一并移除，与 ProposalDocPanel 的差异仅此一处）。 */}
       <div className="flex h-[46px] shrink-0 select-none items-center justify-between gap-2 border-b border-border px-3 text-xs text-muted-foreground">
         <span className="flex min-w-0 items-center gap-2">
           <span className="whitespace-nowrap text-[13px] font-semibold text-foreground">写作草稿</span>
@@ -526,34 +499,6 @@ export function WritingDocPanel(): React.JSX.Element | null {
             </span>
           )}
         </span>
-
-        {/* 文稿 ｜ 打印预览 segmented：muted 槽底 + 选中项白卡浮起（bg-card + shadow）。
-            与方案端「编辑 ｜ 预览」是同一个东西——可编辑视图 vs 只读预览，故连图标都用同一对
-            （PencilIcon / EyeIcon），不另挑。 */}
-        <div className="inline-flex shrink-0 rounded-lg bg-muted p-0.5 [-webkit-app-region:no-drag]">
-          <button
-            className={cn(
-              'inline-flex items-center gap-1 whitespace-nowrap rounded-md px-3 py-1 transition-colors',
-              tab === 'doc'
-                ? 'bg-card font-medium text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
-            )}
-            onClick={() => setTab('doc')}
-          >
-            <PencilIcon /> 文稿
-          </button>
-          <button
-            className={cn(
-              'inline-flex items-center gap-1 whitespace-nowrap rounded-md px-3 py-1 transition-colors',
-              tab === 'preview'
-                ? 'bg-card font-medium text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
-            )}
-            onClick={() => setTab('preview')}
-          >
-            <EyeIcon /> 打印预览
-          </button>
-        </div>
 
         {/* no-drag 一次盖住右侧整组（导出反馈 + 导出下拉 trigger）。 */}
         <div className="flex min-w-0 items-center gap-2 [-webkit-app-region:no-drag]">
@@ -638,22 +583,17 @@ export function WritingDocPanel(): React.JSX.Element | null {
         </div>
       )}
 
-      <div className={cn('flex min-h-0 flex-1 flex-col', tab === 'doc' ? '' : 'hidden')}>
+      <div className="flex min-h-0 flex-1 flex-col">
         <WritingPaper
           writing={writing}
           busy={streaming || pendingRevision !== null}
           onRevise={(target, instruction) => void submitRevision(target, instruction)}
         />
       </div>
-      {/* 用 hidden 类切换而非条件卸载：WritingPreview 内部靠 lastRendered 缓存跳过重渲，
-          切走再切回若被卸载会丢掉这份缓存、每次都重新生成一遍 PDF/微信 HTML。 */}
-      <div className={cn('flex min-h-0 flex-1 flex-col', tab === 'preview' ? '' : 'hidden')}>
-        <WritingPreview active={tab === 'preview'} />
-      </div>
 
-      {/* 对照卡挂在**两个 tab 之外**（面板级），不随 tab 隐藏：待裁决的改写会挡住队列排空
-          （排空 effect 以 review 为闸），若它藏在文稿 tab 里，用户切到打印预览时会看到
-          「排队几条一直不动、也不知道为什么」——把裁决入口藏起来等于让功能卡死。 */}
+      {/* 对照卡挂在纸面**之外**（面板级）：待裁决的改写会挡住队列排空（排空 effect 以
+          review 为闸），裁决入口一旦被藏起来，用户看到的就是「排队几条一直不动、也不知道
+          为什么」——等于让功能卡死。 */}
       <WritingRevisionReviewCard
         applying={applying}
         onApply={() => void applyReview()}

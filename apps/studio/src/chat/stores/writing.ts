@@ -74,6 +74,20 @@ interface WritingState {
   sections: WritingSection[]
   status: WritingStatus
   errMsg: string
+  /**
+   * 右栏「可以露面了」——**有实际内容可看**（或有错要说）之后才置真，右栏门控读它。
+   *
+   * 【为什么不是 source !== null 就开门（2026-07-31 改）】写作是长流水线：探测到文档源
+   * （AI 建好项目目录、打出 WRITING_PROJECT= 标记）之后，四角色还要串行跑规划 / 写
+   * spec_lock / 列大纲，往往几分钟才落下第一节正文。旧门控在这一刻就把右栏撑开，用户
+   * 盯着一句「还没有正文」干等好几分钟——看起来像功能卡死，而不是「正在准备」。
+   *
+   * **粘滞（一旦为真就不再回落，直到 setSource 换源/清源）**：轮询读盘偶发失败会让
+   * sections 短暂为空，非粘滞的话右栏会整个抖掉（用户正在读的稿子突然消失）。
+   * `status` 为 error/missing 时也置真：那两种情况没有正文可看，但**有错要说**，
+   * 右栏是唯一能说的地方——不开门就等于把错误咽掉，用户只看到右栏永远不出现。
+   */
+  revealed: boolean
   /** 已发出、正在等 AI 回复的那一条改写。非空 = 本轮回复要走哨兵抽取而非普通对话。 */
   pendingRevision: WritingRevisionTarget | null
   queue: QueuedWritingRevision[]
@@ -111,6 +125,7 @@ export const useWritingStore = create<WritingState>((set, get) => ({
   sections: [],
   status: 'idle',
   errMsg: '',
+  revealed: false,
   pendingRevision: null,
   queue: [],
   review: null,
@@ -125,6 +140,9 @@ export const useWritingStore = create<WritingState>((set, get) => ({
       outlineTotal: null,
       status: 'idle',
       errMsg: '',
+      // 换源 = 换了篇稿子，右栏重新回到「等第一节正文」的关门状态；不清的话切到一篇
+      // 刚起步的新稿子时，右栏会带着上一篇的 revealed 直接撑开一片空白。
+      revealed: false,
       // 改写态一律跟着源清空：pending/queue/review 里的 sectionName 只对旧文档有意义，
       // 留到新文档上会往错的文件里写内容——这类「跨文档串台」是不可逆的正文损坏。
       pendingRevision: null,
@@ -139,8 +157,20 @@ export const useWritingStore = create<WritingState>((set, get) => ({
     set({ sessionId, pendingRevision: null, queue: [], review: null, conflictMsg: '' })
   },
   applyScan: ({ genre, outlineTotal }) => set({ genre, outlineTotal }),
-  setSections: (sections) => set({ sections }),
-  setStatus: (status, errMsg = '') => set({ status, errMsg }),
+  // 判据是「有非空正文」而不是 sections.length > 0：AI 有可能先把一节的空文件建出来
+  // （占位、或写到一半被打断），文件在但一个字没有——那时开门看到的还是空白纸面。
+  setSections: (sections) =>
+    set((s) => ({
+      sections,
+      revealed: s.revealed || sections.some((sec) => sec.markdown.trim() !== '')
+    })),
+  // error/missing 也开门：见 revealed 字段注释——没有正文但有错要说，右栏是唯一的出口。
+  setStatus: (status, errMsg = '') =>
+    set((s) => ({
+      status,
+      errMsg,
+      revealed: s.revealed || status === 'error' || status === 'missing'
+    })),
   replaceSectionMarkdown: (name, markdown, mtimeMs) =>
     set((s) => ({
       sections: s.sections.map((sec) => (sec.name === name ? { ...sec, markdown, mtimeMs } : sec))
@@ -213,21 +243,56 @@ export function useWritingSource(): WritingDocSource | null {
 }
 
 /**
- * 工作区**已经开着**（store 里落了文档源）。
+ * 写作右栏**此刻是否占着屏幕**。「探测到了文档源」还不够，得 `revealed`（有正文可看
+ * 或有错要说）——见 revealed 字段注释。
  *
- * 【别把它单独当右栏门控用——那会自锁死】store.source 唯一的写手是 WritingDocPanel 自己的
- * effect（它在面板内调 useWritingSource 推导后 setSource）。若门控只看 store.source：
- *   store.source 为 null → 面板不挂载 → 推导 effect 不跑 → store.source 永远为 null
- * ——成环，AI 写完稿子右栏也永远不出现（真机零功能，但类型与单测全绿）。
- *
- * 与 proposal 的关键差异：proposal 的 workspaceOpen 由 slash 命令 / 引擎事件在面板**之外**
- * 置起，天然没有这个环；写作是「从消息推导」，推导器却被关在只有推导成功才会打开的门里面。
- * 故 ThreadView 的门控必须是 `useWritingSource() !== null || useWritingWorkspace()`：
- * 前者负责**开门**（消息推导，与面板挂载无关），后者负责在推导值瞬时抖动时**保持开着**，
- * 并保留「推导为 null → 面板 effect setSource(null) → 两者同时为假 → 卸载」这条拆卸路径。
+ * 判据必须与 ThreadView 的 isWritingMode 半边**逐字同源**：filePreview.ts 的
+ * useSplitWorkspaceBusy / splitWorkspaceBusyNow 拿它决定表格卡片点击要不要降级回系统
+ * 应用打开，两边脱节的后果（点击死 + 脏 path 事后弹旧预览）在那两个函数的注释里有完整推演。
  */
 export function useWritingWorkspace(): boolean {
-  return useWritingStore((s) => s.source !== null)
+  return useWritingStore((s) => s.source !== null && s.revealed)
+}
+
+/**
+ * 写作右栏的总闸 **兼数据泵**——ThreadView 调用它，返回「现在该不该渲染右栏」。
+ *
+ * 【为什么推导 / 绑会话 / 轮询这三件事必须住在这里，而不是面板里（2026-07-31 重构）】
+ * 门控一旦收紧成「有正文才开门」，就出现了一个自锁环：正文由轮询拉取 → 轮询原先跑在
+ * WritingDocPanel 内部 → 面板要门开了才挂载 → 门要有正文才开 → 永远没有正文。
+ * 旧代码靠「消息推导 || store 已开」这个或把门先撞开来绕过它（推导与面板挂载无关），
+ * 但那正是「一探测到就撑开右栏」的根源，与本次要修的体验问题是同一件事。
+ * 所以把泵移到门外：**推导与轮询无条件先跑（右栏关着也在拉）**，门只管「拉到东西没有」。
+ *
+ * 这样 WritingDocPanel 退化成纯展示组件（只读 store、不再自己灌数据），
+ * ThreadView 是唯一的调用点——**别在别处再调一次**，那会变成两个泵同时轮询同一个目录。
+ */
+export function useWritingWorkspaceGate(): boolean {
+  // 从前台会话消息树推导，与右栏挂载与否无关——这是整条链的源头。
+  const derived = useWritingSource()
+  const storeSource = useWritingStore((s) => s.source)
+  const setSource = useWritingStore((s) => s.setSource)
+  const bindSession = useWritingStore((s) => s.bindSession)
+  const chatSessionId = useChatStore((s) => s.sessionId)
+
+  // 【必须在 effect 里 setState】渲染期直接 set 会触发 React 的 "Cannot update a component
+  // while rendering a different component"，StrictMode 下还会重复执行。用序列化字符串当依赖，
+  // 避免推导出的对象每帧新引用导致死循环。
+  const derivedKey = derived ? JSON.stringify(derived) : ''
+  const storeKey = storeSource ? JSON.stringify(storeSource) : ''
+  useEffect(() => {
+    if (derivedKey !== storeKey) setSource(derived)
+  }, [derivedKey, storeKey, derived, setSource])
+
+  // 归属会话补同步：「切到另一个写同一篇稿子的会话」时源字面没变、上面那条 effect 不触发，
+  // sessionId 会留成旧的，之后每次点改写都撞一致性校验静默 no-op（表现为「点了没反应」）。
+  useEffect(() => {
+    if (derived) bindSession(chatSessionId)
+  }, [derived, chatSessionId, bindSession])
+
+  useWritingPoll(storeSource !== null)
+
+  return useWritingWorkspace()
 }
 
 /**
