@@ -489,16 +489,17 @@ sed -n '260,340p' apps/studio/src/chat/components/workspace/WritingDocPanel.tsx
         markdown: next,
         expectedMtimeMs: r.baseMtimeMs
       })
-      // 三种结果都要收掉对照卡：成功已落地；冲突/失败时卡上的 range 与 before 已对不上
-      // 盘上的内容，留着它用户只会再点一次、再撞一次同样的墙。
+      // 成功与冲突都收掉对照卡：成功已落地；冲突时卡上的 range 与 before 已对不上盘上的
+      // 内容，留着它用户只会再点一次、再撞一次同样的墙。
+      // **写盘失败（error）时刻意保留对照卡** —— 那是「磁盘暂时写不进去」（权限 / 磁盘满），
+      // 内容本身仍然有效，收掉卡等于让用户白等一轮 AI。这是原实现的行为，纯重构必须原样保留。
       if (outcome !== 'error') useWritingStore.getState().setReview(null)
-      else useWritingStore.getState().setReview(null)
     } finally {
       setApplying(false)
     }
 ```
 
-**注意：** 上面那两行 if/else 分支体相同，是为了保留「原实现在三条路径上都调了 `setReview(null)`」这个事实并让它显式可见。实施时请**核对原实现**：若原代码在 `error` 路径上没有 `setReview(null)`，就必须照原样保留（纯重构不许改行为），并把这段简化成对应的形态。
+**核对点（重构正确性的判据）：** 改之前先确认原实现在 `error` 分支上确实**没有**调用 `setReview(null)`（原代码 error 路径只有 `after.setConflictMsg(\`写入失败：${res.error}\`)`，随后直接进 `finally`）。若核对结果与此不符，以原实现为准 —— 纯重构不许改行为。
 
 - [ ] **Step 4: 把 `commitSection` 加进 `applyReview` 的依赖数组**
 
@@ -650,7 +651,8 @@ import { pushBounded } from '../lib/writingEdit'
       if (outcome === 'ok') {
         useWritingStore.getState().pushUndo({ sectionName: r.target.sectionName, markdown: before })
       }
-      useWritingStore.getState().setReview(null)
+      // 收卡条件与 Task 3 完全一致（error 时保留，让用户能重试），别在这里顺手改成无条件。
+      if (outcome !== 'error') useWritingStore.getState().setReview(null)
     } finally {
       setApplying(false)
     }
@@ -890,19 +892,35 @@ import { blockSourceAt, isBlockUnchanged } from '../../lib/writingEdit'
    */
   const commitEdit = useCallback(async (): Promise<boolean> => {
     if (!editing || !onEditBlock) return true
-    if (isBlockUnchanged(editing.base, editing.draft)) {
-      setEditing(null)
+    const mine = editing
+    /**
+     * 只在「当前编辑态还是我这一块」时才关掉编辑框。
+     *
+     * 【为什么不能直接 setEditing(null) —— 这是一条真实的竞态】用户双击 B 块时事件顺序是：
+     * B 的 mousedown 让 A 的 textarea 失焦 → onBlur 触发 commitEdit（**异步**，要 await 写盘）
+     * → B 的 dblclick 触发 beginEdit(B) → setEditing(B) → A 的 await 这才返回。
+     * 此时无条件 setEditing(null) 会把刚进入编辑的 B 一起清掉，用户看到的是「A 存上了，
+     * 但 B 闪一下就退出了」。
+     */
+    const closeIfStillMine = (): void =>
+      setEditing((cur) =>
+        cur && cur.sectionName === mine.sectionName && cur.blockIndex === mine.blockIndex
+          ? null
+          : cur
+      )
+    if (isBlockUnchanged(mine.base, mine.draft)) {
+      closeIfStillMine()
       return true
     }
     setSaving(true)
     try {
       const ok = await onEditBlock({
-        sectionName: editing.sectionName,
-        blockIndex: editing.blockIndex,
-        nextBlockMarkdown: editing.draft,
-        baseMtimeMs: editing.baseMtimeMs
+        sectionName: mine.sectionName,
+        blockIndex: mine.blockIndex,
+        nextBlockMarkdown: mine.draft,
+        baseMtimeMs: mine.baseMtimeMs
       })
-      if (ok) setEditing(null)
+      if (ok) closeIfStillMine()
       return ok
     } finally {
       setSaving(false)
@@ -936,7 +954,11 @@ import { blockSourceAt, isBlockUnchanged } from '../../lib/writingEdit'
                       autoFocus
                       value={editing.draft}
                       disabled={saving}
-                      onChange={(e) => setEditing({ ...editing, draft: e.target.value })}
+                      // 函数式更新：onChange 高频触发，吃闭包里的 editing 会用到过期快照。
+                      onChange={(e) => {
+                        const v = e.target.value
+                        setEditing((cur) => (cur ? { ...cur, draft: v } : cur))
+                      }}
                       onKeyDown={(e) => {
                         if (e.key === 'Escape') {
                           e.preventDefault()
