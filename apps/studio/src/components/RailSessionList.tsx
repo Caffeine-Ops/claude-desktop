@@ -84,6 +84,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle
 } from '@/src/components/ui/alert-dialog'
+import { GLASS_DIALOG_SURFACE } from '@/src/components/ui/glassDialogSurface'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -720,8 +721,9 @@ export function RailSessionList() {
           * brightness-125 提亮背后模糊内容、blur-xl（比 2xl 浅一档，保留纹理
           * 更看得出"透视感"）+ border-white/15 固定白描边（装饰性非语义色，
           * 同保存按钮渐变里的 inset 高光做法），具体理由见 ThreadView.tsx
-          * 同处更长的注释。 */}
-        <DialogContent className="rounded-2xl border border-white/15 bg-background/55 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.4),0_8px_24px_-12px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-100 dark:backdrop-brightness-125 sm:max-w-[440px]">
+          * 同处更长的注释。2026-07-31 整套抽进 GLASS_DIALOG_SURFACE 常量并
+          * 修掉亮档发灰，推导见该常量头注释。 */}
+        <DialogContent className={GLASS_DIALOG_SURFACE}>
           <form
             onSubmit={(e) => {
               e.preventDefault()
@@ -796,8 +798,9 @@ export function RailSessionList() {
           * 也要玻璃质感，于是原样搬重命名弹窗那份 className 覆盖（/55 不透明
           * 度 + backdrop-brightness-125 提亮 + backdrop-blur-xl + border-
           * white/15 固定白描边），具体理由见 ThreadView.tsx 重命名弹窗同处
-          * 长注释。 */}
-        <AlertDialogContent className="rounded-2xl border border-white/15 bg-background/55 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.4),0_8px_24px_-12px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-100 dark:backdrop-brightness-125 sm:max-w-[440px]">
+          * 长注释。2026-07-31 起与另外三处共用 GLASS_DIALOG_SURFACE 常量
+          * ——「原样搬」这个动作本身就是漏改事故的土壤，改成引用同一个字符串。 */}
+        <AlertDialogContent className={GLASS_DIALOG_SURFACE}>
           <AlertDialogHeader>
             <AlertDialogTitle className="text-[19px]">
               删除这个对话？

@@ -53,6 +53,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle
 } from '@/src/components/ui/alert-dialog'
+import { GLASS_DIALOG_SURFACE } from '@/src/components/ui/glassDialogSurface'
 import { Button } from '@/src/components/ui/button'
 import { RailProjectList } from '@/src/components/RailProjectList'
 import { RailSessionList } from '@/src/components/RailSessionList'
@@ -852,9 +853,11 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
             * 主按钮跟登录页的品牌绿撞色，容易和「确认继续」这类中性操作混在
             * 一起，退出会打断当前工作状态，需要一个视觉停顿。className 直接
             * 照抄 RailSessionList 删除会话的 destructive 渐变按钮，同一套
-            * 「警告态」视觉在全 app 只有一种样子，不新开一套朴素红。 */}
+            * 「警告态」视觉在全 app 只有一种样子，不新开一套朴素红。
+            * 2026-07-31：上面「全 app 共用这一份视觉规格」此前只是注释里的
+            * 声明、代码是四份复制，现已落实为共用 GLASS_DIALOG_SURFACE 常量。 */}
           <AlertDialog open={logoutConfirmOpen} onOpenChange={setLogoutConfirmOpen}>
-            <AlertDialogContent className="rounded-2xl border border-white/15 bg-background/55 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.4),0_8px_24px_-12px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-100 dark:backdrop-brightness-125 sm:max-w-[440px]">
+            <AlertDialogContent className={GLASS_DIALOG_SURFACE}>
               <AlertDialogHeader>
                 <AlertDialogTitle className="text-[19px]">退出登录？</AlertDialogTitle>
                 <AlertDialogDescription className="text-[13px] leading-relaxed">
