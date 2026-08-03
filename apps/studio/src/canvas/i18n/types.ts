@@ -390,6 +390,8 @@ export interface Dict {
   'updateApp.downloadHint': string;
   'updateApp.ready': string;
   'updateApp.installNow': string;
+  'updateApp.installing': string;
+  'updateApp.installingHint': string;
   'updateApp.retry': string;
   'updateApp.error': string;
   'updateApp.devUnavailable': string;
@@ -398,6 +400,7 @@ export interface Dict {
   'updateApp.badge.checking': string;
   'updateApp.badge.downloading': string;
   'updateApp.badge.ready': string;
+  'updateApp.badge.installing': string;
   'updateApp.badge.error': string;
   'settings.appVersion': string;
   'settings.appChannel': string;

@@ -2010,13 +2010,20 @@ export type AppearanceSetResult = { appearance: AppearancePrefs | null }
  *
  *   idle ─ check ─→ checking ─→ available ─→ downloading ─→ ready
  *                        │                                    │
- *                        ├─→ none (already latest)            └─ install → quit
- *                        └─→ error
+ *                        ├─→ none (already latest)            └─ install →
+ *                        └─→ error                               installing → quit
  *
  * 'downloading' is entered implicitly (autoDownload=true): 'available' is a
  * transient phase the renderer may never observe between two pushes — treat
  * available/downloading the same visually. 'error' keeps the app usable; the
  * next manual check resets to 'checking'.
+ *
+ * 'installing' 是**点击确认**，不是安装进度（2026-08-03 随 Windows 静默安装
+ * 一起加）：installUpdate 置它、广播、故意等一小会儿让 renderer 画出来，然后
+ * 才 quitAndInstall——之后 app 立刻退出，窗口连同这个态一起消失，真正的安装
+ * 发生在没有任何本进程 UI 的时段（Windows 走 NSIS `/S` 无窗安装，装完由
+ * 安装器自己拉起新版，接手的是新进程的 splash）。所以它只需活到「用户看见
+ * 自己那一下点生效了」为止。安装失败（签名校验/包损坏）会落回 'error'。
  */
 export type UpdaterPhase =
   | 'idle'
@@ -2024,6 +2031,7 @@ export type UpdaterPhase =
   | 'available'
   | 'downloading'
   | 'ready'
+  | 'installing'
   | 'none'
   | 'error'
 

@@ -33,6 +33,13 @@ const { autoUpdater } = electronUpdaterPkg
  *    quitAndInstall 永远由用户点出来（设置页按钮 / 就绪 toast / 菜单对话框）。
  *  - autoInstallOnAppQuit：用户忽略提示直接退出时，退出即顺手装上，
  *    下次启动就是新版（electron-updater 默认行为，显式写出防止误改）。
+ *  - **两条安装路径都静默**（2026-08-03 统一）：退出时那条本来就是静默的
+ *    （BaseUpdater 的 quit handler 写死 `install(true, false)`），而用户主动
+ *    点「立即重启更新」这条以前传的是 isSilent=false，在本项目的
+ *    `oneClick:false` 安装器上等于走完整 NSIS 向导（进度页 + 完成页各要点
+ *    一次「下一步」）。于是「关掉应用」比「点重启更新」还省事，行为正好
+ *    反了。现在 installUpdate 也传 isSilent=true，两条路的观感一致：无窗
+ *    安装、装完自动拉起。详见 installUpdate 里的长注释。
  *  - 启动后延迟 15s 首查（让 daemon spawn / 首帧渲染先走完，别跟冷启动抢
  *    网络与 CPU），此后每 10min 复查一次（2026-07-21 用户从 3h 调到
  *    10min，要更快感知新版本）。自建源正常时 GitHub 每轮都不会被打到，
@@ -46,6 +53,27 @@ const { autoUpdater } = electronUpdaterPkg
 
 const CHECK_INITIAL_DELAY_MS = 15_000
 const CHECK_INTERVAL_MS = 10 * 60 * 1000
+
+/**
+ * 「正在安装」态的可见窗口——置 phase:'installing' 广播之后、真正
+ * quitAndInstall 之前的等待时长（2026-08-03）。
+ *
+ * 它只买一样东西：**一帧渲染**。quitAndInstall 内部是 `install()` 紧跟
+ * `setImmediate(() => app.quit())`，同一拍就开始拆窗口；不等这一下，
+ * renderer 收到 installing 广播时窗口已经在拆了，那个态永远画不出来，
+ * 用户点完按钮看到的就是「界面毫无变化然后突然消失」。380ms 够一帧渲染
+ * ＋让眼睛捕捉到状态变化，又短到不会被读成卡顿。
+ *
+ * **不要以为它能给 engine.dispose 抢时间**（第一版注释在这写错过）：
+ * dispose 由 app.quit() 触发，而 app.quit() 在 quitAndInstall 内部、也就
+ * 是这段等待*之后*才发生。安装器 spawn 与 app.quit() 是同一拍的两件事，
+ * 调大这个常数只会把两者一起推后，对「dispose 跑没跑完」的相对时序零
+ * 影响。真正给 dispose 兜底的是 NSIS 那边的宽限：安装器从 Section 开始
+ * 有约 2.6s 才会 taskkill /F（allowOnlyOneInstallerInstance.nsh 的
+ * _CHECK_APP_RUNNING，isUpdated 时 Sleep 300 + Sleep 1000 → 温和
+ * taskkill → Sleep 300 → Sleep 1000 → 才强杀）。
+ */
+const INSTALL_ACK_DELAY_MS = 380
 
 /**
  * 自建更新源的目录 URL（generic provider 的 base）——指向 VPS 上放
@@ -171,9 +199,18 @@ export function getUpdaterState(): UpdaterState {
   return state
 }
 
-/** 检查或下载还在途——electron-updater 不支持并发 check，直接吞掉重复触发。 */
+/**
+ * 检查/下载/安装还在途——electron-updater 不支持并发 check，直接吞掉重复
+ * 触发。'installing' 也算在途：那时 app 已在退出路上，再起一轮跨源 check
+ * 只会在拆到一半的进程里制造无人消费的 IPC 广播。
+ */
 function isInFlight(): boolean {
-  return state.phase === 'checking' || state.phase === 'downloading' || state.phase === 'available'
+  return (
+    state.phase === 'checking' ||
+    state.phase === 'downloading' ||
+    state.phase === 'available' ||
+    state.phase === 'installing'
+  )
 }
 
 /**
@@ -192,8 +229,26 @@ export function checkForUpdates(): UpdaterState {
 }
 
 /** 仅在下载就绪后有效；其余相位静默无操作（按钮竞态点击不能炸）。 */
-export function installUpdate(): void {
+export async function installUpdate(): Promise<void> {
+  // guard 必须先于任何状态写入：phase 一旦被推到 'installing' 就不再是
+  // 'ready'，顺序反了会让第二次点击穿过 guard 走到 quitAndInstall。
   if (!state.supported || state.phase !== 'ready') return
+  // 点击确认：先广播 installing 让 UI 立刻有反应，再等一帧渲染时间。
+  // 这是 Windows 改静默安装后唯一的可见反馈（NSIS 不再出向导窗口），
+  // 见 INSTALL_ACK_DELAY_MS 的注释。
+  setState({ phase: 'installing', errorMessage: null })
+  await new Promise((resolve) => setTimeout(resolve, INSTALL_ACK_DELAY_MS))
+  //
+  // ── 从这里到 quitAndInstall 之间不许再出现 await ──
+  //
+  // setQuitting(true) 与 quitAndInstall 之间每多一段异步等待，就多一段
+  // 「isQuitting=true 但没有任何 quit 在途」的窗口期：这期间 mac 用户点
+  // 红叉会穿过 tabRegistry 的 close 拦截（那道拦截正是靠 isQuitting=false
+  // 判定「红叉=hide」的），窗口真被关掉、每个 engine 走 dispose 杀光
+  // fusion-code 子进程，而 app 还活着——留下一个没有窗口的空壳进程。
+  // 所以渲染等待要放在置位**之前**（2026-08-03 加 installing 态时差点
+  // 把这个不变量写坏）。
+  //
   // 必须先置真退出标记，再调 quitAndInstall。两个原因（2026-07-13 事故）：
   //
   // 1. mac 的 quitAndInstall（Squirrel.Mac）**不走 before-quit**——Electron
@@ -210,10 +265,27 @@ export function installUpdate(): void {
   // 照常 destroyTray + stopOpenDesignServices，清理链一个不少。
   quitForUpdateInitiated = true
   setQuitting(true)
-  // isSilent=false：Windows NSIS 显示安装小窗（用户刚点了「重启安装」，
-  // 有反馈比黑屏等待好）；isForceRunAfter=true：装完自动拉起新版。
-  // mac（Squirrel.Mac）忽略这两个参数。
-  autoUpdater.quitAndInstall(false, true)
+  //
+  // isSilent=true（2026-08-03 从 false 改过来）：Windows NSIS 拿到 `/S`，
+  // 无窗安装。**这一位不是「要不要显示进度」，而是「走不走向导」**——
+  // 本项目 nsis 配置是 `oneClick:false`（为了首装能选安装目录），
+  // electron-builder 据此生成的是 assistedInstaller.nsh 那套 MUI2 向导；
+  // 不带 `/S` 跑起来就是完整向导，而 `--updated` 只跳得掉许可页与目录页
+  // （assistedInstaller.nsh 的 skipPageIfUpdated），INSTFILES 进度页与
+  // FINISH 完成页是无条件的，用户被迫点两次「下一步」才装得上。
+  // 旧注释里「显示安装小窗」是 oneClick 安装器的形态，assisted 下拿不到。
+  //
+  // isForceRunAfter=true：装完自动拉起新版。静默模式下这条走的是
+  // installSection.nsh 的 `${if} ${isForceRun} ${andIf} ${Silent}` →
+  // doStartApp 分支（非静默时改由 FINISH 页的「运行」勾选框负责，所以
+  // 「静默」和「装完自动重启」必须一起给，只给 `/S` 会装完不启动）。
+  // 注意 6.8.9 的 BaseUpdater 有一层转发：
+  // `install(isSilent, isSilent ? isForceRunAfter : autoRunAppAfterInstall)`
+  // ——只有 isSilent=true 时我们传的 isForceRunAfter 才真正生效。
+  //
+  // mac（Squirrel.Mac）两个参数都忽略：MacUpdater.quitAndInstall() 压根
+  // 不接参数，行为与改动前逐字节相同。
+  autoUpdater.quitAndInstall(true, true)
 }
 
 /**
@@ -284,7 +356,7 @@ async function promptInstallDialog(): Promise<void> {
     defaultId: 0,
     cancelId: 1
   })
-  if (response === 0) installUpdate()
+  if (response === 0) await installUpdate()
 }
 
 /**
@@ -327,6 +399,13 @@ export function initAppUpdater(): void {
     if (quitForUpdateInitiated) {
       // 重启安装发起后失败（签名校验、staged 包损坏等）：撤销真退出标记，
       // 别让残留的 isQuitting 把用户之后的红叉变成真关窗杀引擎。
+      //
+      // 此时 phase 是 'installing'，下面统一落到 'error'——app 没退成、
+      // 窗口还在，用户看得到失败原因。不回退成 'ready'：那会让 UI 显示
+      // 一个可以再点的「立即重启更新」，而刚刚失败的原因（包坏了/签名不
+      // 对）多半会原样复现。下一轮 check 会重新判定，包若完好会自己回到
+      // ready（electron-updater 的 downloadedUpdateHelper 缓存还在，不必
+      // 重新下整包）。
       quitForUpdateInitiated = false
       setQuitting(false)
     }
@@ -342,6 +421,8 @@ export function initAppUpdater(): void {
   }, CHECK_INITIAL_DELAY_MS)
   setInterval(() => {
     // ready 后不再复查：新包已经躺在本地等安装，重复下载没有意义。
-    if (state.phase !== 'ready') checkForUpdates()
+    // installing 更是：进程正在退出，别在拆到一半的 main 里起新一轮跨源
+    // check（checkForUpdates 的 isInFlight 也挡着，这里是第二道）。
+    if (state.phase !== 'ready' && state.phase !== 'installing') checkForUpdates()
   }, CHECK_INTERVAL_MS)
 }
