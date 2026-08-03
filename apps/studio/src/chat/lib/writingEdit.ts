@@ -68,6 +68,54 @@ export function isBlockUnchanged(originalBlock: string, candidate: string): bool
   return splitBlocks(originalBlock).join('\n\n') === splitBlocks(candidate).join('\n\n')
 }
 
+/**
+ * 「用户瞄准的那一块，现在在第几号」——按**内容**在最新正文里把它找回来。
+ *
+ * 【为什么需要它，2026-08-03 实测】双击换块时，两次点击之间会发生一件事：第一次
+ * mousedown 让上一块失焦 → 那一块存盘 → 编辑框收起（还可能整块被删掉，「清空 = 删除
+ * 这一段」是明文约定）→ **下方内容整体上移**。等第二次点击和 dblclick 到达时，鼠标底下
+ * 已经换了一块，`event.target` 指向的不再是用户瞄准的那一段（实测：瞄准「那么，做那个
+ * 机器人的人」，打开的却是下面那个标题）。
+ *
+ * 光记住「用户按下时那一块是第几号」也不够：如果那次存盘删掉了一块，这个序号在**新**
+ * 正文里指向的仍然是错的段落。所以记的是那一刻的**源码内容**，用它来重新定位——内容
+ * 不会因为别处的增删而漂。
+ *
+ * - 序号还指着同一份内容 → 原样返回（绝大多数情况，零成本）。
+ * - 内容挪了位置 → 返回它现在的新序号。
+ * - 内容**不见了**（那一块被删或被改写）→ 返回 `null`。调用方应当**拒绝进入编辑**：
+ *   此刻打开任何一块都不是用户想要的那一块，宁可让他重新双击一次。
+ * - 多处逐字节相同（重复段落、连续的 `---` 分隔线）→ 挑离原序号最近的一处。这是没有
+ *   更好办法的裁决：内容本身给不出区分度，而「离手指按下的位置最近」是唯一可用的线索。
+ */
+export function locateBlockBySource(
+  sectionMarkdown: string,
+  originalIndex: number,
+  source: string
+): number | null {
+  if (!source.trim()) return null
+  const blocks = splitBlocks(sectionMarkdown)
+  if (
+    Number.isInteger(originalIndex) &&
+    originalIndex >= 0 &&
+    originalIndex < blocks.length &&
+    blocks[originalIndex] === source
+  ) {
+    return originalIndex
+  }
+  let best: number | null = null
+  let bestDistance = Number.POSITIVE_INFINITY
+  for (let i = 0; i < blocks.length; i++) {
+    if (blocks[i] !== source) continue
+    const d = Math.abs(i - originalIndex)
+    if (d < bestDistance) {
+      best = i
+      bestDistance = d
+    }
+  }
+  return best
+}
+
 /** 定长栈追加：超出 `max` 时丢最老的一条。不改动入参（zustand 要求 immutable 更新）。 */
 export function pushBounded<T>(stack: T[], item: T, max: number): T[] {
   const next = [...stack, item]

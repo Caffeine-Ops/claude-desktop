@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'bun:test'
-import { blockSourceAt, replaceBlockAt, isBlockUnchanged, pushBounded } from './writingEdit'
+import {
+  blockSourceAt,
+  replaceBlockAt,
+  isBlockUnchanged,
+  pushBounded,
+  locateBlockBySource
+} from './writingEdit'
 
 const SECTION = '# 小标题\n\n第一段正文。\n\n第二段正文。\n\n第三段正文。'
 
@@ -72,5 +78,43 @@ describe('pushBounded', () => {
 
   it('超出上限时丢最老的一条，长度恒定', () => {
     expect(pushBounded([1, 2, 3], 4, 3)).toEqual([2, 3, 4])
+  })
+})
+
+describe('locateBlockBySource', () => {
+  const SEC = '# 标题\n\n第一段。\n\n第二段。\n\n第三段。'
+
+  // 切块后：0=「# 标题」 1=「第一段。」 2=「第二段。」 3=「第三段。」
+  it('序号没漂时原样返回那个序号', () => {
+    expect(locateBlockBySource(SEC, 1, '第一段。')).toBe(1)
+  })
+
+  it('前面的块被删掉、序号顶漂时，按内容找回真正的位置', () => {
+    // 「# 标题」被删 → 原来的 1 号（第一段）现在是 0 号
+    const after = '第一段。\n\n第二段。\n\n第三段。'
+    expect(locateBlockBySource(after, 1, '第一段。')).toBe(0)
+  })
+
+  it('前面的块被拆成两块、序号后移时，同样能找回', () => {
+    const after = '# 标题\n\n插入的一段。\n\n第一段。\n\n第二段。\n\n第三段。'
+    expect(locateBlockBySource(after, 1, '第一段。')).toBe(2)
+  })
+
+  it('那一块已经不在了 → 回 null，调用方据此拒绝进入编辑', () => {
+    const after = '# 标题\n\n第二段。\n\n第三段。'
+    expect(locateBlockBySource(after, 1, '第一段。')).toBeNull()
+  })
+
+  it('多处内容完全相同时，挑离原序号最近的那一处', () => {
+    // 三个「重复段。」分别在 0 / 2 / 4 号
+    const dup = '重复段。\n\n中间。\n\n重复段。\n\n中间。\n\n重复段。'
+    expect(locateBlockBySource(dup, 3, '重复段。')).toBe(2)
+    expect(locateBlockBySource(dup, 5, '重复段。')).toBe(4)
+    expect(locateBlockBySource(dup, 0, '重复段。')).toBe(0)
+  })
+
+  it('空源码一律回 null —— 空块不该成为定位锚点', () => {
+    expect(locateBlockBySource(SEC, 1, '')).toBeNull()
+    expect(locateBlockBySource(SEC, 1, '   ')).toBeNull()
   })
 })

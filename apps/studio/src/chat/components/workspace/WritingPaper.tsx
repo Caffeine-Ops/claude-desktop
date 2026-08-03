@@ -5,7 +5,7 @@ import { cn } from '@/src/lib/utils'
 import { useWritingStore } from '../../stores/writing'
 import { paperSkinClass } from '../../lib/writingGenreStyle'
 import type { WritingRevisionTarget } from '../../lib/writingRevision'
-import { blockSourceAt, isBlockUnchanged } from '../../lib/writingEdit'
+import { blockSourceAt, isBlockUnchanged, locateBlockBySource } from '../../lib/writingEdit'
 import { AssistantMarkdown } from '../chat/AssistantMarkdown'
 import { WritingSelectionBubble } from './WritingSelectionBubble'
 
@@ -168,6 +168,22 @@ export function WritingPaper({
    * 而冲突提示恰恰在让用户按 Esc）。
    */
   const refocusRef = useRef<string | null>(null)
+  /**
+   * 用户**按下鼠标那一刻**瞄准的是哪一块，连同那一刻它的源码。
+   *
+   * 【为什么不能只信 dblclick 的 event.target，2026-08-03 实测】双击的两次点击之间会
+   * 发生一连串事：第一次 mousedown 让上一块失焦 → 那一块存盘 → 编辑框收起（比只读态高，
+   * 甚至整块被删——「清空 = 删除这一段」是明文约定）→ **下方内容整体上移**。实测这一串
+   * 在 15ms 内跑完，等 dblclick 到达时鼠标底下已经换了一块：瞄准「那么，做那个机器人
+   * 的人」，打开的却是下面那个标题。
+   *
+   * 记 `source`（而不只是序号）是因为序号本身也会漂：那次存盘若删掉了一块，这个序号在
+   * **新**正文里指的仍是错的段落。内容不会漂，`locateBlockBySource` 拿它找回真正的位置。
+   *
+   * 只在 `e.detail === 1`（双击序列的**第一次**按下）时记——第二次按下时布局已经变了，
+   * 它看到的正是那个错的块。
+   */
+  const aimRef = useRef<{ sectionName: string; blockIndex: number; source: string } | null>(null)
 
   // 每节切块。sections 变才重算——流式期间 2s 一次，代价可忽略。
   const blocks = useMemo(
@@ -482,14 +498,32 @@ export function WritingPaper({
       const list = committed ? useWritingStore.getState().sections : sections
       const sec = list.find((s) => s.name === sectionName)
       if (!sec) return
-      const source = blockSourceAt(sec.markdown, blockIndex)
+      /**
+       * 用「按下那一刻记住的内容」把序号重新定位——**必须在上面那次提交之后做**，因为
+       * 正文正是被那次提交改动的（见 aimRef 注释里的完整时序）。`aim` 只在同一节内有效；
+       * 没有 aim（例如通过别的路径调进来）就退回原序号，行为与从前一致。
+       */
+      const aim = aimRef.current
+      aimRef.current = null
+      let idx = blockIndex
+      if (aim && aim.sectionName === sectionName) {
+        const relocated = locateBlockBySource(sec.markdown, aim.blockIndex, aim.source)
+        if (relocated === null) {
+          // 用户瞄准的那一段已经不在了（刚被删掉 / 被改写）。此刻打开任何一块都不是他
+          // 要的那一块，宁可不开并说明原因——静默打开错的段落，用户会以为自己点错了。
+          useWritingStore.getState().setConflictMsg('你双击的那一段刚刚变了，请重新双击一次。')
+          return
+        }
+        idx = relocated
+      }
+      const source = blockSourceAt(sec.markdown, idx)
       if (source === null) return
       // 清掉浏览器选区：双击本身会选中一个词，不清的话选区改写气泡会同时冒出来，
       // 两条修改通道各有一套定位，同时开着必然打架。
       window.getSelection()?.removeAllRanges()
       setEditing({
         sectionName,
-        blockIndex,
+        blockIndex: idx,
         base: source,
         draft: source,
         baseMtimeMs: sec.mtimeMs
@@ -637,6 +671,23 @@ export function WritingPaper({
                   editable && 'cursor-text rounded transition-colors hover:bg-muted/50'
                 )}
                 title={editable ? '双击这一段可直接编辑它的 Markdown 源码' : undefined}
+                // 只记双击序列的**第一次**按下：那一刻布局还没被上一块的存盘/收起改动过，
+                // 它指向的才是用户真正瞄准的段落（见 aimRef 注释）。
+                onMouseDown={
+                  isEditing
+                    ? undefined
+                    : (e) => {
+                        if (e.detail !== 1) return
+                        const src = sections.find((s) => s.name === sec.name)
+                        aimRef.current = src
+                          ? {
+                              sectionName: sec.name,
+                              blockIndex: i,
+                              source: blockSourceAt(src.markdown, i) ?? ''
+                            }
+                          : null
+                      }
+                }
                 onDoubleClick={isEditing ? undefined : () => void beginEdit(sec.name, i)}
               >
                 {isEditing ? (
