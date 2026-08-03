@@ -2377,8 +2377,12 @@ export function registerIpcHandlers(): void {
     return checkForUpdates()
   })
 
+  // 刻意不 await installUpdate：它内部要先广播 'installing' 再停一小会儿
+  // 才 quitAndInstall（见 appUpdater 的 INSTALL_ACK_DELAY_MS），await 会把
+  // renderer 的 invoke 一起吊在那，而调用方只想要「已收到」。让它自己跑完，
+  // 结论照常走 UPDATER_STATE_CHANGED 广播。
   ipcMain.handle(IPC_CHANNELS.UPDATER_INSTALL, async (): Promise<void> => {
-    installUpdate()
+    void installUpdate()
   })
 
   // ── 登录/账号（状态机在 services/authService.ts）──

@@ -48,13 +48,15 @@ function StatusBadge({
   variant,
   label,
 }: {
-  variant: 'latest' | 'found' | 'checking' | 'error';
+  variant: 'latest' | 'found' | 'checking' | 'installing' | 'error';
   label: string;
 }): React.JSX.Element {
   const styles = {
     latest: 'bg-[var(--brand)]/12 text-[var(--brand)]',
     found: 'bg-primary/12 text-primary',
     checking: 'bg-muted text-muted-foreground',
+    // 安装中沿用品牌绿（是就绪态的延续，不是新语义），只把点换成脉冲。
+    installing: 'bg-[var(--brand)]/12 text-[var(--brand)]',
     error: 'bg-destructive/12 text-destructive',
   }[variant];
   const dot = {
@@ -62,6 +64,7 @@ function StatusBadge({
     // 脉冲点：发现新版是需要用户注意的正向事件，动一下把视线拉过来。
     found: 'bg-primary [animation:updater-pulse_1.8s_ease-out_infinite] motion-reduce:animate-none',
     checking: 'bg-muted-foreground',
+    installing: 'bg-[var(--brand)]',
     error: 'bg-destructive',
   }[variant];
   return (
@@ -122,9 +125,15 @@ export function UpdateAppSection({
     phase === 'checking' || phase === 'available' || phase === 'downloading';
   const showUpToDate = phase === 'none' && hasManuallyChecked;
 
-  // hero 的三态：普通（当前版本）、发现新版（版本迁移）、就绪（新版号）。
+  // hero 的四态：普通（当前版本）、发现新版（版本迁移）、就绪（新版号）、
+  // 安装中（新版号 + spinner）。
   const isFound = phase === 'available' || phase === 'downloading';
   const isReady = phase === 'ready';
+  // installing = 已发起重启安装，进程正在退出（Windows 走 NSIS 静默安装，
+  // 见 main 侧 appUpdater.installUpdate）。这个态在设置页里活不过几百毫秒
+  // ——窗口马上就没了——但它必须存在：否则 phase 离开 'ready' 的那一拍
+  // hero 会闪回「检查更新」按钮，看着像点了个没反应还被重置的按钮。
+  const isInstalling = phase === 'installing';
 
   // hero 左侧 app 图标的配色随相位切换。
   const glyphClass = isFound
@@ -152,7 +161,9 @@ export function UpdateAppSection({
               glyphClass,
             )}
           >
-            {isReady ? (
+            {isInstalling ? (
+              <Loader2 aria-hidden="true" className="size-6 animate-spin" />
+            ) : isReady ? (
               <Check aria-hidden="true" className="size-6" />
             ) : isFound ? (
               <Download aria-hidden="true" className="size-6" />
@@ -167,7 +178,7 @@ export function UpdateAppSection({
             <p className="text-xs text-muted-foreground">
               {isFound
                 ? t('updateApp.foundVersion')
-                : isReady
+                : isReady || isInstalling
                   ? t('updateApp.readyTitle')
                   : t('updateApp.currentVersion')}
             </p>
@@ -184,7 +195,7 @@ export function UpdateAppSection({
                 </span>
               ) : (
                 <span className="font-mono text-xl font-semibold tracking-tight tabular-nums text-foreground">
-                  {isReady ? nextVersion : currentVersion}
+                  {isReady || isInstalling ? nextVersion : currentVersion}
                 </span>
               )}
 
@@ -193,6 +204,8 @@ export function UpdateAppSection({
                 <StatusBadge variant="checking" label={t('updateApp.badge.checking')} />
               ) : phase === 'downloading' || phase === 'available' ? (
                 <StatusBadge variant="found" label={t('updateApp.badge.downloading')} />
+              ) : isInstalling ? (
+                <StatusBadge variant="installing" label={t('updateApp.badge.installing')} />
               ) : isReady ? (
                 <StatusBadge variant="latest" label={t('updateApp.badge.ready')} />
               ) : phase === 'error' ? (
@@ -204,9 +217,19 @@ export function UpdateAppSection({
           </div>
 
           {/* 主操作：就绪时「立即重启更新」（品牌绿），否则「检查更新」。
-              下载中/检查中不给独立按钮（进度已在下半区表达，避免双重反馈）。 */}
+              下载中/检查中不给独立按钮（进度已在下半区表达，避免双重反馈）。
+              安装中保持同一颗按钮的位置与配色、只换成 disabled + spinner：
+              按钮消失或换位会让「点了一下界面就变样」读成误触。 */}
           <div className="shrink-0">
-            {isReady ? (
+            {isInstalling ? (
+              <Button
+                disabled
+                className="bg-[var(--brand)] text-[var(--brand-foreground)] hover:bg-[var(--brand)]/90"
+              >
+                <Loader2 aria-hidden="true" className="animate-spin" />
+                {t('updateApp.installing')}
+              </Button>
+            ) : isReady ? (
               <Button onClick={handleInstall} className="bg-[var(--brand)] text-[var(--brand-foreground)] hover:bg-[var(--brand)]/90">
                 <RefreshCw aria-hidden="true" />
                 {t('updateApp.installNow')}
@@ -268,6 +291,15 @@ export function UpdateAppSection({
             </p>
           ) : null}
 
+          {/* 安装中：说清楚接下来会发生什么。Windows 静默安装没有任何安装器
+              窗口，用户看不到「装到哪了」，只能靠这句话知道该等而不是重开。 */}
+          {isInstalling ? (
+            <p className="flex items-center gap-2 text-[13px] font-medium text-foreground">
+              <Loader2 aria-hidden="true" className="size-4 animate-spin text-[var(--brand)]" />
+              {t('updateApp.installingHint')}
+            </p>
+          ) : null}
+
           {phase === 'error' ? (
             <p className="text-[13px] text-destructive">
               {state?.errorMessage
@@ -277,8 +309,9 @@ export function UpdateAppSection({
           ) : null}
 
           {/* 无异常相位（idle / none）时显示「自动检查」提示。不支持
-              （dev / 浏览器）时降级成对应说明。 */}
-          {!busy && !isReady && phase !== 'error' ? (
+              （dev / 浏览器）时降级成对应说明。安装中也要排除掉——那时讲
+              「每 10 分钟自动检查」既不相关又占位。 */}
+          {!busy && !isReady && !isInstalling && phase !== 'error' ? (
             <p className="text-xs leading-relaxed text-muted-foreground">
               {supported
                 ? t('updateApp.autoHint3h')
