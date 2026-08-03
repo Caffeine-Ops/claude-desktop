@@ -57,6 +57,7 @@ import {
 } from './services/proposalAssetProtocol'
 import { BG_ASSET_SCHEME, registerBgAssetProtocol } from './services/bgAssetProtocol'
 import { PPT_ASSET_SCHEME, registerPptAssetProtocol } from './services/pptAssetProtocol'
+import { WRITING_ASSET_SCHEME, registerWritingAssetProtocol } from './services/writingAssetProtocol'
 import { startKbSyncScheduler } from './core/kbSyncScheduler'
 import { onKbBuildStatus, scheduleKbBuild } from './core/kbBuildRunner'
 import { readKbIndex, kbStoreHasDocs } from './core/kbIndexStore'
@@ -82,8 +83,9 @@ protocol.registerSchemesAsPrivileged([
       codeCache: true
     }
   },
-  // kbasset:// = 知识库镜像内嵌图；proposalasset:// = 写方案草稿产出图。
-  // 两者都只在 ready 后 protocol.handle（见下方 whenReady 回调），但 privileged
+  // kbasset:// = 知识库镜像内嵌图；proposalasset:// = 写方案草稿产出图；
+  // writingasset:// = 写作项目配图（<项目>/images/ 下的 AI 生图与用户放入图）。
+  // 三者都只在 ready 后 protocol.handle（见下方 whenReady 回调），但 privileged
   // 声明必须在这里（ready 前、只能一次）——漏声明的自定义协议在 <img src> 里
   // 会被当不安全内容拦掉。
   {
@@ -121,6 +123,17 @@ protocol.registerSchemesAsPrivileged([
   // 不必逐个搬字节过 IPC。同上：privileged 声明必须在 ready 前、只能一次。
   {
     scheme: PPT_ASSET_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true
+    }
+  },
+  // writingasset:// = 写作项目配图。见文件头（本数组开头那条注释）与
+  // services/writingAssetProtocol.ts 头注释的取舍说明。
+  {
+    scheme: WRITING_ASSET_SCHEME,
     privileges: {
       standard: true,
       secure: true,
@@ -334,6 +347,7 @@ app.whenReady().then(async () => {
   await registerProposalAssetProtocol()
   await registerBgAssetProtocol()
   await registerPptAssetProtocol()
+  await registerWritingAssetProtocol()
 
   // **studio 单视图**是唯一形态（Phase 4 起，legacy 三 tab 架构已物理下线）：
   // 一个全屏 studio tab，聊天(/chat)、工作画布(/)、设置(/?settings=1)、导航
