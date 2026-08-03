@@ -4,6 +4,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import update_spec as us
+import writing_utils as wu
 
 SPEC_TEXT = """## 体裁
 - genre: short-story
@@ -84,3 +85,26 @@ def test_set_field_keeps_colon_for_simple_kv(tmp_path):
     p = _spec_file(tmp_path)
     us.set_field(p, "文风锁定", "voice", "市井烟火")
     assert "- voice: 市井烟火" in p.read_text(encoding="utf-8")
+
+
+def test_impact_map_covers_illustration_section():
+    """未登记的段改完不会打印「影响范围」，用户拿不到「哪些已写章节要回改」
+    的提醒。配图方案改了，已写章节里的出图指令块就得复核，必须有这条提示。"""
+    assert "配图" in us.IMPACT_MAP
+    assert "配图" in us.IMPACT_MAP["配图"]
+
+
+def test_set_field_writes_illustration_fields(tmp_path):
+    """三个字段名是后续手册与 SKILL.md 共同依赖的契约，
+    这条用例把它们钉死，改名会当场变红。"""
+    spec = tmp_path / "spec_lock.md"
+    spec.write_text("## 体裁\n- genre: article\n", encoding="utf-8")
+    us.set_field(spec, "配图", "image_plan", "inline")
+    us.set_field(spec, "配图", "image_count", "3")
+    us.set_field(spec, "配图", "image_style", "极简线条插画")
+    parsed = wu.parse_spec_lock(spec)
+    assert parsed["配图"] == {
+        "image_plan": "inline",
+        "image_count": "3",
+        "image_style": "极简线条插画",
+    }
