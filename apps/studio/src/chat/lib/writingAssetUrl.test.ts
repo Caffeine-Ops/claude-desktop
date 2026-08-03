@@ -9,11 +9,28 @@ describe('toWritingAssetUrl', () => {
 
   it('非写作资产路径原样返回——链式判定靠这个不误伤外链与 KB 图', () => {
     expect(toWritingAssetUrl('https://example.com/a.png')).toBe('https://example.com/a.png')
-    expect(toWritingAssetUrl('/Users/k/kb-index/assets/x.png')).toBe('/Users/k/kb-index/assets/x.png')
+    // 2026-08-03 code review Minor 6：此前这条用例是重言式——原路径本身不含 /images/，
+    // 删掉 isWritingAssetSrc 里的 kb-index 排除分支它照样绿，没测到那行代码。换成一个
+    // 真正会撞上 /images/ 白名单、必须靠 kb-index 排除分支才能拦住的输入。
+    expect(toWritingAssetUrl('/Users/k/kb-index/assets/images/x.png')).toBe(
+      '/Users/k/kb-index/assets/images/x.png'
+    )
+    // 同理：proposal-drafts 排除分支也要用会撞上 /images/ 的输入来测。
+    expect(toWritingAssetUrl('/Users/k/proposal-drafts/s1/assets/images/x.png')).toBe(
+      '/Users/k/proposal-drafts/s1/assets/images/x.png'
+    )
   })
 
   it('空串原样返回', () => {
     expect(toWritingAssetUrl('')).toBe('')
+  })
+
+  // Important 2：win32 绝对路径此前在 isWritingAssetSrc 的 `startsWith('/')` 门槛上就被
+  // 挡掉，整条链在 Windows 上恒断。toPosix 归一后应能识别，且编码仍用调用方传入的原始
+  // 反斜杠字节（main 侧按原样 decode 后落盘比对，不能被这里悄悄改写分隔符）。
+  it('win32 反斜杠绝对路径也能转成 writingasset:// URL（判定走 toPosix，编码保留原始字节）', () => {
+    const p = 'C:\\Users\\k\\稿子\\images\\gen-1.png'
+    expect(toWritingAssetUrl(p)).toBe(`writingasset://w/${encodeURIComponent(p)}`)
   })
 })
 
@@ -44,5 +61,23 @@ describe('resolveRelativeAssetPath', () => {
 
   it('base 为空串时原样返回', () => {
     expect(resolveRelativeAssetPath('', '../images/a.png')).toBe('../images/a.png')
+  })
+
+  // Important 2：win32 base（写作项目所在的操作系统目录）此前 `base.split('/')` 切不开
+  // 反斜杠串，一个 '..' 就把整条 base 当一段 pop 光，吐出脱离 base 的裸相对路径
+  // （`images/a.png`）。toPosix 归一 base 后应能正确定位到兄弟目录。
+  it('win32 base + 相对路径也能正确归一到兄弟目录', () => {
+    expect(resolveRelativeAssetPath('C:\\Users\\k\\稿子\\drafts', '../images/a.png')).toBe(
+      'C:/Users/k/稿子/images/a.png'
+    )
+  })
+
+  // Minor 6 裁定：'..' 跳出 base 之外视为非法输入，不拼一个逃逸到不相关目录的绝对路径，
+  // 原样返回未解析的 src——下游链式判定对着相对串不会命中任何一条 asset 协议，这张图
+  // 刷不出来，但不会把用户导向一个越界的绝对路径。
+  it('.. 跳出 base 之外——视为非法，原样返回，不静默逃逸到不相关目录', () => {
+    expect(resolveRelativeAssetPath('/a', '../../../images/x.png')).toBe(
+      '../../../images/x.png'
+    )
   })
 })

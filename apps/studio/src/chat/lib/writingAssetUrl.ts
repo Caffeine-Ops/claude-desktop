@@ -10,14 +10,42 @@
  * 症状是「渲染侧转了 URL、main 侧判越界回 403」，图空白但控制台有 403，
  * 可查。改任一侧务必同步另一侧。
  */
+
+// 只服务位图与 svg，与 main 侧 writingAssetProtocol.ts 的白名单同步。
 const ALLOWED_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i
 
+/**
+ * win32 反斜杠路径 → 正斜杠副本，仅供判定用，不改原始字符串（toWritingAssetUrl 编码时
+ * 仍用调用方传入的原始字节，main 侧按原样 decode 后落盘比对）。与 shared/proposalAsset.ts、
+ * src/chat/lib/kbAssetUrl.ts 的 toPosix 同款处理——这是仓库里判定本地资产路径的统一惯例。
+ */
+function toPosix(p: string): string {
+  return p.replace(/\\/g, '/')
+}
+
+// posix 绝对路径以 `/` 开头；win32 绝对路径 toPosix 后形如 `C:/Users/...`，以
+// "<盘符>:/" 开头。两种都算「绝对本地路径」，用来把 http(s) 外链（`https://…`）与相对路径
+// （`../images/a.png`）排除在外——它们都不该被误当写作资产转协议。
+const WIN32_DRIVE_RE = /^[a-zA-Z]:\//
+
+function isAbsoluteLocalPath(posixPath: string): boolean {
+  return posixPath.startsWith('/') || WIN32_DRIVE_RE.test(posixPath)
+}
+
+/**
+ * 2026-08-03 code review CONFIRMED（Important 2）：此前只认 `src.startsWith('/')`，
+ * Windows 绝对路径（`C:\Users\k\稿子\images\a.png`）在这一步就被判走「不是本地资产」，
+ * 后续渲染既不转 writingasset:// URL，也过不了 AssistantMarkdown 的 assetAwareUrlTransform
+ * （defaultUrlTransform 把 `C:` 当未知协议整体清空成空串）——图连 src 都没有，Windows 用户
+ * 整条链恒断。现在先 toPosix 再判定，posix 与 win32 绝对路径都能识别。
+ */
 export function isWritingAssetSrc(src: string): boolean {
   if (!src || !ALLOWED_EXT_RE.test(src)) return false
-  if (!src.startsWith('/')) return false // 外链 http(s) 与相对路径都不是本地资产
-  if (src.includes('/kb-index/assets/')) return false
-  if (src.includes('/proposal-drafts/')) return false
-  return src.includes('/images/')
+  const posix = toPosix(src)
+  if (!isAbsoluteLocalPath(posix)) return false // 外链 http(s) 与相对路径都不是本地资产
+  if (posix.includes('/kb-index/assets/')) return false
+  if (posix.includes('/proposal-drafts/')) return false
+  return posix.includes('/images/')
 }
 
 export function toWritingAssetUrl(src: string): string {
@@ -41,30 +69,47 @@ export function toWritingAssetUrl(src: string): string {
  * 只手写 posix 语义（`/` 分隔、`..` 出栈、`.`/空段跳过）：渲染进程（Chromium
  * 沙箱里的前端代码）拿不到 `node:path`，不能借 path.posix.resolve/normalize；
  * 而写作正文里的相对路径本身也恒为 posix 形（模型产出、不是文件系统路径字面量）。
+ * `base`（写作项目所在的操作系统目录）先 toPosix 再拼接——2026-08-03 code review
+ * 指出的 Important 2：win32 上 `base.split('/')` 曾经把整条反斜杠路径当一段切不开，
+ * `..` 一下把它 pop 光，结果返回 `images/a.png` 这种脱离 base 的裸相对路径。拼接结果
+ * 统一吐 posix 分隔符（哪怕 base 是反斜杠输入）——这不影响后续正确性：main 侧
+ * `existsSync(normalize(...))`（Node 的 path.normalize 在 win32 上把 `/` 也当合法
+ * 分隔符处理）能吃下这种混合形态；这里只负责拼出「对不对」，不负责「像不像原生路径」。
  *
  * @param base 资产基准目录的绝对路径（如 `<项目>/drafts`，不带末尾斜杠）。
  *   空串表示调用方未提供 assetBaseDir（AssistantMarkdown 默认不传）——原样返回，
  *   这是「未传 assetBaseDir 时行为逐字不变」硬要求的落地点。
  * @param src markdown 里写的原始 src。非 `./` / `../` 开头（绝对路径、http(s) 外链、
  *   protocol:// URL……）一律原样返回，只有相对路径才需要这步。
+ *
+ * `..` 跳出 base 之外的裁定（2026-08-03 code review Minor 6，此前是静默逃逸到根——
+ * `base='/a'` + `src='../../../images/x.png'` 会吐出 `/images/x.png`，一个看似合法
+ * 实则指向完全不相关目录的绝对路径）：视为非法输入，原样返回未解析的 src。理由——这个
+ * 函数唯一的调用场景是写作正文里模型生成的相对路径，正常情况下最多上跳一级（drafts →
+ * images 这两个兄弟目录），多级上跳意味着输入不符合预期（要么模型瞎写、要么恶意构造）；
+ * 返回原样 src 而不是硬凑一个越界绝对路径，后续链式判定（isLocalAssetPath /
+ * isWritingAssetSrc）对着这个未解析的相对串统统不命中，最终只是这张图刷不出来——比
+ * 静默算出一个不受控的绝对路径、再拿它去查协议白名单安全得多。
  */
 export function resolveRelativeAssetPath(base: string, src: string): string {
   if (!base) return src
   if (!src.startsWith('./') && !src.startsWith('../')) return src
 
-  const baseParts = base.split('/').filter(Boolean)
+  const posixBase = toPosix(base)
+  const baseParts = posixBase.split('/').filter(Boolean)
   const srcParts = src.split('/')
   for (const part of srcParts) {
     if (part === '' || part === '.') continue
     if (part === '..') {
-      if (baseParts.length > 0) baseParts.pop()
+      if (baseParts.length === 0) return src // 跳出 base 之外——视为非法，不转，原样返回
+      baseParts.pop()
     } else {
       baseParts.push(part)
     }
   }
 
-  // base 是绝对路径（AssistantMarkdown 调用方恒传绝对目录）才补前导 '/'；
-  // 理论上 base 若是相对路径也不报错，只是拼出的结果同样是相对的。
-  const prefix = base.startsWith('/') ? '/' : ''
+  // posixBase 是绝对路径（AssistantMarkdown 调用方恒传绝对目录）才补前导 '/'；
+  // win32 盘符形态（`C:/Users/...`）本身已含「绝对」语义，不需要再补前导 '/'。
+  const prefix = posixBase.startsWith('/') ? '/' : ''
   return prefix + baseParts.join('/')
 }

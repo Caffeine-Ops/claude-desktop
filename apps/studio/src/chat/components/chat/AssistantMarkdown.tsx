@@ -19,7 +19,11 @@ import { toKbAssetUrl } from '../../lib/kbAssetUrl'
 import { isLocalAssetPath, safeDecodeUri } from '../../lib/localAssetPath'
 import { renderMermaid } from '../../lib/mermaidRender'
 import { toProposalAssetUrl } from '../../lib/proposalAssetUrl'
-import { resolveRelativeAssetPath, toWritingAssetUrl } from '../../lib/writingAssetUrl'
+import {
+  isWritingAssetSrc,
+  resolveRelativeAssetPath,
+  toWritingAssetUrl
+} from '../../lib/writingAssetUrl'
 import {
   isEmbeddableImagePath,
   normalizeImageMarkdown
@@ -360,11 +364,21 @@ function createImgComponent(assetBaseDir?: string): NonNullable<Components['img'
       // 链式判定之前。assetBaseDir 未传时 resolveRelativeAssetPath 原样返回 decoded，
       // isRelative 分支不生效，下面这行退化为原有的 `isLocalAssetPath(decoded) ? decoded : src`
       // ——未传 assetBaseDir 时行为逐字不变，这是硬要求。
+      //
+      // 2026-08-03 code review CONFIRMED（Important 1）：else 分支此前只判 isLocalAssetPath
+      // （kb ‖ proposal），写作资产不在其中——于是聊天气泡里模型直接写绝对写作路径
+      // （`![](/Users/k/…/images/gen-1.png)`，没有走 assetBaseDir 相对路径这条道）时，path
+      // 落到 `: src`，也就是 react-markdown **编码后**的串；接着 toWritingAssetUrl 会对它
+      // 再 encodeURIComponent 一次，main 侧 decode 一次后仍是半编码状态，越过白名单但
+      // existsSync 找不到文件——404、图空白、控制台无线索（含空格/CJK 路径必现）。
+      // isWritingAssetSrc 早就导出了却一直没人调用，本就是为这个位置准备的：并进这里的
+      // 判定，让写作资产也走「先解码、再判定」这同一扇门，和 kb/proposal 两类资产共用
+      // 同一条解码保证，不再各走各的。
       const isRelativeSrc = decoded.startsWith('./') || decoded.startsWith('../')
       const path =
         isRelativeSrc && assetBaseDir
           ? resolveRelativeAssetPath(assetBaseDir, decoded)
-          : isLocalAssetPath(decoded)
+          : isLocalAssetPath(decoded) || isWritingAssetSrc(decoded)
             ? decoded
             : src
       const kbUrl = toKbAssetUrl(path)
@@ -381,7 +395,17 @@ function createImgComponent(assetBaseDir?: string): NonNullable<Components['img'
       // 预览此处同步降级，避免「预览有图、成品 Word 没图」的静默不一致——与 proposalDocx.
       // imageParagraphs 共用同一个 isEmbeddableImagePath 谓词。仅对 URL 被改写的本地
       // 资产图（resolved !== path）生效，不影响外链图。
-      if (resolved !== path && !isEmbeddableImagePath(path)) {
+      //
+      // 2026-08-03 code review CONFIRMED（Important 3）：写作项目配图不受这条降级约束——
+      // isEmbeddableImagePath 的白名单（png/jpg/jpeg/gif）是为「预览要和 docx 导出保持一致」
+      // 这条不变量服务的，而写作预览眼下压根没有 docx 导出这条路径，webp/svg/bmp 经
+      // writingasset:// 协议本来就能正常服务。不排除的话，写作项目放一张 fig.webp，预览会
+      // 恒定退化成灰字「[图：fig.webp]」而不是真图——这条降级对写作资产是纯误伤。用
+      // isWritingAssetSrc(path) 判断是否为写作资产、命中则跳过整个降级分支。将来如果写作也
+      // 加上 docx/类似格式的导出，再把 isEmbeddableImagePath（或它的等价物）接回来即可，
+      // 到时候这行排除要一并去掉。
+      const isWritingAsset = isWritingAssetSrc(path)
+      if (resolved !== path && !isWritingAsset && !isEmbeddableImagePath(path)) {
         const caption = (alt && alt.trim()) || path.slice(path.lastIndexOf('/') + 1)
         return (
           <span className="my-2 inline-block text-[13px] text-neutral-400">
@@ -801,10 +825,17 @@ function splitCitationText(value: string): unknown[] | null {
 
 // defaultUrlTransform 会把 win32 盘符路径（C:\… / C:/…）当未知协议清空成 ''，
 // 图片 src 直接消失、点图链全断——Windows 是 CI 出包目标，不能靠它兜。本地资产路径（KB 图/
-// 草稿产出图，特征前缀足够收敛）跳过 sanitize 原样放行；其余 URL 照走默认，保住
-// javascript:/data: 注入防护。判定前先解码：sanitize 收到的是 normalizeUri 编码后的串。
+// 草稿产出图/写作项目配图，特征前缀足够收敛）跳过 sanitize 原样放行；其余 URL 照走默认，
+// 保住 javascript:/data: 注入防护。判定前先解码：sanitize 收到的是 normalizeUri 编码后的串。
+//
+// 2026-08-03 code review CONFIRMED（Important 2 失败场景的后半段）：这里此前只判
+// isLocalAssetPath（kb ‖ proposal），写作资产不在其中——一张聊天气泡里的绝对写作路径若
+// 恰好是 win32 形态（`C:\Users\k\稿子\images\a.png`），会在这一步就被 defaultUrlTransform
+// 当成未知协议整体清空成空串，img 组件连 src prop 都收不到，isWritingAssetSrc 加得再对也
+// 救不回来——这一层要先放行才轮得到 img 覆写里的链式判定。补 isWritingAssetSrc 分支堵上。
 function assetAwareUrlTransform(url: string): string {
-  if (isLocalAssetPath(safeDecodeUri(url))) return url
+  const decoded = safeDecodeUri(url)
+  if (isLocalAssetPath(decoded) || isWritingAssetSrc(decoded)) return url
   return defaultUrlTransform(url)
 }
 

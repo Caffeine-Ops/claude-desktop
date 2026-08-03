@@ -85,9 +85,10 @@ protocol.registerSchemesAsPrivileged([
   },
   // kbasset:// = 知识库镜像内嵌图；proposalasset:// = 写方案草稿产出图；
   // writingasset:// = 写作项目配图（<项目>/images/ 下的 AI 生图与用户放入图）。
-  // 三者都只在 ready 后 protocol.handle（见下方 whenReady 回调），但 privileged
-  // 声明必须在这里（ready 前、只能一次）——漏声明的自定义协议在 <img src> 里
-  // 会被当不安全内容拦掉。
+  // 以下几个自定义协议都只在 ready 后 protocol.handle（见下方 whenReady 回调），但
+  // privileged 声明必须在这里（ready 前、只能一次）——漏声明的自定义协议在 <img src>
+  // 里会被当不安全内容拦掉。（2026-08-03 code review Minor 9：此前写死「三者」，
+  // 实际这个数组里同类协议已有 5 个，写死的计数会随每次新增而过期，改成不计数的说法。）
   {
     scheme: KB_ASSET_SCHEME,
     privileges: {
