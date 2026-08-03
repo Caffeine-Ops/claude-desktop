@@ -58,5 +58,5 @@ skills\writing\bin\ensure-python.cmd          # stdout 末行是 WRITING_PY=<pat
    不引分词库——依赖越轻越好打包，且中文分词在人名上本来就不准。
 2. **阈值是可调常量，测试钉的是行为不是数值**。`ai_slop_checker` 的 `*_FLOOR`/`*_CEIL`
    用真实样本调时，改常量不该动测试（测试钉「AI 腔 < 人话」这类相对关系）。
-3. **契约的段名 / 字段名被多个脚本逐字解析**（`update_spec` 认死八个段名，`continuity_check`
+3. **契约的段名 / 字段名被多个脚本逐字解析**（`update_spec` 认死九个段名，`continuity_check`
    逐字解析人物档案与伏笔表的竖线字段）。改字段名要同步改所有解析处，否则静默失效。

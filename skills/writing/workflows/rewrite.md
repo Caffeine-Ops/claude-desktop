@@ -73,7 +73,7 @@ $WRITING_PY ${SKILL_DIR}/scripts/source_to_md.py <原文文件或URL> --out-dir 
 - genre: wechat
 ```
 
-段名 `## 体裁` 与字段名 `genre` 必须逐字用这一套（`update_spec.py` 认死八个固定段名），
+段名 `## 体裁` 与字段名 `genre` 必须逐字用这一套（`update_spec.py` 认死九个固定段名），
 否则后续要改契约时脚本认不出。桌面端写作工作区也读这一行决定排版皮肤——不写的话，
 一篇公众号推文会被按职场公文的版式显示给用户。
 
