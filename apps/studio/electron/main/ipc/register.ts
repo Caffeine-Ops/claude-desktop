@@ -3257,6 +3257,28 @@ export function registerIpcHandlers(): void {
       const projectDir = typeof args?.projectDir === 'string' ? args.projectDir : ''
       const prompt = typeof args?.prompt === 'string' ? args.prompt : ''
       if (!projectDir || !prompt) throw new Error('缺少项目路径或提示词')
+      // 路径守卫必须钉在 main 侧，渲染侧修不牢：projectDir 的源头是
+      // detectWritingSource()（src/chat/lib/writingDocSource.ts）从会话里 Bash
+      // 工具的命令文本／输出里正则抠出来的字符串，那层本身就不可信（它自己的
+      // 注释写着「用户手敲 echo 调试，字面量不可信」），到 main 这一层必须重新
+      // 当成不可信输入把关，不能假设"渲染侧已经校验过"。
+      //
+      // 两条校验对齐同目录 writingProject.ts 的既有惯例：
+      // - isAbsolute：sourceAbsPath() 的老规矩，相对路径在 main 侧没有基准目录
+      //   可言，不拒绝的话 mkdir/writeFile 会相对 main 进程 cwd 落盘（dev 下
+      //   落进仓库目录），且返回的 path 是相对路径，渲染侧 isWritingAssetSrc
+      //   判定为假，图会显示失败且协议守卫从头到尾没被触发，连 403 都看不到。
+      // - 目录必须已存在：scanWritingDoc 在 project 模式下的不变量是"写作从不
+      //   创建项目根"（目录不存在只回 dirMissing，从不 mkdir 出来）；若这里放行
+      //   mkdir({recursive:true})，会单方面打破这条不变量——间接提示注入场景下
+      //   （模型被诱导 echo 一行 WRITING_PROJECT=<任意路径>）会在任意位置无提示
+      //   建出一条目录链，且完全绕开 PermissionBroker（这条 IPC 是 renderer 直
+      //   接 invoke，不经 canUseTool 权限卡）。收窄成"目录必须已存在"后，攻击面
+      //   降到"在已存在目录下的 images/ 子目录里放一张图片"，不再能凭空造目录树。
+      if (!isAbsolute(projectDir)) throw new Error('项目路径必须是绝对路径')
+      if (!statSync(projectDir, { throwIfNoEntry: false })?.isDirectory()) {
+        throw new Error('写作项目目录不存在')
+      }
       const cfg = getAppSettings().imageApi
       // 文案与提案侧逐字一致：卡片按「未配置」字样决定要不要显示「去设置」按钮，
       // 换个说法会让那个按钮静默消失（见 src/chat/lib/imageErrorText.ts 的判定）。
