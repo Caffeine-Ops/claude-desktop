@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import type { WritingSection } from '@desktop-shared/writing'
+import { parseGenImageDirectives, genImageDirectiveKey } from '@desktop-shared/proposalGenImage'
 import {
   buildWritingGenImagePrompt,
   autoFireWritingGenImages,
@@ -46,22 +47,32 @@ function section(name: string, markdown: string, mtimeMs = 1000): WritingSection
 const PROJECT_DIR = '/proj'
 
 let calls: { projectDir: string; prompt: string }[]
+// m-3 修复：收集每次 mock IPC 调用返回的 promise，flush() 直接 await 它们本身，而不是
+// 盲猜"两轮 setTimeout(0) 够不够"。fireWritingGenImage 未来若多一个 await，固定次数的
+// setTimeout 链会在"还没跑完"时就放行断言，calls.length 还是 0，上限/幂等那几条用例会
+// 因此假绿（断言通过但根本没测到东西）；Promise.all 只要 mock 本身被调用过就一定等得到。
+let pending: Promise<unknown>[]
 
-/** 等本轮 fireWritingGenImage 内部的 IPC await 与其后续同步代码都跑完。 */
+/** 等目前为止已发起的全部 IPC 调用 resolve，再多等一轮微任务让它们各自的
+ *  then 续体（addImageReview/setGenImageJob 等）跑完。 */
 async function flush(): Promise<void> {
-  await new Promise((r) => setTimeout(r, 0))
-  await new Promise((r) => setTimeout(r, 0))
+  await Promise.all(pending)
+  await Promise.resolve()
+  await Promise.resolve()
 }
 
 beforeEach(() => {
   calls = []
+  pending = []
   // window 在裸 bun 运行时不存在，需要自己搭一个最小桩——只有出图触发器用到的
   // chatApi.writingImageGenerate 这一个方法。
   ;(globalThis as { window?: unknown }).window = {
     chatApi: {
-      writingImageGenerate: async (args: { projectDir: string; prompt: string }) => {
+      writingImageGenerate: (args: { projectDir: string; prompt: string }) => {
         calls.push(args)
-        return { path: `${args.projectDir}/images/x.png`, relPath: '../images/x.png' }
+        const p = Promise.resolve({ path: `${args.projectDir}/images/x.png`, relPath: '../images/x.png' })
+        pending.push(p)
+        return p
       }
     }
   }
@@ -69,11 +80,26 @@ beforeEach(() => {
   // 否则前一个用例留下的"已稳定"签名会让下一个用例的第一轮就误判成稳定（同生产代码里
   // useWritingPoll 每次 effect 重启都要调用的理由一致）。
   resetWritingGenImageAutoFireState()
+  // m-3 修复：useWritingStore 是跨整个 bun test 进程存活的模块级单例（目前只有本文件
+  // 会碰它，但显式重置不依赖这个巧合）。**C-1 修复之后尤其必须显式清**：setSource 现在
+  // 对"切回同一个项目"不再清 genImageJobs/imageReviews（那正是 C-1 要的行为），而下面
+  // 这行每次都用同一个 PROJECT_DIR——如果不在这里显式清空，连续两个用例之间会共用同一份
+  // job 表，前一个用例登记的 pending/done 会让下一个用例的幂等守卫误判"已经发起过"。
+  useWritingStore.setState({ genImageJobs: {}, imageReviews: [] })
   useWritingStore.getState().setSource({ kind: 'project', projectDir: PROJECT_DIR })
 })
 
 afterEach(() => {
   delete (globalThis as { window?: unknown }).window
+  useWritingStore.setState({
+    source: null,
+    sessionId: null,
+    sections: [],
+    genImageJobs: {},
+    imageReviews: [],
+    imageStyle: null,
+    imageCount: null
+  })
 })
 
 describe('autoFireWritingGenImages · 幂等（守卫③）', () => {
@@ -161,12 +187,46 @@ describe('autoFireWritingGenImages · M-3 孤儿 job 键清理', () => {
 
 describe('autoFireWritingGenImages · stillTargetable 守卫', () => {
   it('生图 IPC 返回前项目被切走：不写审阅卡，不留孤儿状态', async () => {
-    useWritingStore.getState().setSections([section('1-a.md', directiveBlock(0))])
+    const md = directiveBlock(0)
+    useWritingStore.getState().setSections([section('1-a.md', md)])
     autoFireWritingGenImages()
-    autoFireWritingGenImages() // 稳定 → 发起，此刻 IPC 还没 resolve（mock 是 async 函数，
-    // 第一个 await 之前的同步部分已经跑完并把 job 登记成 pending，但 promise 本身还没兑现）
+    autoFireWritingGenImages() // 稳定 → 发起，此刻 IPC 还没 resolve（mock 内部没有真实
+    // 延迟，但 await 仍会让 fireWritingGenImage 让出一轮微任务，此刻 promise 还没被
+    // "消费"完）
     useWritingStore.getState().setSource({ kind: 'project', projectDir: '/other' })
     await flush()
     expect(useWritingStore.getState().imageReviews).toEqual([])
+    // 2026-08 审查 m-2：标题说"不留孤儿状态"，job 表这一半也要断言，不能只看
+    // imageReviews。此刻 genImageJobs 因为切到了【真的不同的项目】已经被 setSource
+    // 清空，这条断言确认的是 fireWritingGenImage 的完成回调本身没有在 stillTargetable
+    // 判定失败之后又把 'done' 重新写回去（若判定失效，这里会重新冒出一条 done 记录）。
+    const [d] = parseGenImageDirectives(md)
+    const key = genImageDirectiveKey('1-a.md', d.raw, d.occurrence)
+    expect(useWritingStore.getState().genImageJobs[key]).toBeUndefined()
+  })
+})
+
+describe('autoFireWritingGenImages · C-1 回归：切走会话再切回同一项目', () => {
+  it('切走再切回不会让已见过的指令块被当成新指令重新发起', async () => {
+    // 首次打开：稳定判据走完两轮，正常发起一次。
+    useWritingStore.getState().setSections([section('1-a.md', directiveBlock(0))])
+    autoFireWritingGenImages()
+    autoFireWritingGenImages()
+    await flush()
+    expect(calls.length).toBe(1)
+
+    // 用户切到别的会话看一眼（setSource(null)），再切回同一个项目——两次 setSource
+    // 都不该清 genImageJobs/imageReviews（C-1 修复的正是这一条）。sections 会被
+    // setSource 清空又靠"轮询"重新填回来，这里手动模拟这个过程。
+    useWritingStore.getState().setSource(null)
+    useWritingStore.getState().setSource({ kind: 'project', projectDir: PROJECT_DIR })
+    useWritingStore.getState().setSections([section('1-a.md', directiveBlock(0))])
+
+    // 再跑两轮（对应轮询恢复后的第 1、2 次 tick）：如果 C-1 没修好，job 表在切回时
+    // 已经被清空、这两轮会把同一个指令块当"从没见过"重新发起，calls 会变成 2。
+    autoFireWritingGenImages()
+    autoFireWritingGenImages()
+    await flush()
+    expect(calls.length).toBe(1)
   })
 })

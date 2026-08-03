@@ -149,11 +149,22 @@ describe('parseImageCount', () => {
   })
 
   it('字段缺失回 null（不猜数字）', () => {
-    expect(parseImageCount('## 配图\n- image_plan: none\n')).toBeNull()
+    expect(parseImageCount('## 配图\n- image_plan: inline\n- image_style: 水墨风\n')).toBeNull()
   })
 
-  it('0 或负数不是合法上限，回 null', () => {
-    expect(parseImageCount('## 配图\n- image_count: 0\n')).toBeNull()
+  it('m-1：image_count: 0 是合法值（"一张都不要"），不再回退成默认上限', () => {
+    expect(parseImageCount('## 配图\n- image_plan: inline\n- image_count: 0\n')).toBe(0)
+  })
+
+  it('负数不是合法上限，回 null', () => {
+    expect(parseImageCount('## 配图\n- image_count: -1\n')).toBeNull()
+  })
+
+  it('m-1：image_plan: none 无条件把上限压成 0，即便 image_count 残留了陈旧数值', () => {
+    // 按模板约定 none 时这两行本就该留空，但写手可能中途改主意却忘记删——不能把
+    // 残留的旧数字当真，否则"这篇根本不配图"这个最该被闸住的场景反而不受契约约束。
+    expect(parseImageCount('## 配图\n- image_plan: none\n- image_count: 5\n')).toBe(0)
+    expect(parseImageCount('## 配图\n- image_plan: none\n')).toBe(0)
   })
 
   it('不会越界读到下一个二级标题段落里的字段', () => {

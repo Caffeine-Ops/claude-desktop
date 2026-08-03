@@ -86,6 +86,15 @@ describe('scanWritingDoc · project 模式', () => {
     expect(r.ok && r.imageCount).toBeNull()
   })
 
+  it('m-1：image_plan: none 时 imageCount 顺路回 0（契约"这篇不配图"要能闸住自动出图）', () => {
+    const dir = makeProject({
+      specLock: '## 配图\n- image_plan: none\n',
+      drafts: { '1-a.md': 'a' }
+    })
+    const r = scanWritingDoc({ kind: 'project', projectDir: dir })
+    expect(r.ok && r.imageCount).toBe(0)
+  })
+
   it('drafts 目录还没建（AI 刚 init 完）时回空列表，不是错误', () => {
     const dir = join(root, 'empty_proj')
     mkdirSync(dir)

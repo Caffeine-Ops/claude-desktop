@@ -137,14 +137,25 @@ export function parseImageStyle(specLockText: string | null): string | null {
 // 注释怎么切，数字本身不可能含 `#`，`(\d+)` 天然只取数字部分，后面不管跟不跟注释
 // 都不影响。
 const IMAGE_COUNT_LINE = /^\s*-\s*image_count\s*[:：]\s*(\d+)/m
+// `- image_plan: none`。三选一（none/cover-only/inline），这里只关心是不是 none——
+// 是的话下面直接把上限压成 0，不管 image_count 那行写了什么。
+const IMAGE_PLAN_LINE = /^\s*-\s*image_plan\s*[:：]\s*(\S+)/m
 
 /**
  * spec_lock.md 正文 → 配图段的 image_count 字段（本篇配图张数上限，见
  * spec_lock_reference.md「配图」段说明：「生图是要花钱的，这是第一道闸（第二道在
- * 桌面端的自动触发上限）」）。文件不存在 / 没有「## 配图」段 / 字段缺失或不是正整数
+ * 桌面端的自动触发上限）」）。文件不存在 / 没有「## 配图」段 / 字段缺失或不是合法数字
  * ——都回 null，由调用方（autoFireWritingGenImages）退回桌面端自己的默认上限
- * MAX_AUTO_FIRE_PER_WRITING_PROJECT。**不信任任意数字**：0 或负数不是合法的"上限"，
- * 一律当缺失处理，不把契约里的野值当真。
+ * MAX_AUTO_FIRE_PER_WRITING_PROJECT。
+ *
+ * **两条 2026-08 审查修复（m-1），都是"契约只能收紧、不能放宽"这条承诺本身要求的**：
+ * ① `image_count: 0` 是合法值（"这篇一张都不要"），不再退化成 null→回退默认 5——
+ *    0 与正整数一样是"契约给出的明确上限"，只有负数/非数字才算野值、才回 null。
+ * ② `image_plan: none` 时无条件把上限压成 0，不看 image_count 字段写了什么。按模板
+ *    约定 `image_plan: none` 时 image_count/image_style 两行本就该留空，但写手偶尔
+ *    会残留陈旧数值（例如策划中途从"配图"改成"不配图"、忘记删掉这两行）；若照抄那个
+ *    残留数字当上限，"这篇根本不配图"这个最常见、最该被闸住的场景反而完全不受契约
+ *    约束——不信任任何可能过期的字段组合，`none` 这个显式声明优先级最高。
  */
 export function parseImageCount(specLockText: string | null): number | null {
   if (!specLockText) return null
@@ -153,10 +164,11 @@ export function parseImageCount(specLockText: string | null): number | null {
   const rest = specLockText.slice(start.index + start[0].length)
   const nextH2 = /^##\s+/m.exec(rest)
   const segment = nextH2 ? rest.slice(0, nextH2.index) : rest
+  if (IMAGE_PLAN_LINE.exec(segment)?.[1] === 'none') return 0
   const m = IMAGE_COUNT_LINE.exec(segment)
   if (!m) return null
   const n = Number.parseInt(m[1], 10)
-  return Number.isFinite(n) && n > 0 ? n : null
+  return Number.isFinite(n) && n >= 0 ? n : null
 }
 
 // 文件名前导数字。写手按 SKILL.md「一节一文件，按序命名」产出，实际形态有

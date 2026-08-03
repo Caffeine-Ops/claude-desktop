@@ -193,6 +193,17 @@ interface WritingState {
   setConflictMsg: (msg: string) => void
 }
 
+/**
+ * 供 `setSource` 判定"这是不是真的换了项目"：记的是【最近一次非 null 的 source】的
+ * key，不是"上一次调用 setSource 时的 source"。2026-08 审查 C-1：用户切走会话时
+ * `source` 会先变成 null，若比较对象是"上一次调用的值"，切回来那次调用看到的
+ * `get().source` 已经是 null，永远判定成"变了"——等于没有这条判据。必须单独存一份
+ * "最近一次真正处于活跃状态的项目是谁"，跨越 null 这个中间态存活。模块级变量（不进
+ * store，UI 不需要读它）——与 `writingGenImageFire.ts` 里 `lastSectionSignature` /
+ * `warnedProjects` 同一惯例。
+ */
+let lastNonNullSourceKey: string | null = null
+
 export const useWritingStore = create<WritingState>((set, get) => ({
   source: null,
   sessionId: null,
@@ -211,7 +222,28 @@ export const useWritingStore = create<WritingState>((set, get) => ({
   undoStack: [],
   genImageJobs: {},
   imageReviews: [],
-  setSource: (source) =>
+  setSource: (source) => {
+    // 2026-08 审查 C-1：genImageJobs / imageReviews 的清空条件必须比"每次 setSource
+    // 都清"更窄，只在【真的换了项目/文件】时才清——不是"切走"（source 变 null），也
+    // 不是"切回同一个项目"。
+    //
+    // 【为什么旧版"每次都清"是个 Critical】旧注释的理由是"旧文档的节名对新文档没有
+    // 意义"，但那只在【真的换了项目】时成立。切到别的会话看一眼再切回来，必然连续
+    // 触发两次 setSource（切走 source→null，切回 source→A），旧实现把这两次都当"换
+    // 文档"处理，5 张已经生成完、正等用户裁决的审阅卡连同 job 表一起被清空；随后
+    // seededProjects（见 useWritingPoll）因为"这个项目本次挂载期间已经 seed 过"而跳过
+    // 补种 manual 哨兵——表空了却没人补——两轮轮询之后，稳定判据把全篇指令块当成
+    // "从没见过的新指令"重新发起，5 张图重复生成、重复扣费。且 MAX_AUTO_FIRE_PER_WRITING_PROJECT
+    // 的配额是从 genImageJobs 表长度算的，表被清空 = 预算一起清零，切 N 次就是 5N 张图，
+    // 没有任何累计上限——触发动作只是"切个会话看一眼"这种一天几十次的日常操作。
+    //
+    // 判定用 lastNonNullSourceKey（见其顶注）而不是 get().source：本次调用时 store 里
+    // 的 source 可能已经是 null（切走那一步已经把它置空），要比较的是"离开前那个真正
+    // 活跃的项目"，不是"上一次调用传了什么"。
+    const incomingKey = source ? JSON.stringify(source) : null
+    const isGenuinelyNewProject = incomingKey !== null && incomingKey !== lastNonNullSourceKey
+    if (incomingKey !== null) lastNonNullSourceKey = incomingKey
+
     set({
       source,
       // 会话 id 与文档源同生同灭：源是从【当前会话】的消息树推导出来的，故此刻的前台会话
@@ -224,7 +256,11 @@ export const useWritingStore = create<WritingState>((set, get) => ({
       status: 'idle',
       errMsg: '',
       // 换源 = 换了篇稿子，右栏重新回到「等第一节正文」的关门状态；不清的话切到一篇
-      // 刚起步的新稿子时，右栏会带着上一篇的 revealed 直接撑开一片空白。
+      // 刚起步的新稿子时，右栏会带着上一篇的 revealed 直接撑开一片空白。这一批字段
+      // （sections/outlineTotal/imageStyle/imageCount/status/errMsg/revealed）不受
+      // isGenuinelyNewProject 保护、依旧每次 setSource 都清——它们几秒内会被下一轮
+      // 轮询重新填满（同一个项目会填回一模一样的值），代价只是一次短暂的"重新加载"
+      // 观感，不是数据丢失，与 genImageJobs/imageReviews 那种不可逆的丢失不是一回事。
       revealed: false,
       // 改写态一律跟着源清空：pending/queue/review 里的 sectionName 只对旧文档有意义，
       // 留到新文档上会往错的文件里写内容——这类「跨文档串台」是不可逆的正文损坏。
@@ -236,14 +272,13 @@ export const useWritingStore = create<WritingState>((set, get) => ({
       // 内容写进这一篇的同名文件——这类跨文档串台是不可逆的正文损坏，与上面 pending/queue
       // 必须跟着清空是同一个理由。
       undoStack: [],
-      // genImageJobs 的键 = 节名（磁盘文件名），imageReviews 挂 sectionId = 节名——旧文档的
-      // 节名对新文档没有意义（且换源本身就代表换了一份完全不同的稿子），与提案侧「新建」
-      // 清空 genImageJobs 同理（提案侧「reopen」不清是因为 sections 存活、job 表要跟着存活；
-      // 这里 sections 本来就清空重来，job 表留着只会白占 MAX_AUTO_FIRE_PER_WRITING_PROJECT
-      // 配额、且键对不上新文档的任何节，纯粹的孤儿）。
-      genImageJobs: {},
-      imageReviews: []
-    }),
+      // genImageJobs 的键 = 节名（磁盘文件名）+ 内容哈希，imageReviews 挂 sectionId = 节名
+      // ——只有【真的换了项目】时旧文档的这些键才对新文档没有意义；切回同一个项目时，
+      // 键对当前这份文档依然精确有效，清空只会造成上面 C-1 描述的重复发起，且会把用户
+      // 还没裁决的审阅卡凭空清没（用户会觉得"我的审阅卡怎么不见了"）。
+      ...(isGenuinelyNewProject ? { genImageJobs: {}, imageReviews: [] } : {})
+    })
+  },
   bindSession: (sessionId) => {
     if (get().sessionId === sessionId) return
     // 换了归属会话就清改写态：旧会话的 pending 不该由新会话的轮末来兑现（那会把别的
@@ -476,31 +511,46 @@ export function useWritingPoll(active: boolean): void {
    * 旧实现把 `lastSignature.current === null` 当"是不是第一次"，但 `lastSignature`
    * 在**每一次 effect 重跑**（`[active, source]` 任一变化）开头都会被重置为 null——而
    * effect 重跑的触发条件远比"重开会话"宽：用户切到另一个会话看一眼、`ThreadView` 因
-   * 无关原因重挂载、`active` 短暂变 false 又变 true，都会让 effect 重跑一轮。具体failure
-   * 场景：AI 在写长篇小说，用户切到别的会话处理 2 分钟（`setSource(null)`，轮询停，但
-   * AI 后台继续写、落盘了 3 个新 genimage 指令块）→ 用户切回（`setSource(A)` 清空
-   * `genImageJobs`，effect 重跑）→ 首次读取 → 旧实现把这 3 个刚写出来的新指令块全部
-   * 登记成 manual——本该自动发起的图一张都不发，用户毫无感知自动触发已经静默失效。
+   * 无关原因重挂载、`active` 短暂变 false 又变 true，都会让 effect 重跑一轮。旧实现会把
+   * 用户离开这段时间 AI 后台新写出的指令块全部登记成 manual——本该自动发起的图一张都不
+   * 发，用户毫无感知自动触发已经静默失效。
    *
    * 用 `Set<projectKey>` 记录"本次挂载期间是否已经 seed 过这个项目"：seed 过就不再
    * seed（不管之后 effect 重跑多少次），只有**整个组件真正卸载重建**（应用重启/关闭
-   * 重开该 tab）才会拿到全新的 ref、重新当"第一次打开"处理——这与"重开会话"的直觉
-   * 更贴近，且不会把"用户看了别处几分钟"这种日常操作误判成需要重新 seed 的事件。
+   * 重开该 tab）才会拿到全新的 ref、重新当"第一次打开"处理。
+   *
+   * 【2026-08 审查 C-1 之后：这条机制现在只负责一件事，且与 genImageJobs 不再重叠】
+   * C-1 修复前，`setSource` 每次都会清空 `genImageJobs`，于是"切走再切回"必然表被
+   * 清空——那时 seed 是唯一能重新识别"这些指令块我已经见过"的手段，但把它按"挂载期间
+   * 只 seed 一次"收紧后，切走再切回时表空了却没人补种，产生了 C-1 那个重复发起的
+   * Critical。真正的修复落在 `setSource`：现在**只有真的换了项目**才清 `genImageJobs`
+   * /`imageReviews`，切走（source→null）与切回同一项目都不清——job 表本身就是"我已经
+   * 见过这些指令块"的记录，跨越"切走再切回"天然存活，不再需要 seed 来兜底这一段。
+   * **`seededProjects` 因此收窄回它最初、也是唯一还需要它的职责**：只在这个项目在本次
+   * 挂载期间【第一次被打开】（含义是"这份文档可能是带着上一次应用运行/上一次打开这个
+   * 项目时遗留的陈旧指令块进来的，而不是本次会话刚生成的"）时，把当下已存在的指令块登记
+   * 成 manual，避免它们被自动触发误当"新指令"。这与"切走再切回"是两个不同的问题、两条
+   * 不同的机制，都保留，理由不同、不冗余：`genImageJobs` 的存续覆盖"同一次挂载内的
+   * 反复进出"，`seededProjects` 覆盖"这次挂载是不是这个项目的第一次亮相"。
    */
   const seededProjects = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     if (!active || !source) return
     lastSignature.current = null
-    // 稳定判据（lastSectionSignature）与配额告警去重都要在此清零，理由与上面
-    // `lastSignature.current = null` 一致，且与 seededProjects 的选择互补（2026-08
-    // 审查 I-1/I-2 耦合）：seed 收紧到"只在真正首次打开时触发"之后，本轮之外新出现
-    // 的指令块必须完全依赖"连续两轮签名不变"的稳定判据来把关；但那张 Map 是模块级、
-    // 跨 effect 生命周期存活的，如果不在这里清零，"切走项目再切回"时它会残留切走前的
-    // 旧签名——重新挂载后的第一轮轮询会拿"刚读到的新内容"去跟"几分钟前的旧签名"比对，
-    // 一旦碰巧没变化就会被误判成"已经连续两轮稳定"，在实际只观察了一轮的内容上就发起。
-    // 清零后，重新开始轮询的这个 effect 生命周期会老老实实地从"没有基准"开始重新计两轮，
-    // 稳定判据的"两次真实相隔 2 秒的观察"这个保证才成立。
+    // 稳定判据（lastSectionSignature）与配额告警去重都要在此清零。
+    //
+    // 【2026-08 审查 C-1 追问：genImageJobs 已经不再清空了，这里还要不要清？—— 依然要清，
+    // 但理由变了】C-1 修复后，已经登记过的 job 键（pending/done/failed/manual）在"切走
+    // 再切回"时不会丢，它们的幂等判定（守卫③）不依赖这张签名表，清不清都不影响它们的
+    // 正确性——真正受影响的只是【本次挂载期间从未见过、也还没登记 job 键的全新指令块】。
+    // 对这批全新内容而言，清零只是让"连续两轮不变才发起"的计数从头重来一遍，最坏后果是
+    // 多等一轮（~2s）才发起，不是错误发起——这张表本来就不承诺"正确性"（那是 genImageJobs
+    // 的职责），只承诺"多一层保守的节流"。反过来，如果不清零，"切走时内容恰好没有变化"
+    // 的全新指令块会在恢复轮询的第一轮就被判定"和记忆里的签名一样、已经稳定"而立即发起
+    // ——虽然这在逻辑上其实是安全的（内容全程没变=确定不是半截块），但为了让"连续两轮"
+    // 这个不变量的措辞始终成立、不必逐案例论证"这次例外为什么安全"，仍选择无条件清零，
+    // 用一次可忽略的额外延迟换取判据本身简单、好推理。
     resetWritingGenImageAutoFireState()
     let cancelled = false
     let generation = 0
