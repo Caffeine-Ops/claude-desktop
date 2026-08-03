@@ -247,19 +247,51 @@ main 进程无法枚举所有项目根）。写作照抄 `pptasset` 的白名单
 
 ### P1b · app 联动
 
-1. `writingasset://` 协议（照抄 `pptAssetProtocol.ts` 的白名单写法）+ 在
-   `index.ts` 的 `registerSchemesAsPrivileged` 登记（ready 之前）
-2. `AssistantMarkdown` 的 `img` 覆写链增加 `writingasset` 分支
-3. **纯重构一步**：把 `GenImageDirectiveCard` / `ProposalImageReview` 里写死
-   提案字眼与数据源的部分抽成两边共用（见「风险」第 3 条：这一步单独提交、
-   单独验收，不与写作接入混做）
+> 以下在 P1a 落地后按实际代码复核过一遍，与初稿有四处出入，均已就地校准。
+
+**前置约束（P1a 之后新确定的）**
+
+- **插图只在项目模式可用。** `WritingDocSource` 是
+  `{ kind: 'project'; projectDir }` | `{ kind: 'single'; filePath }`，单文件
+  模式没有 `images/` 可落图、也无从算相对路径。写作工作区在单文件模式下
+  **不发起出图、不渲染指令卡**，并在界面上说明原因——静默不工作比不支持更糟。
+- **落位复用既有的乐观锁通道。** `WRITING_WRITE_SECTION`
+  （payload 带 `expectedMtimeMs`，冲突时回 `conflict: true` 与盘上最新内容）
+  已经是手动编辑与选区改写共用的写盘路径，配图落位必须走它，**不新开写盘入口**。
+- **公众号导出补进 TS 那份**（2026-08-03 用户拍板）。评估过「让 app 直接调
+  `export.py` 以永久消除双胞胎」：延迟上可行（该转换是点按钮触发的一次性调用，
+  不是实时预览），但正式包要保证 Python 环境与 `python-docx` 就位，首次使用
+  可能要装几分钟、装失败就点不出东西。选择继续维护两份，代价是漂移风险，
+  已在两侧注释互相指认。
+
+**任务**
+
+1. `writingasset://` 协议（照抄 `pptAssetProtocol.ts` 的白名单写法：扩展名 +
+   路径含 `/images/`）+ 在 `index.ts` 的 `registerSchemesAsPrivileged` 登记
+   （必须在 app ready 之前）
+2. `AssistantMarkdown` 的 `img` 覆写链增加 `writingasset` 分支。三种本地资产的
+   路径特征互斥，链式判定无歧义，不需要按场景传参
+3. **纯重构一步**（比初稿预估的小得多）。复核结论：`GenImageDirectiveCard`
+   与 `ProposalImageReview` 已经是纯展示 + 回调，不碰 store / IPC。真正的耦合
+   只有三处：① 两个组件 `import type` 的 `GenImageJob` / `ImageReview` 定义在
+   `stores/proposal`；② `ProposalImageReview.resolveImageSrc` 的链只试
+   `kbasset` → `proposalasset`；③ 卡片文案写死「方案配图」。对应改动是：类型
+   移到共享模块、解析链加上 `writingasset`、标签参数化。仍单独提交、单独验收
+   （见「风险」第 3 条）
 4. 写作版出图触发器（复用 shared 的指令块解析）：挂在轮询的 sections 变化
    之后，加「签名连续两轮不变 / 本轮已结束」的稳定判据；幂等靠 job key；
    沿用上限 5
-5. 图落盘写进 `<项目>/images/`，正文写相对路径、渲染与导出时拼绝对；
-   审阅卡「应用」经 `commitSection` + `baseMtimeMs` 乐观锁写回 `drafts/*.md`
-6. 导出三条链补图：公众号 HTML（与 `export.py` 同步）/ docx 嵌图 / PDF 补
-   mermaid 预渲染
+5. 图落盘写进 `<项目>/images/`，正文写相对路径 `../images/<文件名>`；渲染与
+   导出时按节文件所在目录拼绝对。审阅卡「应用」经 `WRITING_WRITE_SECTION`
+   的乐观锁写回 `drafts/*.md`
+6. 导出三条链补图：
+   - **公众号 HTML** —— 把 P1a 在 `export.py` 里做的三件事照抄进
+     `writingWechat.ts`：图片渲染（`<img>` + `<figcaption>`）、`genimage` /
+     `mermaid` 围栏块渲成占位框而非泄漏源码、`<img src>` 指向复制后的文件。
+     现有 `writingWechat.test.ts` 已在断言两份实现对齐，新语法要同步补断言
+   - **docx** —— 复用 `proposalDocx.ts` 的 `imageParagraphs`
+   - **PDF** —— 把 `WritingDocPanel.tsx:578` 那个写死的 `undefined` 换成真的
+     预渲染 mermaid 图
 
 ## 五、验收标准
 
