@@ -43,3 +43,20 @@ def test_init_prints_project_marker(tmp_path, capsys):
     path = Path(marker_lines[0].split("=", 1)[1])
     assert path.is_absolute()
     assert path.is_dir()
+
+
+def test_init_creates_images_dir(tmp_path):
+    """配图要有地方放。images/ 与 drafts/ 是兄弟目录，
+    正文里因此写相对路径 ../images/xxx.png。"""
+    proj = pm.init_project("配图测试", tmp_path, "20260803")
+    assert (proj / "images").is_dir()
+
+
+def test_validate_tolerates_missing_images_dir(tmp_path):
+    """images/ 是 2026-08-03 才加的。此前建的项目没有这个目录，
+    若把它列进必需项，所有老项目会突然被判「结构不完整」——
+    这是纯粹的向后兼容伤害，没有任何收益。"""
+    proj = pm.init_project("老项目", tmp_path, "20260803")
+    (proj / "spec_lock.md").write_text("## 体裁\n- genre: article\n", encoding="utf-8")
+    (proj / "images").rmdir()
+    assert pm.validate_project(proj) == []
