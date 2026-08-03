@@ -178,7 +178,9 @@ import {
   type WritingWechatHtmlResult,
   type WritingExportDocxPayload,
   type WritingExportPdfPayload,
-  type WritingExportResult
+  type WritingExportResult,
+  type WritingImageGeneratePayload,
+  type WritingImageResult
 } from '../../shared/ipc-channels'
 import { setKbRoot, getKbRoot, readKbIndex, kbOutDir, getKbConfig, setKbRemote, kbStoreDir, setKbMode } from '../core/kbIndexStore'
 import { scanLocalDocs, listLocalDocsDirs, setLocalDocsDir } from '../core/localDocsScan'
@@ -215,6 +217,7 @@ import { appendProposalMetric } from '../core/proposalMetricsStore'
 import { generateImage, editImage, sniffImageExt } from '../services/imageGenService'
 import { submitFeedback } from '../services/feedbackService'
 import { writeProposalImage } from '../services/proposalImageWriter'
+import { writeWritingImage } from '../core/writingImageWriter'
 import {
   scanWritingDoc,
   readWritingSections,
@@ -502,6 +505,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.WRITING_WECHAT_HTML)
   ipcMain.removeHandler(IPC_CHANNELS.WRITING_EXPORT_DOCX)
   ipcMain.removeHandler(IPC_CHANNELS.WRITING_EXPORT_PDF)
+  ipcMain.removeHandler(IPC_CHANNELS.WRITING_IMAGE_GENERATE)
   ipcMain.removeHandler(IPC_CHANNELS.BACKGROUND_THEME_IMPORT)
   ipcMain.removeHandler(IPC_CHANNELS.BACKGROUND_THEME_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.BACKGROUND_THEME_DELETE)
@@ -3244,6 +3248,21 @@ export function registerIpcHandlers(): void {
       const bytes = await generateImage(cfg, { prompt })
       const path = await writeProposalImage(sessionId, 'generated', bytes, embeddableExtFor(bytes))
       return { path }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.WRITING_IMAGE_GENERATE,
+    async (_event, args: WritingImageGeneratePayload): Promise<WritingImageResult> => {
+      const projectDir = typeof args?.projectDir === 'string' ? args.projectDir : ''
+      const prompt = typeof args?.prompt === 'string' ? args.prompt : ''
+      if (!projectDir || !prompt) throw new Error('缺少项目路径或提示词')
+      const cfg = getAppSettings().imageApi
+      // 文案与提案侧逐字一致：卡片按「未配置」字样决定要不要显示「去设置」按钮，
+      // 换个说法会让那个按钮静默消失（见 src/chat/lib/imageErrorText.ts 的判定）。
+      if (!cfg?.apiKey) throw new Error('未配置出图 API，请到设置里填写 key 与地址')
+      const bytes = await generateImage(cfg, { prompt })
+      return writeWritingImage(projectDir, bytes, embeddableExtFor(bytes))
     }
   )
 

@@ -1039,6 +1039,13 @@ export const IPC_CHANNELS = {
    */
   WRITING_EXPORT_PDF: 'writing:export-pdf',
   /**
+   * 写作工作区出图：按提示词生成一张配图，落进 `<项目>/images/`。
+   * 与 PROPOSAL_IMAGE_GENERATE 分成两条通道而不是加参数，是因为**落点根本不同**
+   * （项目目录 vs userData 草稿区），合并会让 handler 里长出一个 kind 分支，
+   * 两种落盘语义混在一处，日后改任一侧都要重读另一侧。
+   */
+  WRITING_IMAGE_GENERATE: 'writing:image-generate',
+  /**
    * Renderer → main. 语义检索：模糊自然语言 → 混合(向量+BM25)命中片段+出处。供写方案
    * 搜索面板主动用。embedding 在 utilityProcess、不冻 main；模型缺失/stale 降级 BM25。
    * staleIndex=true 时结果是 BM25 降级（有内容但非语义），面板顶部显「需重建索引」条。
@@ -2462,6 +2469,22 @@ export interface WritingExportResult {
   path: string | null
 }
 
+/** Payload for WRITING_IMAGE_GENERATE. `projectDir` 是写作项目根（含 drafts/ images/ 的那层）。 */
+export interface WritingImageGeneratePayload {
+  projectDir: string
+  prompt: string
+}
+/**
+ * Result of WRITING_IMAGE_GENERATE。
+ * `path` = 绝对路径，渲染侧转 writingasset:// 显示用；
+ * `relPath` = `../images/<文件名>`，落位时写进正文用。两个都回，是为了让渲染侧
+ * 不必自己做路径运算（它拿不到 node:path，手拼容易在 Windows 上出错）。
+ */
+export interface WritingImageResult {
+  path: string
+  relPath: string
+}
+
 /** Payload for PROPOSAL_EXPORT. */
 export interface ProposalExportPayload {
   markdown: string
@@ -3656,6 +3679,8 @@ export interface ChatApi {
    * 这里只弹保存框、写盘。
    */
   writingExportPdf(payload: WritingExportPdfPayload): Promise<WritingExportResult>
+  /** 写作工作区出图：生成一张配图并落进项目的 images/。未配置出图 API 时抛错。 */
+  writingImageGenerate(payload: WritingImageGeneratePayload): Promise<WritingImageResult>
 }
 
 /**

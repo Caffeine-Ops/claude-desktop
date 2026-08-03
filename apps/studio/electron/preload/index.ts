@@ -169,7 +169,9 @@ import {
   type WritingWechatHtmlResult,
   type WritingExportDocxPayload,
   type WritingExportPdfPayload,
-  type WritingExportResult
+  type WritingExportResult,
+  type WritingImageGeneratePayload,
+  type WritingImageResult
 } from '../shared/ipc-channels'
 import type { ProposalMetricRecord } from '../shared/proposal'
 import type { KbRemoteConfig } from '../shared/kbConfig'
@@ -1144,7 +1146,9 @@ const chatApi: ChatApi = {
   writingExportDocx: (payload: WritingExportDocxPayload): Promise<WritingExportResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.WRITING_EXPORT_DOCX, payload),
   writingExportPdf: (payload: WritingExportPdfPayload): Promise<WritingExportResult> =>
-    ipcRenderer.invoke(IPC_CHANNELS.WRITING_EXPORT_PDF, payload)
+    ipcRenderer.invoke(IPC_CHANNELS.WRITING_EXPORT_PDF, payload),
+  writingImageGenerate: (payload: WritingImageGeneratePayload): Promise<WritingImageResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.WRITING_IMAGE_GENERATE, payload)
 }
 
 /**
