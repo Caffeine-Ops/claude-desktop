@@ -18,6 +18,7 @@ import html
 import json
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
@@ -35,6 +36,57 @@ _BOLD = re.compile(r"\*\*(.+?)\*\*")
 # 正常斜体的收尾 * 后面是标点/空格/行尾（如「*有点意思*。」），照常识别。
 # 内容不含 *（[^*]+?）以免跨过下一个星号误配。
 _ITALIC = re.compile(r"(?<!\*)\*(?!\*)([^*]+?)\*(?![\w*])")
+
+# 图片语法。前导 ! 是与普通链接的唯一区别；路径部分排除空白与右括号，
+# 后面可选一个 markdown 标题后缀 `"..."`（`![图](路径 "标题")`）。
+# 与 writing_utils._IMAGE_SYNTAX 是两份正则、口径刻意不同：那边只需要
+# 「整体删掉」，这边要**分组取出** caption 与 src，合并成一份反而两头别扭。
+_IMAGE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+
+
+@dataclass
+class ImageRef:
+    """正文里的一处配图引用。line 是 1-based 行号——缺图报告要能让人直接跳过去。"""
+
+    caption: str
+    src: str
+    line: int
+
+
+def parse_images(markdown: str) -> list[ImageRef]:
+    """抽出正文里的全部配图引用。
+
+    **围栏代码块内的图片语法一律跳过**：那是示例文本（mermaid 块、
+    教程里贴的 markdown 片段），不是真配图。当成真配图会让导出闸误报
+    「缺图」，卡住一次本该成功的导出。
+    """
+    refs: list[ImageRef] = []
+    in_fence = False
+    for idx, raw in enumerate(markdown.splitlines(), start=1):
+        if raw.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        for m in _IMAGE.finditer(raw):
+            refs.append(ImageRef(caption=m.group(1).strip(), src=m.group(2), line=idx))
+    return refs
+
+
+def resolve_image_path(src: str, md_path: Path) -> Path:
+    """相对路径按**正文文件所在目录**解析，不是按 cwd。
+
+    正文在 `<项目>/drafts/`、图在 `<项目>/images/`，相对路径恒为
+    `../images/x.png`。若按 cwd 解析，从项目外任何地方跑导出都会找不到图，
+    而且报的错是「文件不存在」而非「路径基准错了」，极难排查。
+    """
+    p = Path(src)
+    return p if p.is_absolute() else (md_path.parent / p).resolve()
+
+
+def missing_images(markdown: str, md_path: Path) -> list[ImageRef]:
+    """返回磁盘上找不到的配图引用，保持正文中的出现顺序。"""
+    return [r for r in parse_images(markdown) if not resolve_image_path(r.src, md_path).is_file()]
 
 
 def load_style(name: str) -> dict[str, str]:
@@ -163,6 +215,18 @@ def main(argv: list[str] | None = None) -> int:
 
     src = Path(args.path)
     markdown = src.read_text(encoding="utf-8")
+
+    # 图片就位闸：缺图停下报清单，绝不导出一份引用损坏的稿。
+    # 下游导出器（公众号编辑器 / python-docx）不在这一层检测缺失，
+    # 带着缺口跑完只会产出一份「看着成功、打开全是碎图」的成品。
+    # 同源做法见 ppt-master 的 Image readiness GATE。
+    missing = missing_images(markdown, src)
+    if missing:
+        print(f"[writing] ✗ 有 {len(missing)} 张配图找不到文件，导出已中止：")
+        for ref in missing:
+            print(f"  - 第 {ref.line} 行「{ref.caption or '无图说'}」→ {ref.src}")
+        print("[writing] 请先把缺的图放到上述路径，或从正文里删掉这些引用，再重跑导出。")
+        return 1
 
     suffix = {"wechat": ".html", "plain": ".txt", "docx": ".docx"}[args.format]
     out_path = Path(args.out) if args.out else src.with_suffix(suffix)

@@ -4,6 +4,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import export
+import export as ex  # 图片就位闸的新测试沿用任务简报里的 ex.xxx 写法；
+# 模块已在 sys.modules 里缓存，二次 import 只是多绑一个名字，不影响上面 export.xxx 的现有用法。
 
 
 STYLE = {
@@ -91,3 +93,60 @@ def test_h4_to_h6_headings_not_leaked():
     plain = export.md_to_plain("##### 五级标题")
     assert "#" not in plain
     assert "五级标题" in plain
+
+
+def test_parse_images_extracts_caption_src_and_line():
+    md = "开头。\n\n![深夜的便利店](../images/gen-1.png)\n\n结尾。"
+    refs = ex.parse_images(md)
+    assert len(refs) == 1
+    assert refs[0].caption == "深夜的便利店"
+    assert refs[0].src == "../images/gen-1.png"
+    assert refs[0].line == 3
+
+
+def test_parse_images_ignores_normal_links():
+    assert ex.parse_images("详见[报告](https://example.com/a)。") == []
+
+
+def test_parse_images_skips_fenced_blocks():
+    """mermaid / 代码块里出现的图片语法是示例文本，不是真配图。
+    当成真配图会导致导出闸报「缺图」，卡住一次本该成功的导出。"""
+    md = "正文。\n\n```markdown\n![示例](../images/nope.png)\n```\n"
+    assert ex.parse_images(md) == []
+
+
+def test_resolve_image_path_is_relative_to_markdown_file(tmp_path):
+    """正文在 drafts/、图在 images/，相对路径必须按 md 文件所在目录解析，
+    不是按当前工作目录——否则从别处跑导出脚本就全找不到图。"""
+    md_path = tmp_path / "drafts" / "01.md"
+    resolved = ex.resolve_image_path("../images/a.png", md_path)
+    assert resolved == tmp_path / "images" / "a.png"
+
+
+def test_resolve_image_path_passes_absolute_through(tmp_path):
+    abs_src = str(tmp_path / "images" / "a.png")
+    assert ex.resolve_image_path(abs_src, tmp_path / "drafts" / "01.md") == Path(abs_src)
+
+
+def test_missing_images_reports_only_absent_files(tmp_path):
+    (tmp_path / "images").mkdir()
+    (tmp_path / "images" / "there.png").write_bytes(b"x")
+    (tmp_path / "drafts").mkdir()
+    md_path = tmp_path / "drafts" / "01.md"
+    md = "![在的](../images/there.png)\n\n![不在的](../images/gone.png)"
+    md_path.write_text(md, encoding="utf-8")
+    missing = ex.missing_images(md, md_path)
+    assert [r.src for r in missing] == ["../images/gone.png"]
+
+
+def test_main_blocks_export_when_image_missing(tmp_path, capsys):
+    """缺图必须停下报清单，而不是导出一份引用损坏的稿。
+    下游（公众号编辑器 / Word）不会在这一层报错，带着缺口跑完
+    只会产出一份看着成功、打开全是碎图的成品。"""
+    (tmp_path / "drafts").mkdir()
+    md_path = tmp_path / "drafts" / "01.md"
+    md_path.write_text("正文。\n\n![缺的](../images/gone.png)\n", encoding="utf-8")
+    code = ex.main([str(md_path), "--format", "plain", "--out", str(tmp_path / "o.txt")])
+    assert code == 1
+    assert "gone.png" in capsys.readouterr().out
+    assert not (tmp_path / "o.txt").exists()
