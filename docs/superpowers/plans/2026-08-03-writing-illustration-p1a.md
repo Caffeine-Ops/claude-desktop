@@ -299,7 +299,7 @@ git commit -m "feat(writing): 写作契约新增「配图」段与影响提示"
 ```python
 def test_parse_images_extracts_caption_src_and_line():
     md = "开头。\n\n![深夜的便利店](../images/gen-1.png)\n\n结尾。"
-    refs = ex.parse_images(md)
+    refs = export.parse_images(md)
     assert len(refs) == 1
     assert refs[0].caption == "深夜的便利店"
     assert refs[0].src == "../images/gen-1.png"
@@ -307,27 +307,27 @@ def test_parse_images_extracts_caption_src_and_line():
 
 
 def test_parse_images_ignores_normal_links():
-    assert ex.parse_images("详见[报告](https://example.com/a)。") == []
+    assert export.parse_images("详见[报告](https://example.com/a)。") == []
 
 
 def test_parse_images_skips_fenced_blocks():
     """mermaid / 代码块里出现的图片语法是示例文本，不是真配图。
     当成真配图会导致导出闸报「缺图」，卡住一次本该成功的导出。"""
     md = "正文。\n\n```markdown\n![示例](../images/nope.png)\n```\n"
-    assert ex.parse_images(md) == []
+    assert export.parse_images(md) == []
 
 
 def test_resolve_image_path_is_relative_to_markdown_file(tmp_path):
     """正文在 drafts/、图在 images/，相对路径必须按 md 文件所在目录解析，
     不是按当前工作目录——否则从别处跑导出脚本就全找不到图。"""
     md_path = tmp_path / "drafts" / "01.md"
-    resolved = ex.resolve_image_path("../images/a.png", md_path)
+    resolved = export.resolve_image_path("../images/a.png", md_path)
     assert resolved == tmp_path / "images" / "a.png"
 
 
 def test_resolve_image_path_passes_absolute_through(tmp_path):
     abs_src = str(tmp_path / "images" / "a.png")
-    assert ex.resolve_image_path(abs_src, tmp_path / "drafts" / "01.md") == Path(abs_src)
+    assert export.resolve_image_path(abs_src, tmp_path / "drafts" / "01.md") == Path(abs_src)
 
 
 def test_missing_images_reports_only_absent_files(tmp_path):
@@ -337,7 +337,7 @@ def test_missing_images_reports_only_absent_files(tmp_path):
     md_path = tmp_path / "drafts" / "01.md"
     md = "![在的](../images/there.png)\n\n![不在的](../images/gone.png)"
     md_path.write_text(md, encoding="utf-8")
-    missing = ex.missing_images(md, md_path)
+    missing = export.missing_images(md, md_path)
     assert [r.src for r in missing] == ["../images/gone.png"]
 
 
@@ -348,13 +348,13 @@ def test_main_blocks_export_when_image_missing(tmp_path, capsys):
     (tmp_path / "drafts").mkdir()
     md_path = tmp_path / "drafts" / "01.md"
     md_path.write_text("正文。\n\n![缺的](../images/gone.png)\n", encoding="utf-8")
-    code = ex.main([str(md_path), "--format", "plain", "--out", str(tmp_path / "o.txt")])
+    code = export.main([str(md_path), "--format", "plain", "--out", str(tmp_path / "o.txt")])
     assert code == 1
     assert "gone.png" in capsys.readouterr().out
     assert not (tmp_path / "o.txt").exists()
 ```
 
-> 该文件顶部已有 `import export as ex` 与 `sys.path` 注入；若没有 `from pathlib import Path`，补上。
+> 该文件顶部已有 `import export` 与 `sys.path` 注入——**沿用 `export.` 前缀，不要新加 `import export as ex` 别名**（同一模块两个调用约定并存，评审判为 Important）。若没有 `from pathlib import Path`，补上。
 
 - [ ] **Step 2: 跑测试确认失败**
 
@@ -467,24 +467,24 @@ git commit -m "feat(writing): 导出前加图片就位闸，缺图报清单并�
 def test_wechat_html_renders_image_with_caption():
     """公众号里图和图说是一体的：<img> 后跟一行居中小字图说。
     图说为空时不产出空的说明行（留着是一条视觉上莫名其妙的空隙）。"""
-    style = ex.load_style("wechat-default")
-    html_out = ex.md_to_wechat_html("![深夜的便利店](../images/gen-1.png)", style)
+    style = export.load_style("wechat-default")
+    html_out = export.md_to_wechat_html("![深夜的便利店](../images/gen-1.png)", style)
     assert 'src="../images/gen-1.png"' in html_out
     assert "深夜的便利店" in html_out
     assert "<p" not in html_out.split("<img")[0]  # 图不该被包成普通段落
 
 
 def test_wechat_html_image_without_caption_has_no_caption_line():
-    style = ex.load_style("wechat-default")
-    html_out = ex.md_to_wechat_html("![](../images/gen-1.png)", style)
+    style = export.load_style("wechat-default")
+    html_out = export.md_to_wechat_html("![](../images/gen-1.png)", style)
     assert "<img" in html_out
     assert "figcaption" not in html_out
 
 
 def test_wechat_html_escapes_caption():
     """图说来自 AI 生成的文本，可能含 < >，不转义就把 HTML 结构打坏了。"""
-    style = ex.load_style("wechat-default")
-    html_out = ex.md_to_wechat_html('![a<b>c](../images/x.png)', style)
+    style = export.load_style("wechat-default")
+    html_out = export.md_to_wechat_html('![a<b>c](../images/x.png)', style)
     assert "<b>" not in html_out
     assert "&lt;b&gt;" in html_out
 
@@ -492,7 +492,7 @@ def test_wechat_html_escapes_caption():
 def test_plain_export_renders_image_as_caption_marker():
     """纯文本没法放图，退化成一个人能看懂的占位标记，
     而不是把 markdown 语法原样漏给读者。"""
-    out = ex.md_to_plain("![深夜的便利店](../images/gen-1.png)")
+    out = export.md_to_plain("![深夜的便利店](../images/gen-1.png)")
     assert out == "［图：深夜的便利店］"
 
 
@@ -511,7 +511,7 @@ def test_docx_embeds_existing_image(tmp_path):
     (tmp_path / "images" / "a.png").write_bytes(png)
     md_path = tmp_path / "drafts" / "01.md"
     out = tmp_path / "o.docx"
-    ex.md_to_docx("正文。\n\n![图说](../images/a.png)\n", out, md_path)
+    export.md_to_docx("正文。\n\n![图说](../images/a.png)\n", out, md_path)
     doc = Document(str(out))
     assert len(doc.inline_shapes) == 1
 ```
@@ -633,9 +633,9 @@ def test_copy_images_numbers_files_in_document_order(tmp_path):
     for name in ("b.png", "a.png"):
         (tmp_path / "images" / name).write_bytes(b"x")
     md_path = tmp_path / "drafts" / "01.md"
-    refs = ex.parse_images("![二](../images/b.png)\n\n![一](../images/a.png)")
+    refs = export.parse_images("![二](../images/b.png)\n\n![一](../images/a.png)")
     out_dir = tmp_path / "output"
-    pairs = ex.copy_images(refs, md_path, out_dir)
+    pairs = export.copy_images(refs, md_path, out_dir)
     assert [name for _, name in pairs] == ["01-b.png", "02-a.png"]
     assert (out_dir / "images" / "01-b.png").is_file()
     assert (out_dir / "images" / "02-a.png").is_file()
@@ -644,22 +644,22 @@ def test_copy_images_numbers_files_in_document_order(tmp_path):
 def test_build_image_manifest_marks_cover_separately():
     """公众号封面在编辑器里是独立上传项、不进正文。
     不单独标出来，用户会把封面当成正文第一张图插进去。"""
-    refs = ex.parse_images("![封面](../images/a.png)\n\n![流程](../images/b.png)")
+    refs = export.parse_images("![封面](../images/a.png)\n\n![流程](../images/b.png)")
     pairs = [(refs[0], "01-a.png"), (refs[1], "02-b.png")]
-    text = ex.build_image_manifest(pairs, cover_first=True)
+    text = export.build_image_manifest(pairs, cover_first=True)
     assert "封面" in text
     assert "01-a.png" in text and "02-b.png" in text
     assert "output/images/" in text
 
 
 def test_build_image_manifest_without_cover_lists_all_inline():
-    refs = ex.parse_images("![流程](../images/b.png)")
-    text = ex.build_image_manifest([(refs[0], "01-b.png")], cover_first=False)
+    refs = export.parse_images("![流程](../images/b.png)")
+    text = export.build_image_manifest([(refs[0], "01-b.png")], cover_first=False)
     assert "封面" not in text
 
 
 def test_build_image_manifest_is_empty_without_images():
-    assert ex.build_image_manifest([], cover_first=False) == ""
+    assert export.build_image_manifest([], cover_first=False) == ""
 ```
 
 - [ ] **Step 2: 跑测试确认失败**
