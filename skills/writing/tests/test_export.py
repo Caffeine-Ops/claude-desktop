@@ -148,3 +148,55 @@ def test_main_blocks_export_when_image_missing(tmp_path, capsys):
     assert code == 1
     assert "gone.png" in capsys.readouterr().out
     assert not (tmp_path / "o.txt").exists()
+
+
+def test_wechat_html_renders_image_with_caption():
+    """公众号里图和图说是一体的：<img> 后跟一行居中小字图说。
+    图说为空时不产出空的说明行（留着是一条视觉上莫名其妙的空隙）。"""
+    style = export.load_style("wechat-default")
+    html_out = export.md_to_wechat_html("![深夜的便利店](../images/gen-1.png)", style)
+    assert 'src="../images/gen-1.png"' in html_out
+    assert "深夜的便利店" in html_out
+    assert "<p" not in html_out.split("<img")[0]  # 图不该被包成普通段落
+
+
+def test_wechat_html_image_without_caption_has_no_caption_line():
+    style = export.load_style("wechat-default")
+    html_out = export.md_to_wechat_html("![](../images/gen-1.png)", style)
+    assert "<img" in html_out
+    assert "figcaption" not in html_out
+
+
+def test_wechat_html_escapes_caption():
+    """图说来自 AI 生成的文本，可能含 < >，不转义就把 HTML 结构打坏了。"""
+    style = export.load_style("wechat-default")
+    html_out = export.md_to_wechat_html('![a<b>c](../images/x.png)', style)
+    assert "<b>" not in html_out
+    assert "&lt;b&gt;" in html_out
+
+
+def test_plain_export_renders_image_as_caption_marker():
+    """纯文本没法放图，退化成一个人能看懂的占位标记，
+    而不是把 markdown 语法原样漏给读者。"""
+    out = export.md_to_plain("![深夜的便利店](../images/gen-1.png)")
+    assert out == "［图：深夜的便利店］"
+
+
+def test_docx_embeds_existing_image(tmp_path):
+    import base64
+
+    from docx import Document
+
+    (tmp_path / "images").mkdir()
+    (tmp_path / "drafts").mkdir()
+    # 1x1 透明 PNG。用 base64 而不是手打 hex：hex 串抄错一个字符，
+    # python-docx 报的是「无法识别的图片格式」，会被误当成实现有 bug。
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+    )
+    (tmp_path / "images" / "a.png").write_bytes(png)
+    md_path = tmp_path / "drafts" / "01.md"
+    out = tmp_path / "o.docx"
+    export.md_to_docx("正文。\n\n![图说](../images/a.png)\n", out, md_path)
+    doc = Document(str(out))
+    assert len(doc.inline_shapes) == 1

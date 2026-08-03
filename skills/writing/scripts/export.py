@@ -123,6 +123,20 @@ def md_to_wechat_html(markdown: str, style: dict[str, str]) -> str:
             close_list()
             continue
 
+        # 图独占一行 → 图 + 图说，不包进 <p>（公众号里 <p> 的 margin 会把
+        # 图和图说撑开成两块不相干的东西）。样式键用 .get 兜底：用户可能自带
+        # 一份没有 img/figcaption 键的样式 JSON，KeyError 会让整次导出崩掉。
+        m = _IMAGE.fullmatch(line.strip())
+        if m:
+            close_list()
+            caption, src = m.group(1).strip(), m.group(2)
+            img_style = style.get("img", "display:block;max-width:100%;height:auto;margin:1.4em auto 0.4em auto;")
+            out.append(f'<img src="{html.escape(src, quote=True)}" alt="{html.escape(caption, quote=True)}" style="{img_style}" />')
+            if caption:
+                cap_style = style.get("figcaption", "display:block;text-align:center;font-size:13px;color:#999999;")
+                out.append(f'<figcaption style="{cap_style}">{html.escape(caption, quote=False)}</figcaption>')
+            continue
+
         if _HR.match(line):
             close_list()
             out.append(f'<hr style="{style["hr"]}" />')
@@ -166,6 +180,9 @@ def md_to_plain(markdown: str) -> str:
         line = raw.strip()
         if _HR.match(line):
             continue
+        # 纯文本没法放图，退化成人能看懂的占位标记——把 markdown 语法
+        # 原样漏给读者（朋友圈/私域话术会被直接复制粘贴）是最糟的结果。
+        line = _IMAGE.sub(lambda m: f"［图：{m.group(1).strip() or '配图'}］", line)
         line = _HEADING.sub(r"\2", line)
         line = _QUOTE.sub(r"\1", line)
         line = _LIST_ITEM.sub(r"· \1", line)
@@ -181,10 +198,15 @@ def md_to_plain(markdown: str) -> str:
     return "\n".join(result).strip()
 
 
-def md_to_docx(markdown: str, out_path: Path) -> None:
-    """导出 Word。依赖 python-docx（requirements.txt 已列）。"""
+def md_to_docx(markdown: str, out_path: Path, md_path: Path) -> None:
+    """导出 Word。依赖 python-docx（requirements.txt 已列）。
+
+    多收一个 md_path：图片在正文里是相对路径（../images/x.png），
+    要按**正文文件所在目录**解析才找得到——见 resolve_image_path 的注释。
+    """
     try:
         from docx import Document
+        from docx.shared import Inches
     except ImportError:
         raise SystemExit("[writing] 错误：导出 docx 需要 python-docx，请先跑 bin/ensure-python.sh 装依赖")
 
@@ -192,6 +214,15 @@ def md_to_docx(markdown: str, out_path: Path) -> None:
     for raw in markdown.splitlines():
         line = raw.strip()
         if not line or _HR.match(line):
+            continue
+        # 图独占一行 → 嵌图 + 图说段。宽度钉 5.5 英寸（A4 正文宽度），
+        # 不钉会按图片像素尺寸铺开，大图直接溢出页面。
+        m = _IMAGE.fullmatch(line)
+        if m:
+            caption, src = m.group(1).strip(), m.group(2)
+            doc.add_picture(str(resolve_image_path(src, md_path)), width=Inches(5.5))
+            if caption:
+                doc.add_paragraph(caption, style="Caption")
             continue
         m = _HEADING.match(line)
         if m:
@@ -240,7 +271,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.format == "plain":
         out_path.write_text(md_to_plain(markdown), encoding="utf-8")
     else:
-        md_to_docx(markdown, out_path)
+        md_to_docx(markdown, out_path, src)
 
     print(f"[writing] 已导出：{out_path}")
     return 0

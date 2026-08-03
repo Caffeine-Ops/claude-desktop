@@ -8,5 +8,7 @@
   "strong": "font-weight:bold;color:#8B4513;",
   "em": "font-style:italic;color:#666666;",
   "li": "font-size:16px;line-height:1.75;color:#333333;margin:0.4em 0;font-family:Georgia,'Songti SC','SimSun',serif;",
-  "hr": "border:none;border-top:1px solid #eeeeee;margin:2em 0;"
+  "hr": "border:none;border-top:1px solid #eeeeee;margin:2em 0;",
+  "img": "display:block;max-width:100%;height:auto;margin:1.4em auto 0.4em auto;border-radius:4px;",
+  "figcaption": "display:block;text-align:center;font-size:13px;color:#999999;margin:0 0 1.4em 0;line-height:1.6;"
 }
