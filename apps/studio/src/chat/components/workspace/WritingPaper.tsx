@@ -10,6 +10,23 @@ import { AssistantMarkdown } from '../chat/AssistantMarkdown'
 import { WritingSelectionBubble } from './WritingSelectionBubble'
 
 /**
+ * 一次进行中的块编辑。`draft` 是输入框里的实时内容，`base` 是进入编辑那一刻这一块的
+ * 源码（用来判「变没变」），`baseMtimeMs` 是**那一刻**这一节的 mtime，写盘时当乐观锁基准。
+ *
+ * 【为什么 baseMtimeMs 必须在进入编辑时快照，不能写盘时现读】轮询每 2s 把 sections 连同
+ * mtime 刷一遍。现读的话，「你编辑期间这一节被 AI 或外部改过」——锁最该拦的场景——会因为
+ * 基准已经悄悄跟到最新而比对相等、直接放行，把基于旧版编辑的内容拼进新版的错误位置。
+ * 完整推演见 stores/writing.ts 的 baseMtimeMs 字段注释，那是同一颗地雷。
+ */
+interface WritingEditingState {
+  sectionName: string
+  blockIndex: number
+  base: string
+  draft: string
+  baseMtimeMs: number
+}
+
+/**
  * 文稿态纸面。两条修改通道：选中一段交给 AI 改写（气泡），或**双击一块就地改它的
  * Markdown 源码**（2026-07-31 加，推翻了前作 spec 的「明确不做手动编辑」）。
  *
@@ -71,13 +88,53 @@ export function WritingPaper({
    * 基准已经悄悄跟到最新而比对相等、直接放行，把基于旧版编辑的内容拼进新版的错误位置。
    * 完整推演见 stores/writing.ts 的 baseMtimeMs 字段注释，那是同一颗地雷。
    */
-  const [editing, setEditing] = useState<{
-    sectionName: string
-    blockIndex: number
-    base: string
-    draft: string
-    baseMtimeMs: number
-  } | null>(null)
+  const [editing, setEditingState] = useState<WritingEditingState | null>(null)
+  /**
+   * `editing` 的**最新真值**，供事件处理器读。
+   *
+   * 【2026-08-03 实测发现的假冲突，根因就在这里】`beginEdit` / `commitEdit` 都是
+   * `useCallback` 包出来的事件处理器，它们闭包里的 `editing` 是**上一次渲染**那一份。
+   * 正常路径没事，但「A 的写盘赶在双击完成之前落地」时会错：
+   *
+   *   mousedown(B) → A 失焦 → commitEdit(A) 写盘 → 成功 → closeIfStillMine 把 editing 清成 null
+   *   ……React 还没来得及重渲染、重建 handler……
+   *   dblclick(B) → beginEdit 的闭包里 `editing` 仍是 A（陈旧！）
+   *     → 判定 switching=true → 而 savingRef 早已复位（A 那次已经存完了）
+   *     → 于是「代劳」再提交一次 A → 但磁盘 mtime 已被第一次提交推进
+   *     → **撞乐观锁、弹一条「这一节刚被 AI 改过」，而根本没有 AI 在跑**，且新块打不开
+   *
+   * `savingRef` 挡不住它：那面闸只回答「这一块是不是**正在**存」，回答不了
+   * 「这一块是不是**已经**存完并且退场了」。两种状态在陈旧闭包里长得一模一样。
+   *
+   * 触发条件比想象中宽——不需要「写盘还在飞时再双击」，只要第一次写盘先落地即可，
+   * 本地小文件上这是常态（实测 15ms 内就完成）。修法就是让事件处理器绕开闭包、
+   * 读这份 ref：A 一旦退场，ref 立刻是 null，`switching` 判定自然为假，不会重复提交。
+   *
+   * **ref 必须在 `setEditingState` 的 updater 里同步**（见 `setEditing`），不能靠
+   * `useEffect` 补——effect 要等渲染之后才跑，而上面那条链整个发生在同一个事件
+   * 循环 tick 内，等 effect 就已经晚了。
+   */
+  const editingRef = useRef<WritingEditingState | null>(null)
+  /**
+   * 写 `editing` 的唯一入口：state 与 ref 一起落。
+   *
+   * 在 updater 内部赋 ref 是刻意的——updater 拿得到 React 认定的当前值，
+   * 顺序天然正确。StrictMode 下 updater 会被调用两次，但这里只是幂等赋值，无副作用。
+   */
+  const setEditing = useCallback(
+    (
+      updater:
+        | (WritingEditingState | null)
+        | ((cur: WritingEditingState | null) => WritingEditingState | null)
+    ): void => {
+      setEditingState((cur) => {
+        const next = typeof updater === 'function' ? updater(cur) : updater
+        editingRef.current = next
+        return next
+      })
+    },
+    []
+  )
   /**
    * 正在写盘的是哪一块（`"节名:块序号"`，而不是一个裸 boolean）。
    *
@@ -104,6 +161,13 @@ export function WritingPaper({
    * 改成「只挡同 key 的重入」，不误伤别的块。
    */
   const savingRef = useRef<string | null>(null)
+  /**
+   * 「这一块保存失败了、编辑框还留着，等 disabled 撤掉后要把焦点还给它」的标记，
+   * 存的是块 key。由 commitEdit 的失败分支写，由下面的 effect 消费。
+   * 为什么需要它：见 commitEdit 失败分支里那段注释（焦点丢了会让 Esc 彻底失灵，
+   * 而冲突提示恰恰在让用户按 Esc）。
+   */
+  const refocusRef = useRef<string | null>(null)
 
   // 每节切块。sections 变才重算——流式期间 2s 一次，代价可忽略。
   const blocks = useMemo(
@@ -153,14 +217,38 @@ export function WritingPaper({
   }, [blocks, editing])
 
   /**
+   * 保存失败后把焦点还给编辑框（标记由 commitEdit 的失败分支设下，理由见那里）。
+   *
+   * 放在 effect 里而不是失败分支里直接 focus：那一刻 `setSavingKey(null)` 还没提交，
+   * textarea 仍带着 `disabled`，对 disabled 元素调 `focus()` 无效。等这个 effect 跑时
+   * React 已经把 `disabled` 撤掉了。
+   *
+   * 只在「确实还是那一块、且当前没有别的东西被聚焦」时补——用户可能在失败之后自己
+   * 点去了别处（比如去点顶栏的撤销），那种情况下抢回焦点是干扰。
+   */
+  useEffect(() => {
+    const want = refocusRef.current
+    if (!want || savingKey !== null) return
+    const ta = scrollRef.current?.querySelector('textarea')
+    if (!ta || ta.disabled) return
+    refocusRef.current = null
+    const ae = document.activeElement
+    if (ae === ta) return
+    if (ae && ae !== document.body && ae.tagName !== 'DIV') return
+    ta.focus()
+  }, [savingKey, editing])
+
+  /**
    * 提交当前编辑。返回 true = 可以离开这一块（存成功、或内容压根没变）。
    *
    * 内容没变时直接返回 true 不写盘：省掉一次无意义 IPC，也省掉一格撤销额度——用户点开
    * 看一眼再点走，不该消耗掉一次真正的后悔机会。
    */
   const commitEdit = useCallback(async (): Promise<boolean> => {
-    if (!editing || !onEditBlock) return true
-    const mine = editing
+    // 从 ref 读而不是闭包：理由见 editingRef 的注释（陈旧闭包会让已经退场的那一块
+    // 被重复提交，撞出一条纯属自造的「这一节刚被 AI 改过」）。
+    const mine = editingRef.current
+    if (!mine || !onEditBlock) return true
     const mineKey = `${mine.sectionName}:${mine.blockIndex}`
     /**
      * 【2026-07-31 复审 I-3：disabled 会让浏览器对聚焦元素派发 blur，从而重入】
@@ -311,6 +399,22 @@ export function WritingPaper({
               ? null
               : cur
           )
+        } else {
+          /**
+           * 【2026-08-03 实测：保存失败后编辑框留着，但焦点没了，Esc 就此失灵】
+           * 保存期间 textarea 挂 `disabled`，浏览器会把焦点从它身上收走；`autoFocus`
+           * 只在挂载那一次生效，解禁后不会自己补回来。于是失败之后页面上没有任何东西
+           * 聚焦，而 Esc 是挂在 textarea 的 `onKeyDown` 上的——**按 Esc 完全没反应**。
+           *
+           * 这条不是小瑕疵：`editBlock` 给冲突设的提示原文就是「请先把编辑框里的文字
+           * 复制出来，再按 Esc 关掉编辑框重新编辑」——提示在指引用户做一件此刻做不到
+           * 的事，用户只能反复按 Esc 然后困惑。（实测：必须先用鼠标点回输入框，Esc 才管用。）
+           *
+           * 记一个「该把焦点还回去」的标记，由下面那个 effect 在 React 把 `disabled`
+           * 撤掉之后执行——不能在这里直接 focus：此刻 `setSavingKey(null)` 还没提交，
+           * textarea 仍是 disabled 状态，对 disabled 元素调 focus() 是无效操作。
+           */
+          refocusRef.current = mineKey
         }
       }
       return ok
@@ -320,7 +424,10 @@ export function WritingPaper({
       if (savingRef.current === mineKey) savingRef.current = null
       setSavingKey((cur) => (cur === mineKey ? null : cur))
     }
-  }, [editing, onEditBlock])
+    // deps 里刻意**没有** `editing`：这个函数已经完全改从 `editingRef` 读当前编辑态，
+    // 不再依赖闭包。附带好处是它的引用变稳定了——挂在 textarea onBlur 上的那份不会
+    // 每敲一个字就重建一次。
+  }, [onEditBlock])
 
   /**
    * 双击进入编辑。AI 正在落字时不许进（`writing` 判据见组件头注释）。
@@ -348,7 +455,9 @@ export function WritingPaper({
   const beginEdit = useCallback(
     async (sectionName: string, blockIndex: number): Promise<void> => {
       if (!onEditBlock || writing) return
-      const cur = editing
+      // 同样从 ref 读：dblclick 到达时 React 可能还没为「A 已提交并退场」重渲染过，
+      // 闭包里的 `editing` 会是已经作废的那一份（见 editingRef 注释里的完整时序）。
+      const cur = editingRef.current
       const switching =
         cur !== null && !(cur.sectionName === sectionName && cur.blockIndex === blockIndex)
       let committed = false
@@ -386,7 +495,8 @@ export function WritingPaper({
         baseMtimeMs: sec.mtimeMs
       })
     },
-    [onEditBlock, writing, sections, editing, commitEdit]
+    // 同 commitEdit：当前编辑态改从 ref 读，`editing` 不再进 deps。
+    [onEditBlock, writing, sections, commitEdit]
   )
 
   /** Esc 取消：丢弃修改，不写盘。 */
