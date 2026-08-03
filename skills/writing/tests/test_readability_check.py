@@ -71,6 +71,34 @@ def test_unknown_platform_falls_back_to_generic():
     assert isinstance(result.stats["正文字数"], float)
 
 
+def test_image_line_is_not_a_paragraph():
+    """独占一行的图片引用不是正文段落——它既不该进「最长段落」统计，
+    也不该被当成一段去核对 paragraph_max。图片路径很长（生图文件名动辄
+    几十个字符），不剥掉的话一张图就能把「最长段落」顶到全篇之首。"""
+    long_src = "../images/gen-" + "1" * 120 + ".png"
+    text = "正常一段话。\n![深夜的便利店](" + long_src + ")\n又一段话。"
+    result = rc.check(text, platform="公众号")
+    assert not any(p.rule == "段落过长" for p in result.problems)
+    assert result.stats["最长段落"] < 20
+
+
+def test_inline_image_not_counted_toward_paragraph_length():
+    """行内图片的语法开销不能算进段落字数。旧实现拿原始行去数，
+    一段 62 字的话带一张图会被报成「108 字 · 段落过长」——而同一份报告的
+    「正文字数」行（走 strip_markdown）却老老实实写着 62，自相矛盾，
+    润色还会照着这条假不合规去动刀。"""
+    para = "这一段本身很短。" * 8 + "![流程图](../images/a-very-long-generated-name.png)"
+    result = rc.check(para, platform="小红书")  # 上限 100 字
+    assert not any(p.rule == "段落过长" for p in result.problems)
+
+
+def test_long_paragraph_still_flagged_when_it_contains_an_image():
+    """剥图之后仍然超限的，照报不误——别把这条闸整个剥没了。"""
+    text = "![图](../images/a.png)" + ("很长的一段" * 40)
+    result = rc.check(text, platform="公众号")
+    assert any(p.rule == "段落过长" for p in result.problems)
+
+
 def test_code_block_interior_not_flagged_as_long_paragraph():
     # 代码块内部的行（比如注释很长的一行代码）不该被当成正文段落核对
     # paragraph_max——旧实现只跳过了 ``` 分隔符本身那一行，围栏内部的行

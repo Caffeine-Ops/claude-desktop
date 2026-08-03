@@ -77,6 +77,18 @@ def check(text: str, platform: str, overrides: dict[str, int] | None = None) -> 
         stripped = line.strip()
         if not stripped or _HEADING.match(line) or stripped.startswith((">", "|", "-", "*")):
             continue
+        # 剥掉图片语法再量长度，口径与 :53 那行的 strip_markdown 对齐。
+        # 复用 wu._IMAGE_SYNTAX 而不是在这里另写一份正则：两份正则迟早会
+        # 分叉（一边认 `![图](路径 "标题")` 一边不认），到时候「正文字数」
+        # 和「最长段落」会各按各的口径算，报告自相矛盾。
+        # 不剥的后果实测过：一段 62 字的话带一张图，被报成
+        # 「108 字（上限 100）· 段落过长」——同一份报告的「正文字数」却写着
+        # 62，是一条自相矛盾的假不合规，而润色会照着它去动刀。
+        # 独占一行的图片剥完变空 → 整行跳过：它不是正文段落，既不该被判
+        # 「段落过长」，也不该顶进「最长段落」统计（生图文件名动辄上百字符）。
+        stripped = wu._IMAGE_SYNTAX.sub("", stripped).strip()
+        if not stripped:
+            continue
         length = wu.char_count(stripped)
         max_para = max(max_para, length)
         if length > para_max:
