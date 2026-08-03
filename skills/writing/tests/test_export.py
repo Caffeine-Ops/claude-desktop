@@ -200,3 +200,40 @@ def test_docx_embeds_existing_image(tmp_path):
     export.md_to_docx("正文。\n\n![图说](../images/a.png)\n", out, md_path)
     doc = Document(str(out))
     assert len(doc.inline_shapes) == 1
+
+
+def test_copy_images_numbers_files_in_document_order(tmp_path):
+    """文件名带序号，是为了让人在公众号编辑器里能按顺序对着插——
+    原始文件名（gen-1754…png）对人没有任何顺序信息。"""
+    (tmp_path / "images").mkdir()
+    (tmp_path / "drafts").mkdir()
+    for name in ("b.png", "a.png"):
+        (tmp_path / "images" / name).write_bytes(b"x")
+    md_path = tmp_path / "drafts" / "01.md"
+    refs = export.parse_images("![二](../images/b.png)\n\n![一](../images/a.png)")
+    out_dir = tmp_path / "output"
+    pairs = export.copy_images(refs, md_path, out_dir)
+    assert [name for _, name in pairs] == ["01-b.png", "02-a.png"]
+    assert (out_dir / "images" / "01-b.png").is_file()
+    assert (out_dir / "images" / "02-a.png").is_file()
+
+
+def test_build_image_manifest_marks_cover_separately():
+    """公众号封面在编辑器里是独立上传项、不进正文。
+    不单独标出来，用户会把封面当成正文第一张图插进去。"""
+    refs = export.parse_images("![封面](../images/a.png)\n\n![流程](../images/b.png)")
+    pairs = [(refs[0], "01-a.png"), (refs[1], "02-b.png")]
+    text = export.build_image_manifest(pairs, cover_first=True)
+    assert "封面" in text
+    assert "01-a.png" in text and "02-b.png" in text
+    assert "output/images/" in text
+
+
+def test_build_image_manifest_without_cover_lists_all_inline():
+    refs = export.parse_images("![流程](../images/b.png)")
+    text = export.build_image_manifest([(refs[0], "01-b.png")], cover_first=False)
+    assert "封面" not in text
+
+
+def test_build_image_manifest_is_empty_without_images():
+    assert export.build_image_manifest([], cover_first=False) == ""

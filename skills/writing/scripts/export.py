@@ -17,6 +17,7 @@ import argparse
 import html
 import json
 import re
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -105,6 +106,51 @@ def _inline(text: str, style: dict[str, str]) -> str:
     escaped = _BOLD.sub(lambda m: f'<strong style="{style["strong"]}">{m.group(1)}</strong>', escaped)
     escaped = _ITALIC.sub(lambda m: f'<em style="{style["em"]}">{m.group(1)}</em>', escaped)
     return escaped
+
+
+def copy_images(refs: list[ImageRef], md_path: Path, out_dir: Path) -> list[tuple[ImageRef, str]]:
+    """把正文用到的图复制进 `<out_dir>/images/`，按正文出现顺序编号。
+
+    为什么要复制而不是让 HTML 指回项目里的原图：导出产物是**要交出去的一包**
+    （发给自己手机、发给同事代发），指回项目路径的 HTML 换台机器就全断。
+    为什么要重编号：原始文件名（gen-1754…png）对人零顺序信息，而公众号
+    必须由人按顺序手工插图——序号就是那份操作顺序。
+    """
+    dest_dir = out_dir / "images"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    pairs: list[tuple[ImageRef, str]] = []
+    for i, ref in enumerate(refs, start=1):
+        source = resolve_image_path(ref.src, md_path)
+        name = f"{i:02d}-{source.name}"
+        shutil.copyfile(source, dest_dir / name)
+        pairs.append((ref, name))
+    return pairs
+
+
+def build_image_manifest(pairs: list[tuple[ImageRef, str]], cover_first: bool) -> str:
+    """贴在导出 HTML 顶部的插图说明块。
+
+    为什么必须有这块东西：**微信编辑器会丢弃所有指向本地文件的图**
+    （它只认已上传到微信服务器的图），也不支持 data URI。也就是说
+    「粘一次全带图」在这个平台上做不到——这是平台限制，不是实现偷懒。
+    能做的只有把手工步骤压到最低：图按序号命名、逐张列出该插在哪。
+    样式内联，理由同全篇（公众号会剥掉 <style> 与 class）。
+    """
+    if not pairs:
+        return ""
+    rows: list[str] = []
+    for idx, (ref, name) in enumerate(pairs):
+        role = "封面（在编辑器的封面位单独上传，不要插进正文）" if (cover_first and idx == 0) else f"正文第 {ref.line} 行"
+        cap = html.escape(ref.caption or "无图说", quote=False)
+        rows.append(f"<li style=\"margin:0.3em 0;\">「{cap}」 → <code>output/images/{html.escape(name, quote=False)}</code>　·　{role}</li>")
+    return (
+        '<div style="border:1px dashed #cccccc;background:#fafafa;padding:1em 1.2em;margin:0 0 1.6em 0;'
+        'font-size:14px;color:#666666;line-height:1.7;">'
+        f'<strong style="color:#333333;">本文共 {len(pairs)} 张配图，需在公众号编辑器里手工插入</strong>'
+        '<br />（微信会丢弃指向本地文件的图，这一步无法自动化）'
+        f'<ol style="margin:0.6em 0 0 0;padding-left:1.4em;">{"".join(rows)}</ol>'
+        '</div>'
+    )
 
 
 def md_to_wechat_html(markdown: str, style: dict[str, str]) -> str:
@@ -267,7 +313,19 @@ def main(argv: list[str] | None = None) -> int:
     out_path = Path(args.out) if args.out else src.with_suffix(suffix)
 
     if args.format == "wechat":
-        out_path.write_text(md_to_wechat_html(markdown, load_style(args.style)), encoding="utf-8")
+        style = load_style(args.style)
+        body = md_to_wechat_html(markdown, style)
+        refs = parse_images(markdown)
+        # cover_first：有图就把第一张当封面。**刻意不去读契约的 image_plan**——
+        # export.py 收的是一个 md 文件路径，不是项目路径，正文可能来自
+        # `<cwd>/写作/` 这类没有契约的单文件场景，为此反推项目根既脆弱又多余。
+        # 代价可控：判错时只是多提示一句「第一张是封面」，而漏提示会让用户
+        # 把封面当正文图插错位——两种错的代价不对称，取宁可多提示的那边。
+        cover_first = bool(refs)
+        pairs = copy_images(refs, src, out_path.parent) if refs else []
+        out_path.write_text(build_image_manifest(pairs, cover_first) + body, encoding="utf-8")
+        if pairs:
+            print(f"[writing] 已复制 {len(pairs)} 张配图到：{out_path.parent / 'images'}")
     elif args.format == "plain":
         out_path.write_text(md_to_plain(markdown), encoding="utf-8")
     else:
