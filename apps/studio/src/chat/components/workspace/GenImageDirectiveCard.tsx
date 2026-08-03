@@ -1,4 +1,4 @@
-import type { GenImageJob } from '../../stores/proposal'
+import type { GenImageJob } from '../../lib/imageReviewTypes'
 import { SpinnerIcon, AlertTriangleIcon, ImageIcon } from './proposalIcons'
 
 // genimage 指令块的编辑态卡片（配图密度③）：指令块本身留在草稿 markdown 里当锚点，编辑态
@@ -29,6 +29,12 @@ export interface GenImageDirectiveCardProps {
   generating: boolean
   onGenerate: () => void
   onOpenSettings: () => void
+  /**
+   * 卡片标题前缀。默认「方案配图」保持提案侧行为逐字不变；写作侧传「文章配图」。
+   * 参数化而不是各写一个组件：四态渲染逻辑（pending / failed / done+审阅卡 /
+   * done+搁浅 / 手动）是两边共同的复杂度，复制一份必然只修其中一份。
+   */
+  label?: string
 }
 
 export function GenImageDirectiveCard({
@@ -37,14 +43,15 @@ export function GenImageDirectiveCard({
   hasReview,
   generating,
   onGenerate,
-  onOpenSettings
+  onOpenSettings,
+  label = '方案配图'
 }: GenImageDirectiveCardProps): React.JSX.Element {
   const needsSettings = job?.status === 'failed' && (job.error ?? '').includes('未配置')
   return (
     <div className="my-2 rounded-lg border border-dashed border-border bg-muted/40 px-3 py-2.5 text-[12.5px]">
       <div className="flex items-center gap-2 text-foreground">
         <ImageIcon />
-        <span className="font-medium">方案配图：{caption}</span>
+        <span className="font-medium">{label}：{caption}</span>
       </div>
       {job?.status === 'pending' && (
         <div className="mt-1.5 flex items-center gap-1.5 text-muted-foreground">

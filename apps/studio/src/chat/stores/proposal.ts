@@ -4,6 +4,7 @@ import type { ProposalDraftBlock, ProposalKind, SectionVerification } from '@des
 import { appendDraftBlocks, sortSectionsByKind, collapseSingletonSections } from '@desktop-shared/proposal'
 import type { ProposalDraftRecord } from '@desktop-shared/ipc-channels'
 import { parseGenImageDirectives, genImageDirectiveKey, genImageRawHash } from '@desktop-shared/proposalGenImage'
+import type { ImageReview, GenImageJob } from '../lib/imageReviewTypes'
 import { useChatStore } from './chat'
 
 export interface ProposalProduct {
@@ -59,43 +60,11 @@ export interface QueuedRevision {
   hintRange: { start: number; end: number }
 }
 
-// 点图工具栏（Task 9）发起改图/生成后的「待审阅」项，挂在数组里（非 blockReviews 那种以助手
-// 消息 id 为 key——图片操作不经 SDK 轮，没有 messageId 可挂）。Task 11 在此之上渲染「原图 vs
-// 新图」对照卡 + 应用/放弃。id 由 addImageReview 生成（crypto.randomUUID()），供 Task 11 增删。
-// 瞬时 UI 信号，不持久化（同 blockReviews：未决的图片改写不该跨会话留存）。
-export interface ImageReview {
-  id: string
-  sectionId: string
-  blockIndex: number
-  sourcePath?: string // mode='generate'/'directive' 时没有源图，故可空
-  resultPath: string
-  // 'directive' = genimage 指令块自动生图（配图密度③）：应用=原地替换指令块，丢弃=删指令块，
-  // 与 'generate'（追加插入到 blockIndex 之后）落位语义不同，必须分流。
-  mode: 'edit' | 'generate' | 'directive'
-  // mode='edit' 时，源图在该块内【同路径出现序列】里的下标（0 起，来自 ProposalPaper
-  // handlePaperClick 从 DOM 数出的 imgSel.occurrence）——应用时喂给 replaceImageOccurrence
-  // 精确定位换哪一张（同一块贴了两张同路径图时不误换）。mode='generate' 没有源图、无意义，
-  // 缺省即可（Task 11 应用逻辑按 mode 分流，不读 generate 项的这个字段）。
-  occurrence?: number
-  // mode='directive'：指令块原文（trim）+ 同内容出现序——落位手术按内容键定位（块序漂移免疫，
-  // 见 shared/proposalGenImage.ts 顶注），blockIndex 只用于审阅卡渲染锚定。
-  directiveRaw?: string
-  directiveOccurrence?: number
-  // mode='directive'：图说，落位时作 `![图说](路径)` 的 alt 文字。
-  caption?: string
-}
-
-// genimage 指令块的生图任务态（配图密度③）。键 = genImageDirectiveKey(sectionId, raw, occurrence)。
-// 三重职责：① 幂等 seen 集合——键存在（无论何态）即不再自动发起，防重复烧钱；② 驱动指令块卡片
-// 的多态渲染（pending 转圈 / failed 错误+重试 / done 提示看审阅卡 / manual 手动生成）；③ restore
-// 重建路径把既存指令块预登记成 manual 哨兵 → 卡片渲染成手动态、autoFire 永不自动补发（终审 I-1）。
-// 瞬时 UI 信号，不持久化（与 imageReviews 同重置点清空）。
-export interface GenImageJob {
-  // manual = restore 重建时预登记的「旧指令块」哨兵（见 seedManualGenImageJobs）：autoFire 视为
-  // 已见永不自动发起，卡片渲染成手动生成态；用户点按钮时被 fireGenImageDirective 覆写回 pending。
-  status: 'pending' | 'failed' | 'done' | 'manual'
-  error?: string
-}
+// 类型已搬到 lib/imageReviewTypes.ts（写作工作区共用）。此处 re-export 保持既有
+// import 路径可用——一次性改掉全部调用点属于与本次重构无关的扩散改动。本文件自己也用这两个
+// 类型（seedManualGenImageJobs 等），故上方另有一条 `import type` 把名字带进本文件作用域——
+// 纯 `export type { X } from 'y'` 只重导出，不引入本地绑定，光靠它这些用法会报 TS2304。
+export type { ImageReview, GenImageJob }
 
 // restore 重建路径的预登记：把重建出的 sections 里【当下就存在】的指令块全部登记成 manual 态
 // 哨兵，堵住「重开会话后下一轮 end 把陈旧指令块当新块自动补发生图」的扣费泄漏（终审 I-1）。
