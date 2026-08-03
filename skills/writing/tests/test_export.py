@@ -237,3 +237,187 @@ def test_build_image_manifest_without_cover_lists_all_inline():
 
 def test_build_image_manifest_is_empty_without_images():
     assert export.build_image_manifest([], cover_first=False) == ""
+
+
+# ---------------------------------------------------------------- 未出图的围栏块
+
+GENIMAGE_MD = """开头一段。
+
+```genimage
+图说: 凌晨三点的便利店
+夜晚的便利店内景，暖黄色顶灯，落地玻璃窗外在下雨。
+平视视角，不要出现任何文字。
+```
+
+结尾一段。
+"""
+
+MERMAID_MD = """开头一段。
+
+```mermaid
+graph TD
+  A[收到需求] --> B{一句话说得清吗}
+```
+
+结尾一段。
+"""
+
+
+def test_wechat_html_never_leaks_genimage_source():
+    """P1a 阶段正文里全是没出图的 ```genimage 块。没有围栏处理时，
+    每一行出图指令都会被当成一个 <p> 渲染进成品——用户拿到的是一份
+    夹着 AI 提示词的公众号稿。"""
+    html_out = export.md_to_wechat_html(GENIMAGE_MD, STYLE)
+    assert "```" not in html_out
+    assert "夜晚的便利店内景" not in html_out
+    assert "平视视角" not in html_out
+
+
+def test_wechat_html_renders_genimage_as_visible_placeholder():
+    """不能只是删掉——删了用户就不知道这里本该有张图。
+    渲染成一个看得见的占位框，带上图说，人一眼知道图该插在哪。"""
+    html_out = export.md_to_wechat_html(GENIMAGE_MD, STYLE)
+    assert "待出图" in html_out
+    assert "凌晨三点的便利店" in html_out
+    assert "border:" in html_out  # 样式内联，同 build_image_manifest 的做法
+
+
+def test_genimage_caption_accepts_fullwidth_colon():
+    """写手在中文正文里打全角冒号是本能，只认半角必然漏掉一半图说。"""
+    md = "```genimage\n图说：全角冒号也要认\n画面描述。\n```"
+    assert "全角冒号也要认" in export.md_to_wechat_html(md, STYLE)
+
+
+def test_wechat_html_never_leaks_mermaid_source():
+    """公众号渲染不了 mermaid，源码漏进正文就是一堆读者看不懂的代码。"""
+    html_out = export.md_to_wechat_html(MERMAID_MD, STYLE)
+    assert "graph TD" not in html_out
+    assert "```" not in html_out
+
+
+def test_wechat_html_mermaid_placeholder_says_source_is_kept():
+    """mermaid 的源码留在 Markdown 原稿里，占位块要把这件事说清楚，
+    否则用户以为图被导出弄丢了。"""
+    html_out = export.md_to_wechat_html(MERMAID_MD, STYLE)
+    assert "mermaid" in html_out
+    assert "原稿" in html_out
+
+
+def test_plain_collapses_fenced_blocks_to_one_line_markers():
+    """纯文本（朋友圈/私域话术）会被直接复制粘贴出去，
+    围栏源码漏出去是最糟的结果。退化成一行占位标记，同 ［图：…］ 的路子。"""
+    out = export.md_to_plain(GENIMAGE_MD)
+    assert "```" not in out
+    assert "夜晚的便利店内景" not in out
+    assert "［待出图：凌晨三点的便利店］" in out
+
+    out2 = export.md_to_plain(MERMAID_MD)
+    assert "graph TD" not in out2
+    assert "［信息图" in out2
+
+
+def test_docx_does_not_emit_fence_source(tmp_path):
+    from docx import Document
+
+    out = tmp_path / "o.docx"
+    export.md_to_docx(GENIMAGE_MD + "\n" + MERMAID_MD, out, tmp_path / "01.md")
+    texts = [p.text for p in Document(str(out)).paragraphs]
+    joined = "\n".join(texts)
+    assert "```" not in joined
+    assert "夜晚的便利店内景" not in joined
+    assert "graph TD" not in joined
+    assert any("待出图" in t for t in texts)
+
+
+def test_pending_genimage_blocks_counted():
+    assert export.count_pending_genimage(GENIMAGE_MD) == 1
+    assert export.count_pending_genimage(GENIMAGE_MD + GENIMAGE_MD) == 2
+    assert export.count_pending_genimage(MERMAID_MD) == 0
+
+
+def test_main_reports_pending_genimage_blocks(tmp_path, capsys):
+    """P1a 的既定终态就是「一批 genimage 描述块（未出图），导出时提示用户自行出图」。
+    不提示的话，用户看到的只是几个占位框，不知道还差几张、该干什么。"""
+    md_path = tmp_path / "01.md"
+    md_path.write_text(GENIMAGE_MD + GENIMAGE_MD, encoding="utf-8")
+    code = export.main([str(md_path), "--format", "plain", "--out", str(tmp_path / "o.txt")])
+    assert code == 0
+    printed = capsys.readouterr().out
+    assert "没出图" in printed
+    assert "2" in printed  # 张数要报出来，用户才知道还差几张
+
+
+def test_main_silent_when_nothing_pending(tmp_path, capsys):
+    md_path = tmp_path / "01.md"
+    md_path.write_text("只有正文，没有出图指令。", encoding="utf-8")
+    export.main([str(md_path), "--format", "plain", "--out", str(tmp_path / "o.txt")])
+    assert "没出图" not in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- 复制后的图要被引用
+
+
+def test_wechat_html_img_src_points_to_copied_file():
+    """copy_images 把图复制进 <out_dir>/images/ 是为了让导出成一个自带图的包；
+    HTML 却指回项目树里的原始相对路径，换个 --out 目录就全断（`--out ~/桌面/稿.html`
+    时 ../images/x.png 解析到 ~/images/x.png）。"""
+    refs = export.parse_images("![封面](../images/a.png)")
+    html_out = export.md_to_wechat_html(
+        "![封面](../images/a.png)", STYLE, image_names={refs[0].line: "01-a.png"}
+    )
+    assert 'src="images/01-a.png"' in html_out
+    assert "../images/a.png" not in html_out
+
+
+def test_wechat_html_without_mapping_keeps_original_src():
+    """不传映射时保持原样——直接调用（预览、测试）不该被迫先跑复制。"""
+    html_out = export.md_to_wechat_html("![封面](../images/a.png)", STYLE)
+    assert 'src="../images/a.png"' in html_out
+
+
+def test_main_wechat_html_references_copied_images(tmp_path):
+    (tmp_path / "images").mkdir()
+    (tmp_path / "images" / "a.png").write_bytes(b"x")
+    (tmp_path / "drafts").mkdir()
+    md_path = tmp_path / "drafts" / "01.md"
+    md_path.write_text("正文。\n\n![封面](../images/a.png)\n", encoding="utf-8")
+    out = tmp_path / "output" / "o.html"
+    out.parent.mkdir()
+    assert export.main([str(md_path), "--format", "wechat", "--out", str(out)]) == 0
+    html_out = out.read_text(encoding="utf-8")
+    assert 'src="images/01-a.png"' in html_out
+    assert (tmp_path / "output" / "images" / "01-a.png").is_file()
+
+
+# ---------------------------------------------------------------- 配图必须独占一行
+
+
+def test_inline_images_flags_image_not_alone_on_line():
+    md = "这句话里夹了一张![流程](../images/f.png)图。\n\n![独占一行的](../images/g.png)"
+    bad = export.inline_images(md)
+    assert [r.caption for r in bad] == ["流程"]
+    assert bad[0].line == 1
+
+
+def test_inline_images_ignores_fenced_examples():
+    md = "```markdown\n正文里夹一张![示例](../images/x.png)图\n```"
+    assert export.inline_images(md) == []
+
+
+def test_main_blocks_export_when_image_not_standalone(tmp_path, capsys):
+    """行内图会在三种格式里表现不一致：HTML/docx 把它原样当文字渲染出来，
+    纯文本却正确替换成标记；同时它照样被复制、被编号，还可能被插图清单
+    标成「封面（不要插进正文）」。与其在三处各修一遍，不如把「独占一行」
+    钉成硬约定，在闸这里一次拦下。"""
+    (tmp_path / "images").mkdir()
+    (tmp_path / "images" / "f.png").write_bytes(b"x")
+    (tmp_path / "drafts").mkdir()
+    md_path = tmp_path / "drafts" / "01.md"
+    md_path.write_text("这句话里夹了一张![流程](../images/f.png)图。\n", encoding="utf-8")
+    out = tmp_path / "o.html"
+    code = export.main([str(md_path), "--format", "wechat", "--out", str(out)])
+    assert code == 1
+    printed = capsys.readouterr().out
+    assert "流程" in printed
+    assert "第 1 行" in printed
+    assert not out.exists()
