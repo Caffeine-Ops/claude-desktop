@@ -76,6 +76,27 @@ export function pushSplashStage(win: BrowserWindow | null, fraction: number, tex
 }
 
 /**
+ * 把启动失败摆到闪屏上（进度条转红 + 原因文案）。
+ *
+ * 为什么需要它：studio 的 WebContentsView 背景是 `#00000000`（全透明），
+ * 一旦它的渲染进程死掉或页面是空文档，用户看到的就是**下层原样透出的
+ * 闪屏**——界面停在「马上就好」，看着像还在加载，实际上早就没救了
+ * （2026-08-03 Windows 实锤：renderer 在 ComponentGate 触发后 230ms 崩溃，
+ * 此后 35 秒 main 一直在往死掉的帧广播，用户面前永远是「马上就好」）。
+ * 出这种事时闪屏是唯一还活着的可见面，必须让它说人话。
+ *
+ * 调用前要先把 studio view 摘掉（removeChildView），否则透明的空 view 仍
+ * 盖在上面，写什么都看不见——见 tabRegistry 的 handleRenderProcessGone。
+ */
+export function showSplashError(win: BrowserWindow | null, text: string): void {
+  if (!win || win.isDestroyed()) return
+  if (!win.isVisible()) win.show()
+  void win.webContents
+    .executeJavaScript(`window.__splash?.fail(${JSON.stringify(text)})`)
+    .catch(() => {})
+}
+
+/**
  * 收尾编排：补足最短展示时长 → 进度冲满 → 停 SETTLE_MS 让眼睛确认完成感。
  * resolve 后调用方再把 studio view 盖上来（见 newStudioTab 的 promote）。
  * splash 从未展示过（加载失败/被跳过）时立即 resolve——闪屏永远不能反过来

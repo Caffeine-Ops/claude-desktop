@@ -36,6 +36,8 @@ import {
   getActiveTabWebContents,
   getQuitting,
   getShellWindow,
+  handleRenderProcessGone,
+  handleTabLoadFailure,
   hasActiveRuntimes,
   newStudioTab,
   setQuitting,
@@ -296,6 +298,39 @@ app.whenReady().then(async () => {
   // console to avoid feeding the panel its own render noise.
   app.on('web-contents-created', (_event, contents) => {
     attachRendererCapture(contents)
+    // 页面级加载失败此前完全静默：promote 的 10s 兜底照常把闪屏推到
+    // 「马上就好」再盖上一块空 view，看起来跟「启动慢」一模一样。
+    contents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL) => {
+      handleTabLoadFailure(contents, errorCode, errorDescription, validatedURL)
+    })
+    // preload 抛错会让 window.chatApi 整个缺失，页面随后在第一次调用时炸。
+    contents.on('preload-error', (_e, preloadPath, error) => {
+      console.error(`[main] preload 执行出错：${preloadPath}`, error)
+    })
+  })
+
+  // ── 崩溃可观测性（2026-08-03 加）──────────────────────────────
+  //
+  // 为什么是 app 级而不是挂在每个 webContents 上：渲染进程可能在 view 建好
+  // 之前就没了（launch-failed），那时还没有可挂钩子的对象。app 级事件覆盖
+  // 全生命周期，且 details 里的 reason/exitCode 正是此前完全拿不到的东西。
+  //
+  // 这不修任何崩溃的根因，它只保证崩溃**会说话**：在此之前，studio 的透明
+  // view 一旦失去渲染进程，用户看到的就是下层原样透出的闪屏，永远停在
+  // 「马上就好」，而日志里唯一的痕迹是 main 往死帧广播时抛的
+  // 「Render frame was disposed」——靠那个倒推根因极其费劲（2026-08-03
+  // Windows 排查实录）。
+  app.on('render-process-gone', (_event, contents, details) => {
+    handleRenderProcessGone(contents, details)
+  })
+
+  // GPU / utility 子进程死亡。渲染进程崩溃常常是 GPU 进程先崩带崩的，
+  // 没这一条就分不清「页面自己炸了」和「显卡那边塌了」。
+  app.on('child-process-gone', (_event, details) => {
+    console.error(
+      `[main] 子进程退出：type=${details.type} reason=${details.reason} ` +
+        `exitCode=${details.exitCode}${details.name ? ` name=${details.name}` : ''}`
+    )
   })
 
   Menu.setApplicationMenu(buildMenu())

@@ -12,7 +12,7 @@ import appIcon from '../../resources/icon.png?asset'
 import { ChatEngine, createChatEngine } from './core/engine'
 import { getThemeMode, resolveIsDarkTheme, setThemeMode } from './core/appSettings'
 import { clearUnread } from './tray'
-import { finishSplashThenSettle, loadSplashIntoShell } from './splash'
+import { finishSplashThenSettle, loadSplashIntoShell, showSplashError } from './splash'
 import { resolveStudioTabUrl } from './services/openDesignServices'
 import {
   IPC_CHANNELS,
@@ -324,6 +324,7 @@ export function createShellWindow(): BrowserWindow {
     const all = Array.from(tabs.values())
     tabs.clear()
     tabOrder.length = 0
+    crashReloads.clear()
     activeTabId = null
     shellWindow = null
     for (const ctx of all) {
@@ -554,6 +555,8 @@ export async function closeTab(id: number): Promise<void> {
   tabs.delete(id)
   const orderIdx = tabOrder.indexOf(id)
   if (orderIdx >= 0) tabOrder.splice(orderIdx, 1)
+  // 崩溃重载计数随 tab 一起走，别在 Map 里留孤儿条目（webContents.id 会复用）。
+  crashReloads.delete(id)
 
   try {
     shellWindow.contentView.removeChildView(ctx.view)
@@ -826,6 +829,126 @@ function snapshotTabList(): TabDescriptor[] {
  */
 export function listTabs(): TabDescriptor[] {
   return snapshotTabList()
+}
+
+/* ─────────────── 渲染进程崩溃恢复（2026-08-03 加）───────────────
+ *
+ * 背景（Windows 实锤）：studio 的 view 背景是 `#00000000` 全透明，它的渲染
+ * 进程一旦死掉，用户看到的是**下层原样透出的闪屏**——界面停在「马上就好」，
+ * 看着像还在加载。而 main 侧此前**没有任何** render-process-gone /
+ * did-fail-load 监听：崩溃既不记日志、不重载、也不报错，于是「渲染进程崩了」
+ * 和「启动很慢」在用户面前长得一模一样，排查只能靠「main 往死帧广播时抛的
+ * Render frame was disposed」这种间接痕迹倒推。
+ *
+ * 这套恢复**不修任何崩溃的根因**，它只做两件事：把崩溃原因写进日志、给一次
+ * 自动重载的机会；重载也救不回来就停手，把原因摆到闪屏上。
+ */
+
+/** 每个 tab 的崩溃重载次数。key = webContents.id。 */
+const crashReloads = new Map<number, number>()
+
+/**
+ * 崩溃后最多自动重载几次。
+ *
+ * 为什么是 1 而不是「一直重试」：如果崩溃是确定性的（比如某个组件一渲染就
+ * 挂），无限重载会把同一条崩溃路径反复走一遍，还会连带把首启的组件下载重新
+ * 触发一轮——用户看到的仍是「马上就好」，只是背后多了几十次崩溃。给一次
+ * 机会覆盖偶发崩溃（GPU 掉一次、内存瞬时压力），失败第二次就认命报错。
+ */
+const MAX_CRASH_RELOADS = 1
+
+/** reason → 给普通用户看的大白话。details.reason 的取值见 Electron 文档。 */
+function describeCrashReason(reason: string): string {
+  switch (reason) {
+    case 'oom':
+      return '内存不足'
+    case 'crashed':
+      return '渲染进程崩溃'
+    case 'launch-failed':
+      return '渲染进程启动失败'
+    case 'integrity-failure':
+      return '代码完整性校验失败（可能被安全软件拦截）'
+    case 'abnormal-exit':
+      return '渲染进程异常退出'
+    case 'killed':
+      return '渲染进程被系统或安全软件结束'
+    default:
+      return `渲染进程退出（${reason}）`
+  }
+}
+
+/**
+ * `app.on('render-process-gone')` 的落点。details 里的 reason / exitCode 是
+ * 这套改动真正要买的东西——没有它，崩溃在日志里是完全静默的。
+ */
+export function handleRenderProcessGone(
+  wc: WebContents,
+  details: { reason: string; exitCode: number }
+): void {
+  const id = wc.id
+  const ctx = tabs.get(id)
+  // 不是 tab 的 webContents（shell 闪屏 / 设置 overlay / DevTools）——记一笔
+  // 就够了，它们没有「重载回来」的语义。
+  if (!ctx) {
+    console.error(
+      `[tabRegistry] 非 tab 渲染进程退出：reason=${details.reason} exitCode=${details.exitCode} wc=${id}`
+    )
+    return
+  }
+
+  const used = crashReloads.get(id) ?? 0
+  console.error(
+    `[tabRegistry] tab 渲染进程退出：reason=${details.reason} ` +
+      `exitCode=${details.exitCode} kind=${ctx.kind} wc=${id} 已重载=${used}/${MAX_CRASH_RELOADS}`
+  )
+
+  if (used < MAX_CRASH_RELOADS && !wc.isDestroyed()) {
+    crashReloads.set(id, used + 1)
+    console.warn('[tabRegistry] 尝试自动重载一次…')
+    try {
+      wc.reload()
+      return
+    } catch (err) {
+      console.error('[tabRegistry] 自动重载失败：', err)
+    }
+  }
+
+  // 重载额度用尽（或重载本身失败）：把透明的空 view 摘掉，让下层闪屏重新
+  // 露出来，然后把原因写上去。不摘 view 的话写什么都被那块透明玻璃盖着。
+  if (shellWindow && !shellWindow.isDestroyed()) {
+    try {
+      shellWindow.contentView.removeChildView(ctx.view)
+    } catch (err) {
+      console.warn('[tabRegistry] 摘除崩溃 view 失败：', err)
+    }
+    if (activeTabId === id) activeTabId = null
+    showSplashError(
+      shellWindow,
+      `启动失败：${describeCrashReason(details.reason)}。请重启应用；若反复出现，请把日志发给我们。`
+    )
+  }
+}
+
+/**
+ * `did-fail-load` 的落点。页面级加载失败此前同样是静默的——promote 的 10s
+ * 兜底照常把闪屏推到「马上就好」再盖上一块空 view，症状与崩溃一模一样。
+ *
+ * 只记录、不做恢复：加载失败的原因（协议没注册、文件缺失）重载多半照样失败，
+ * 而 errorCode/errorDescription 才是要留给下一个人的线索。
+ */
+export function handleTabLoadFailure(
+  wc: WebContents,
+  errorCode: number,
+  errorDescription: string,
+  validatedURL: string
+): void {
+  // -3 = ERR_ABORTED，正常导航打断（router 跳转、快速重载）会刷屏，不是故障。
+  if (errorCode === -3) return
+  const ctx = tabs.get(wc.id)
+  console.error(
+    `[tabRegistry] 页面加载失败：code=${errorCode} ${errorDescription} ` +
+      `url=${validatedURL} kind=${ctx?.kind ?? 'non-tab'} wc=${wc.id}`
+  )
 }
 
 export function broadcastTabList(): void {
