@@ -93,7 +93,7 @@ def build(texts: list[str]) -> dict:
 def _suggest_colloquial_level(profile: dict) -> int:
     """口语化程度 1–5。句子越短、问号叹号越多，越口语。
 
-    这是个粗判断，给策划一个起点，用户可在八项确认里改。
+    这是个粗判断，给策划一个起点，用户可在九项确认里改。
     """
     avg = profile.get("平均句长", 0) or 0
     punct = profile.get("标点偏好", {})

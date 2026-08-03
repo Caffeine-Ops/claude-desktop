@@ -8,7 +8,15 @@
 `<style>` 标签和 class，样式**必须全部内联**在每个元素的 style 属性上。
 现成的 markdown 库输出的是干净的语义 HTML（靠外部样式表），粘进公众号
 就是一片没有格式的黑字。这里的转换刻意只覆盖写作真正会用到的语法子集
-（标题/段落/粗斜体/引用/列表/分隔线），不追求 CommonMark 完备。
+（标题/段落/粗斜体/引用/列表/分隔线/图片），不追求 CommonMark 完备。
+
+**有一份 TypeScript 孪生实现，改这里必须同步改那边**：
+`apps/studio/electron/main/core/writingWechat.ts` 镜像了本文件的
+`md_to_wechat_html`（桌面端要在渲染进程里实时预览公众号排版，跨不过
+Python 边界，只能重写一份）。两边有测试互相钉对齐，但测试只覆盖已有
+语法——**新增一种块级语法（图片、genimage/mermaid 占位块……）时，
+测试不会自动发现那边缺了**，必须人肉同步过去。这条指针是反向的一半，
+正向的一半写在 writingWechat.ts 的文件头。
 """
 
 from __future__ import annotations
