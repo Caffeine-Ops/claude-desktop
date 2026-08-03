@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import {
   parseWritingGenre,
   parseOutlineTotal,
+  parseImageStyle,
   sortSectionNames,
   joinWritingSections,
   shouldPageBreak,
@@ -92,6 +93,36 @@ describe('parseOutlineTotal', () => {
 
   it('容忍「第 1 节」中间带空格', () => {
     expect(parseOutlineTotal('## 大纲\n\n| 第 1 节 | 600 |\n| 第 2 节 | 800 |\n')).toBe(2)
+  })
+})
+
+describe('parseImageStyle', () => {
+  it('读出「## 配图」段的 image_style，剥掉尾部 # 注释', () => {
+    const text =
+      '# 写作契约\n\n## 配图\n- image_plan: inline          # none | cover-only | inline\n' +
+      '- image_count: 3\n- image_style: 极简线条插画，低饱和暖色\n'
+    expect(parseImageStyle(text)).toBe('极简线条插画，低饱和暖色')
+  })
+
+  it('文件不存在（null）回 null', () => {
+    expect(parseImageStyle(null)).toBeNull()
+  })
+
+  it('没有「## 配图」段回 null（职场快道刻意不建 spec_lock 也是这个结果）', () => {
+    expect(parseImageStyle('# 写作契约\n\n## 体裁\n- genre: workplace\n')).toBeNull()
+  })
+
+  it('有「## 配图」段但 image_plan: none 时字段留空，回 null', () => {
+    expect(parseImageStyle('## 配图\n- image_plan: none\n')).toBeNull()
+  })
+
+  it('容忍全角冒号与多余空白', () => {
+    expect(parseImageStyle('## 配图\n-  image_style ：  水墨风  \n')).toBe('水墨风')
+  })
+
+  it('不会越界读到下一个二级标题段落里的字段', () => {
+    const text = '## 配图\n- image_plan: inline\n\n## 附录\n- image_style: 这是别的段落，不该被读到\n'
+    expect(parseImageStyle(text)).toBeNull()
   })
 })
 

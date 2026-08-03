@@ -100,6 +100,35 @@ export function parseOutlineTotal(designSpecText: string | null): number | null 
   return total > 0 ? total : null
 }
 
+// 「## 配图」段（spec_lock_reference.md：段名固定，逐字对齐，见该模板顶注）。
+const IMAGE_SECTION_HEADING = /^##\s*配图\s*$/m
+// `- image_style: 极简线条插画，低饱和暖色` / 全角冒号同 GENRE_LINE 一样要认。值尾部
+// 可能跟着「# 注释」（模板里 image_plan 那行就是这么写的，如
+// `- image_plan: inline          # none | cover-only | inline`）——要求 `#` 前至少一个
+// 空白才当注释切掉，避免风格描述本身偶然含 `#`（如配色代码）被误砍。
+const IMAGE_STYLE_LINE = /^\s*-\s*image_style\s*[:：]\s*(.+?)(?:\s+#.*)?$/m
+
+/**
+ * spec_lock.md 正文 → 配图段的 image_style 字段（生图提示词里的画风约束，见
+ * buildWritingGenImagePrompt）。文件不存在、没有「## 配图」段、段内没有该字段——三种都
+ * 回 null，且三种都是正常态：职场快道刻意不建 spec_lock；`image_plan: none` 时按模板
+ * 约定（spec_lock_reference.md）这两行本就留空。**不猜画风**：拼错的风格句会让生图
+ * 结果偏离契约约定，宁可让提示词退化成"没有额外风格要求"（buildWritingGenImagePrompt
+ * 对空串的处理），也不要塞一个编造的默认风格进去。
+ */
+export function parseImageStyle(specLockText: string | null): string | null {
+  if (!specLockText) return null
+  const start = IMAGE_SECTION_HEADING.exec(specLockText)
+  if (!start) return null
+  const rest = specLockText.slice(start.index + start[0].length)
+  // 配图段落到下一个二级标题为止，同 parseOutlineTotal 的段落收口写法。
+  const nextH2 = /^##\s+/m.exec(rest)
+  const segment = nextH2 ? rest.slice(0, nextH2.index) : rest
+  const m = IMAGE_STYLE_LINE.exec(segment)
+  const v = m?.[1]?.trim()
+  return v ? v : null
+}
+
 // 文件名前导数字。写手按 SKILL.md「一节一文件，按序命名」产出，实际形态有
 // `1-开场.md`、`01-开场.md` 两种，都得按数值排。
 const LEADING_NUM = /^(\d+)/

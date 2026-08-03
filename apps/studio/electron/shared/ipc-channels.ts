@@ -2412,7 +2412,17 @@ export interface WritingScanPayload {
 }
 /** Result of WRITING_SCAN. `dirMissing` 供 UI 区分「目录没了」与「读失败」。 */
 export type WritingScanResultIpc =
-  | { ok: true; genre: WritingGenre; outlineTotal: number | null; files: WritingFileMeta[] }
+  | {
+      ok: true
+      genre: WritingGenre
+      outlineTotal: number | null
+      /** 契约锁定的配图画风（spec_lock.md「## 配图」段的 image_style），见
+       *  electron/shared/writing.ts 的 parseImageStyle 顶注——无 spec_lock / 无该段 /
+       *  该字段留空三种正常态都回 null。顺路跟 genre/outlineTotal 一起算，不为它新开
+       *  一条 IPC 往返。 */
+      imageStyle: string | null
+      files: WritingFileMeta[]
+    }
   | { ok: false; dirMissing?: true; error: string }
 
 /** Payload for WRITING_READ_SECTIONS. `names` 为空数组表示读全部。 */

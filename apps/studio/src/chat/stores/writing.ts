@@ -4,6 +4,10 @@ import { useShallow } from 'zustand/react/shallow'
 
 import type { WritingDocSource, WritingGenre, WritingSection } from '@desktop-shared/writing'
 import {
+  parseGenImageDirectives,
+  genImageDirectiveKey
+} from '@desktop-shared/proposalGenImage'
+import {
   detectWritingSource,
   isWritingInProgress,
   pickFilePath,
@@ -12,6 +16,8 @@ import {
 } from '../lib/writingDocSource'
 import { pushBounded } from '../lib/writingEdit'
 import type { WritingRevisionTarget } from '../lib/writingRevision'
+import type { GenImageJob, ImageReview } from '../lib/imageReviewTypes'
+import { autoFireWritingGenImages } from '../lib/writingGenImageFire'
 import { useChatStore } from './chat'
 
 /** 轮询间隔。2s 是「AI 写完一节到你看见」的上限，对人眼足够；再密只是空转 IPC。 */
@@ -90,6 +96,13 @@ interface WritingState {
   sessionId: string | null
   genre: WritingGenre
   outlineTotal: number | null
+  /**
+   * 契约锁定的配图画风（spec_lock.md「## 配图」段的 image_style 字段），随 WRITING_SCAN
+   * 一起回来（见该通道注释：不新开通道读 Markdown，main 侧顺路解析）。null 有三种
+   * 正常成因：没有 spec_lock（单文件模式 / 职场快道）、没有「## 配图」段、字段本身留空
+   * （`image_plan: none` 时按模板约定不填）——三种都不是错误，UI/提示词按空串兜底。
+   */
+  imageStyle: string | null
   sections: WritingSection[]
   status: WritingStatus
   errMsg: string
@@ -121,6 +134,16 @@ interface WritingState {
   pushUndo: (entry: WritingUndoEntry) => void
   /** 弹出栈顶；空栈回 null。弹出即消费，撤销失败也不回填——不做重做。 */
   popUndo: () => WritingUndoEntry | null
+  /**
+   * genimage 指令块的生图任务态。键 = genImageDirectiveKey(节名, 指令块原文, 出现序)。
+   * 三重职责与提案侧同源：① 幂等 seen 集合——键存在（无论何态）即不再自动发起，
+   * 这是防重复烧钱的核心，写作靠轮询触发、每几秒跑一次，没有它就是每轮重复出图；
+   * ② 驱动指令块卡片的多态渲染；③ manual 态是重开会话时预登记的哨兵。
+   * 用【节名】而不是节 id 当键的一部分：写作的节就是磁盘文件，文件名即身份。
+   */
+  genImageJobs: Record<string, GenImageJob>
+  /** 待用户裁决的出图审阅卡。切换项目时清空——未决提议不跨项目留存。 */
+  imageReviews: ImageReview[]
   /** 切换文档源：清空旧内容，避免上一篇的正文闪现在新文档里。 */
   setSource: (source: WritingDocSource | null) => void
   /**
@@ -131,9 +154,21 @@ interface WritingState {
    * 引用变化时才重置——源引用没变就不会补拉，纸面会一直空着。
    */
   bindSession: (sessionId: string | null) => void
-  applyScan: (v: { genre: WritingGenre; outlineTotal: number | null }) => void
+  applyScan: (v: { genre: WritingGenre; outlineTotal: number | null; imageStyle: string | null }) => void
   setSections: (sections: WritingSection[]) => void
   setStatus: (status: WritingStatus, errMsg?: string) => void
+  /** 出图任务态登记（pending/done/failed/manual）。fireWritingGenImage 与手动重试共用。 */
+  setGenImageJob: (key: string, job: GenImageJob) => void
+  /** 登记一张待审阅出图，返回生成的稳定 id（crypto.randomUUID()），供 Task 11 增删引用。 */
+  addImageReview: (review: Omit<ImageReview, 'id'>) => string
+  removeImageReview: (id: string) => void
+  /**
+   * 重开会话时的预登记：把【当下已存在】的 genimage 指令块全部登记成 manual 态哨兵，
+   * 堵住「轮询把重开会话前就有的陈旧指令块当新块自动补发生图」的扣费泄漏
+   * （与提案侧 restoreFromTranscript/restoreFromDisk 的 seedManualGenImageJobs 同一理由）。
+   * 调用点见 useWritingPoll：只在本次轮询生命周期的【首次成功读取】时调用一次。
+   */
+  seedManualGenImageJobs: (sections: WritingSection[]) => void
   /** 应用改写后就地替换一节的正文与 mtime（写盘成功后调用，避免等下一轮轮询才刷新）。 */
   replaceSectionMarkdown: (name: string, markdown: string, mtimeMs: number) => void
   setPendingRevision: (t: WritingRevisionTarget | null) => void
@@ -149,6 +184,7 @@ export const useWritingStore = create<WritingState>((set, get) => ({
   sessionId: null,
   genre: 'workplace',
   outlineTotal: null,
+  imageStyle: null,
   sections: [],
   status: 'idle',
   errMsg: '',
@@ -158,6 +194,8 @@ export const useWritingStore = create<WritingState>((set, get) => ({
   review: null,
   conflictMsg: '',
   undoStack: [],
+  genImageJobs: {},
+  imageReviews: [],
   setSource: (source) =>
     set({
       source,
@@ -166,6 +204,7 @@ export const useWritingStore = create<WritingState>((set, get) => ({
       sessionId: source ? useChatStore.getState().sessionId : null,
       sections: [],
       outlineTotal: null,
+      imageStyle: null,
       status: 'idle',
       errMsg: '',
       // 换源 = 换了篇稿子，右栏重新回到「等第一节正文」的关门状态；不清的话切到一篇
@@ -180,7 +219,14 @@ export const useWritingStore = create<WritingState>((set, get) => ({
       // 换源 = 换了篇稿子，旧稿的 sectionName 对新稿没有意义。留着它撤销会把上一篇的
       // 内容写进这一篇的同名文件——这类跨文档串台是不可逆的正文损坏，与上面 pending/queue
       // 必须跟着清空是同一个理由。
-      undoStack: []
+      undoStack: [],
+      // genImageJobs 的键 = 节名（磁盘文件名），imageReviews 挂 sectionId = 节名——旧文档的
+      // 节名对新文档没有意义（且换源本身就代表换了一份完全不同的稿子），与提案侧「新建」
+      // 清空 genImageJobs 同理（提案侧「reopen」不清是因为 sections 存活、job 表要跟着存活；
+      // 这里 sections 本来就清空重来，job 表留着只会白占 MAX_AUTO_FIRE_PER_WRITING_PROJECT
+      // 配额、且键对不上新文档的任何节，纯粹的孤儿）。
+      genImageJobs: {},
+      imageReviews: []
     }),
   bindSession: (sessionId) => {
     if (get().sessionId === sessionId) return
@@ -188,7 +234,7 @@ export const useWritingStore = create<WritingState>((set, get) => ({
     // 对话的回复当成这条改写的结果推给用户确认）。
     set({ sessionId, pendingRevision: null, queue: [], review: null, conflictMsg: '' })
   },
-  applyScan: ({ genre, outlineTotal }) => set({ genre, outlineTotal }),
+  applyScan: ({ genre, outlineTotal, imageStyle }) => set({ genre, outlineTotal, imageStyle }),
   // 判据是「有非空正文」而不是 sections.length > 0：AI 有可能先把一节的空文件建出来
   // （占位、或写到一半被打断），文件在但一个字没有——那时开门看到的还是空白纸面。
   setSections: (sections) =>
@@ -227,7 +273,26 @@ export const useWritingStore = create<WritingState>((set, get) => ({
     const top = stack[stack.length - 1]
     set({ undoStack: stack.slice(0, -1) })
     return top
-  }
+  },
+  setGenImageJob: (key, job) =>
+    set((s) => ({ genImageJobs: { ...s.genImageJobs, [key]: job } })),
+  addImageReview: (review) => {
+    const id = crypto.randomUUID()
+    set((s) => ({ imageReviews: [...s.imageReviews, { ...review, id }] }))
+    return id
+  },
+  removeImageReview: (id) =>
+    set((s) => ({ imageReviews: s.imageReviews.filter((r) => r.id !== id) })),
+  seedManualGenImageJobs: (sections) =>
+    set((s) => {
+      const jobs = { ...s.genImageJobs }
+      for (const sec of sections) {
+        for (const d of parseGenImageDirectives(sec.markdown)) {
+          jobs[genImageDirectiveKey(sec.name, d.raw, d.occurrence)] = { status: 'manual' }
+        }
+      }
+      return { genImageJobs: jobs }
+    })
 }))
 
 /**
@@ -398,10 +463,14 @@ export function useWritingPoll(active: boolean): void {
         st.setStatus(scan.dirMissing ? 'missing' : 'error', scan.error)
         return
       }
-      st.applyScan({ genre: scan.genre, outlineTotal: scan.outlineTotal })
+      st.applyScan({ genre: scan.genre, outlineTotal: scan.outlineTotal, imageStyle: scan.imageStyle })
       const signature = scan.files.map((f) => `${f.name}:${f.mtimeNs}:${f.size}`).join('|')
+      // 出图触发器与轮询同拍：磁盘元信息没变 = 正文真没变（含指令块），沿用 store 里已有的
+      // sections 就能安全跑一次自动发起的稳定判据比对，不必等下一次真正的重读——两条分支都要
+      // 调用 autoFireWritingGenImages，否则「AI 写完不再改」这一刻永远等不到第二轮确认。
       if (signature === lastSignature.current) {
         st.setStatus('ready')
+        autoFireWritingGenImages()
         return
       }
       const read = await window.chatApi.writingReadSections({ source, names: [] })
@@ -410,9 +479,17 @@ export function useWritingPoll(active: boolean): void {
         useWritingStore.getState().setStatus('error', read.error)
         return
       }
+      // 本次 effect 生命周期内第一次成功读到正文（== 刚探测到文档源 / 刚重开轮询）：
+      // 此刻 sections 里已经存在的 genimage 指令块可能是重开会话前遗留的陈旧指令，
+      // 不该被当成「本次轮询新发现」自动发起——预登记成 manual 哨兵堵住这条扣费泄漏
+      // （与提案侧 restore 路径同一理由，见 seedManualGenImageJobs 字段注释）。必须在
+      // lastSignature 被本次读取覆写【之前】判断「是不是第一次」。
+      const isFirstRead = lastSignature.current === null
       lastSignature.current = signature
+      if (isFirstRead) useWritingStore.getState().seedManualGenImageJobs(read.sections)
       useWritingStore.getState().setSections(read.sections)
       useWritingStore.getState().setStatus('ready')
+      autoFireWritingGenImages()
     }
 
     void tick()

@@ -47,6 +47,30 @@ describe('scanWritingDoc · project 模式', () => {
     expect(r.ok && r.genre).toBe('workplace')
   })
 
+  it('顺路读出 spec_lock「## 配图」段的 image_style，供出图触发器拼提示词', () => {
+    const dir = makeProject({
+      specLock: '## 配图\n- image_plan: inline\n- image_style: 极简线条插画，低饱和暖色\n',
+      drafts: { '1-a.md': 'a' }
+    })
+    const r = scanWritingDoc({ kind: 'project', projectDir: dir })
+    expect(r.ok && r.imageStyle).toBe('极简线条插画，低饱和暖色')
+  })
+
+  it('没有 spec_lock 时 imageStyle 也回 null（不只 genre 一个默认档）', () => {
+    const dir = makeProject({ drafts: { '1-a.md': 'a' } })
+    const r = scanWritingDoc({ kind: 'project', projectDir: dir })
+    expect(r.ok && r.imageStyle).toBeNull()
+  })
+
+  it('image_plan: none 时配图段其余字段留空，imageStyle 回 null——不是错误', () => {
+    const dir = makeProject({
+      specLock: '## 配图\n- image_plan: none\n',
+      drafts: { '1-a.md': 'a' }
+    })
+    const r = scanWritingDoc({ kind: 'project', projectDir: dir })
+    expect(r.ok && r.imageStyle).toBeNull()
+  })
+
   it('drafts 目录还没建（AI 刚 init 完）时回空列表，不是错误', () => {
     const dir = join(root, 'empty_proj')
     mkdirSync(dir)
@@ -82,6 +106,8 @@ describe('scanWritingDoc · single 模式', () => {
     if (!r.ok) return
     expect(r.genre).toBe('workplace')
     expect(r.outlineTotal).toBeNull()
+    // 单文件模式没有 spec_lock 可读，也没有 images/ 落点——恒 null。
+    expect(r.imageStyle).toBeNull()
     expect(r.files.map((f2) => f2.name)).toEqual(['周报.md'])
   })
 
