@@ -303,6 +303,14 @@ def test_wechat_html_mermaid_placeholder_says_source_is_kept():
     assert "原稿" in html_out
 
 
+def test_mermaid_placeholder_without_caption_has_no_empty_caption_line():
+    """mermaid 块按 illustrator.md 的示例本来就常常不写图说，
+    不能拿「（没写图说）」这类占位文案顶上去给读者看。"""
+    html_out = export.md_to_wechat_html(MERMAID_MD, STYLE)
+    assert "「」" not in html_out
+    assert "没写图说" not in html_out
+
+
 def test_plain_collapses_fenced_blocks_to_one_line_markers():
     """纯文本（朋友圈/私域话术）会被直接复制粘贴出去，
     围栏源码漏出去是最糟的结果。退化成一行占位标记，同 ［图：…］ 的路子。"""

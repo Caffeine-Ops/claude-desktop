@@ -263,7 +263,10 @@ def fence_placeholder_html(block: FenceBlock) -> str:
     半成品状态藏了起来。占位框把「这儿缺一张什么图」摆在原位。
     样式内联，理由同全篇（公众号编辑器会剥掉 <style> 与 class）。
     """
-    cap = html.escape(block.caption or "（这个块没写图说）", quote=False)
+    # 没图说就整行不出。mermaid 块按 illustrator.md 的示例本来就常常不写图说，
+    # 硬塞一句「（这个块没写图说）」是给读者看的噪音——占位框的正事是
+    # 「这儿缺一张图」，图说有则锦上添花，没有也不该拿占位文案顶上。
+    cap_line = f"「{html.escape(block.caption, quote=False)}」<br />" if block.caption else ""
     if block.lang == "genimage":
         title = "待出图"
         hint = "出图指令保留在 Markdown 原稿里；出图后把图片按 <code>![图说](路径)</code> 换掉这个块，再重跑导出"
@@ -278,7 +281,7 @@ def fence_placeholder_html(block: FenceBlock) -> str:
         'margin:1.4em 0;text-align:center;font-size:14px;line-height:1.7;'
         f'color:{fg};">'
         f'<strong style="color:{fg};">{title}</strong><br />'
-        f'「{cap}」<br />'
+        f'{cap_line}'
         f'<span style="font-size:12px;opacity:0.85;">{hint}</span>'
         '</section>'
     )
