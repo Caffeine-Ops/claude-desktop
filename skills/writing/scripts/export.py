@@ -64,6 +64,10 @@ def parse_images(markdown: str) -> list[ImageRef]:
     in_fence = False
     for idx, raw in enumerate(markdown.splitlines(), start=1):
         if raw.lstrip().startswith("```"):
+            # 单纯取反、不配对校验：一个孤立/不成对的 ``` 会让 in_fence
+            # 从此再翻不回来，后面所有图片引用都被当成围栏内容漏检。
+            # 接受这个代价——格式坏掉的围栏本来就会把全文渲染带歪，
+            # 真去配对纠错（找下一个 ``` 收口、处理嵌套）比这道闸该担的事重得多。
             in_fence = not in_fence
             continue
         if in_fence:
