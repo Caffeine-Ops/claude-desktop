@@ -11,6 +11,7 @@ import { basename, dirname, isAbsolute, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 
 import {
+  parseImageCount,
   parseImageStyle,
   parseOutlineTotal,
   parseWritingGenre,
@@ -38,6 +39,11 @@ export type WritingScanResult =
        *  顺路跟 genre/outlineTotal 一起算出来，不为它新开一条 IPC 往返（见 WRITING_SCAN
        *  通道注释）。 */
       imageStyle: string | null
+      /** 契约锁定的配图张数上限（spec_lock.md「## 配图」段的 image_count 字段）——
+       *  spec_lock_reference.md 原话「生图是要花钱的，这是第一道闸（第二道在桌面端的
+       *  自动触发上限）」。null（无 spec_lock / 无该段 / 字段缺失或非法）时由调用方退回
+       *  桌面端自己的默认上限，不是"不限量"。 */
+      imageCount: number | null
       files: WritingFileMeta[]
     }
   | { ok: false; dirMissing?: true; error: string }
@@ -152,9 +158,10 @@ export function scanWritingDoc(source: WritingDocSource): WritingScanResult {
       // 单文件模式没有契约可读，恒走默认档——职场快道 / 去AI化本来就不建 spec_lock。
       genre: 'workplace',
       outlineTotal: null,
-      // 同理没有 spec_lock 可读，画风恒为 null（单文件模式也没有 images/ 落点，
-      // writingImageGenerate 只支持 project 模式，见 autoFireWritingGenImages 守卫①）。
+      // 同理没有 spec_lock 可读，画风与张数上限恒为 null（单文件模式也没有 images/
+      // 落点，writingImageGenerate 只支持 project 模式，见 autoFireWritingGenImages 守卫①）。
       imageStyle: null,
+      imageCount: null,
       files: [
         {
           name: basename(abs),
@@ -174,10 +181,11 @@ export function scanWritingDoc(source: WritingDocSource): WritingScanResult {
     return { ok: false, dirMissing: true, error: 'Project directory not found.' }
   }
 
-  // 只读一次 spec_lock.md，genre 与 imageStyle 共用同一份文本——避免两次同步 IO。
+  // 只读一次 spec_lock.md，genre / imageStyle / imageCount 共用同一份文本——避免多次同步 IO。
   const specLockText = readTextOrNull(join(abs, 'spec_lock.md'))
   const genre = parseWritingGenre(specLockText)
   const imageStyle = parseImageStyle(specLockText)
+  const imageCount = parseImageCount(specLockText)
   const outlineTotal = parseOutlineTotal(readTextOrNull(join(abs, 'design_spec.md')))
 
   // drafts/ 还没建（AI 刚 init 完、还没开写）不是错误，回空列表让 UI 显示「等待 AI 开写」。
@@ -185,7 +193,7 @@ export function scanWritingDoc(source: WritingDocSource): WritingScanResult {
   try {
     names = readdirSync(sectionDir(source))
   } catch {
-    return { ok: true, genre, outlineTotal, imageStyle, files: [] }
+    return { ok: true, genre, outlineTotal, imageStyle, imageCount, files: [] }
   }
 
   const files: WritingFileMeta[] = []
@@ -205,7 +213,7 @@ export function scanWritingDoc(source: WritingDocSource): WritingScanResult {
       // 扫描与 stat 之间文件消失（AI 正在改名）——跳过，下一轮轮询自会补上。
     }
   }
-  return { ok: true, genre, outlineTotal, imageStyle, files }
+  return { ok: true, genre, outlineTotal, imageStyle, imageCount, files }
 }
 
 export function readWritingSections(

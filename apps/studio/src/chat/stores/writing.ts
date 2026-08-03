@@ -17,7 +17,7 @@ import {
 import { pushBounded } from '../lib/writingEdit'
 import type { WritingRevisionTarget } from '../lib/writingRevision'
 import type { GenImageJob, ImageReview } from '../lib/imageReviewTypes'
-import { autoFireWritingGenImages } from '../lib/writingGenImageFire'
+import { autoFireWritingGenImages, resetWritingGenImageAutoFireState } from '../lib/writingGenImageFire'
 import { useChatStore } from './chat'
 
 /** 轮询间隔。2s 是「AI 写完一节到你看见」的上限，对人眼足够；再密只是空转 IPC。 */
@@ -103,6 +103,15 @@ interface WritingState {
    * （`image_plan: none` 时按模板约定不填）——三种都不是错误，UI/提示词按空串兜底。
    */
   imageStyle: string | null
+  /**
+   * 契约锁定的配图张数上限（spec_lock.md「## 配图」段的 image_count 字段），随
+   * WRITING_SCAN 顺路回来（同 imageStyle）。spec_lock_reference.md 原话：「生图是要
+   * 花钱的，这是第一道闸（第二道在桌面端的自动触发上限）」——autoFireWritingGenImages
+   * 取 `min(imageCount ?? 桌面默认上限, 桌面默认上限)`，契约值只能收紧、不能放宽桌面端
+   * 自己的硬上限（契约来自 AI 写的文件，不可信，见 parseImageCount 顶注）。null 三种
+   * 正常成因同 imageStyle。
+   */
+  imageCount: number | null
   sections: WritingSection[]
   status: WritingStatus
   errMsg: string
@@ -154,7 +163,12 @@ interface WritingState {
    * 引用变化时才重置——源引用没变就不会补拉，纸面会一直空着。
    */
   bindSession: (sessionId: string | null) => void
-  applyScan: (v: { genre: WritingGenre; outlineTotal: number | null; imageStyle: string | null }) => void
+  applyScan: (v: {
+    genre: WritingGenre
+    outlineTotal: number | null
+    imageStyle: string | null
+    imageCount: number | null
+  }) => void
   setSections: (sections: WritingSection[]) => void
   setStatus: (status: WritingStatus, errMsg?: string) => void
   /** 出图任务态登记（pending/done/failed/manual）。fireWritingGenImage 与手动重试共用。 */
@@ -185,6 +199,7 @@ export const useWritingStore = create<WritingState>((set, get) => ({
   genre: 'workplace',
   outlineTotal: null,
   imageStyle: null,
+  imageCount: null,
   sections: [],
   status: 'idle',
   errMsg: '',
@@ -205,6 +220,7 @@ export const useWritingStore = create<WritingState>((set, get) => ({
       sections: [],
       outlineTotal: null,
       imageStyle: null,
+      imageCount: null,
       status: 'idle',
       errMsg: '',
       // 换源 = 换了篇稿子，右栏重新回到「等第一节正文」的关门状态；不清的话切到一篇
@@ -234,7 +250,8 @@ export const useWritingStore = create<WritingState>((set, get) => ({
     // 对话的回复当成这条改写的结果推给用户确认）。
     set({ sessionId, pendingRevision: null, queue: [], review: null, conflictMsg: '' })
   },
-  applyScan: ({ genre, outlineTotal, imageStyle }) => set({ genre, outlineTotal, imageStyle }),
+  applyScan: ({ genre, outlineTotal, imageStyle, imageCount }) =>
+    set({ genre, outlineTotal, imageStyle, imageCount }),
   // 判据是「有非空正文」而不是 sections.length > 0：AI 有可能先把一节的空文件建出来
   // （占位、或写到一半被打断），文件在但一个字没有——那时开门看到的还是空白纸面。
   setSections: (sections) =>
@@ -288,7 +305,12 @@ export const useWritingStore = create<WritingState>((set, get) => ({
       const jobs = { ...s.genImageJobs }
       for (const sec of sections) {
         for (const d of parseGenImageDirectives(sec.markdown)) {
-          jobs[genImageDirectiveKey(sec.name, d.raw, d.occurrence)] = { status: 'manual' }
+          const key = genImageDirectiveKey(sec.name, d.raw, d.occurrence)
+          // ??= 而不是无条件覆写（2026-08 审查 I-1 修复）：这张表在调用时可能已经有该键的
+          // 真实记录（pending 正在发起中 / done 已经生成完成），无条件覆写会把它们打回
+          // manual——卡片从"生成中/已完成"倒退回"点此生成"，用户再点一次就是对同一张图
+          // 付两次钱（这次是用户手点的，但界面骗了他）。只在键还不存在时才登记哨兵。
+          jobs[key] ??= { status: 'manual' }
         }
       }
       return { genImageJobs: jobs }
@@ -446,10 +468,40 @@ export function useWritingInProgress(): boolean {
 export function useWritingPoll(active: boolean): void {
   const source = useWritingStore((s) => s.source)
   const lastSignature = useRef<string | null>(null)
+  /**
+   * seed 只在「这个项目在本次 ThreadView 挂载生命周期内第一次被打开」时触发一次——
+   * 记的是**项目 key 的集合**，不是（像 lastSignature 那样）每次 effect 重跑就清空。
+   *
+   * 【2026-08 审查 I-1：为什么不能用旧实现"这次 effect 生命周期内的第一次成功读取"当判据】
+   * 旧实现把 `lastSignature.current === null` 当"是不是第一次"，但 `lastSignature`
+   * 在**每一次 effect 重跑**（`[active, source]` 任一变化）开头都会被重置为 null——而
+   * effect 重跑的触发条件远比"重开会话"宽：用户切到另一个会话看一眼、`ThreadView` 因
+   * 无关原因重挂载、`active` 短暂变 false 又变 true，都会让 effect 重跑一轮。具体failure
+   * 场景：AI 在写长篇小说，用户切到别的会话处理 2 分钟（`setSource(null)`，轮询停，但
+   * AI 后台继续写、落盘了 3 个新 genimage 指令块）→ 用户切回（`setSource(A)` 清空
+   * `genImageJobs`，effect 重跑）→ 首次读取 → 旧实现把这 3 个刚写出来的新指令块全部
+   * 登记成 manual——本该自动发起的图一张都不发，用户毫无感知自动触发已经静默失效。
+   *
+   * 用 `Set<projectKey>` 记录"本次挂载期间是否已经 seed 过这个项目"：seed 过就不再
+   * seed（不管之后 effect 重跑多少次），只有**整个组件真正卸载重建**（应用重启/关闭
+   * 重开该 tab）才会拿到全新的 ref、重新当"第一次打开"处理——这与"重开会话"的直觉
+   * 更贴近，且不会把"用户看了别处几分钟"这种日常操作误判成需要重新 seed 的事件。
+   */
+  const seededProjects = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     if (!active || !source) return
     lastSignature.current = null
+    // 稳定判据（lastSectionSignature）与配额告警去重都要在此清零，理由与上面
+    // `lastSignature.current = null` 一致，且与 seededProjects 的选择互补（2026-08
+    // 审查 I-1/I-2 耦合）：seed 收紧到"只在真正首次打开时触发"之后，本轮之外新出现
+    // 的指令块必须完全依赖"连续两轮签名不变"的稳定判据来把关；但那张 Map 是模块级、
+    // 跨 effect 生命周期存活的，如果不在这里清零，"切走项目再切回"时它会残留切走前的
+    // 旧签名——重新挂载后的第一轮轮询会拿"刚读到的新内容"去跟"几分钟前的旧签名"比对，
+    // 一旦碰巧没变化就会被误判成"已经连续两轮稳定"，在实际只观察了一轮的内容上就发起。
+    // 清零后，重新开始轮询的这个 effect 生命周期会老老实实地从"没有基准"开始重新计两轮，
+    // 稳定判据的"两次真实相隔 2 秒的观察"这个保证才成立。
+    resetWritingGenImageAutoFireState()
     let cancelled = false
     let generation = 0
 
@@ -463,7 +515,12 @@ export function useWritingPoll(active: boolean): void {
         st.setStatus(scan.dirMissing ? 'missing' : 'error', scan.error)
         return
       }
-      st.applyScan({ genre: scan.genre, outlineTotal: scan.outlineTotal, imageStyle: scan.imageStyle })
+      st.applyScan({
+        genre: scan.genre,
+        outlineTotal: scan.outlineTotal,
+        imageStyle: scan.imageStyle,
+        imageCount: scan.imageCount
+      })
       const signature = scan.files.map((f) => `${f.name}:${f.mtimeNs}:${f.size}`).join('|')
       // 出图触发器与轮询同拍：磁盘元信息没变 = 正文真没变（含指令块），沿用 store 里已有的
       // sections 就能安全跑一次自动发起的稳定判据比对，不必等下一次真正的重读——两条分支都要
@@ -479,14 +536,15 @@ export function useWritingPoll(active: boolean): void {
         useWritingStore.getState().setStatus('error', read.error)
         return
       }
-      // 本次 effect 生命周期内第一次成功读到正文（== 刚探测到文档源 / 刚重开轮询）：
-      // 此刻 sections 里已经存在的 genimage 指令块可能是重开会话前遗留的陈旧指令，
-      // 不该被当成「本次轮询新发现」自动发起——预登记成 manual 哨兵堵住这条扣费泄漏
-      // （与提案侧 restore 路径同一理由，见 seedManualGenImageJobs 字段注释）。必须在
-      // lastSignature 被本次读取覆写【之前】判断「是不是第一次」。
-      const isFirstRead = lastSignature.current === null
       lastSignature.current = signature
-      if (isFirstRead) useWritingStore.getState().seedManualGenImageJobs(read.sections)
+      // 见 seededProjects 顶注：只在"这个项目本次挂载期间还没 seed 过"时才登记 manual
+      // 哨兵——键用 JSON.stringify(source) 而不是 projectDir 单独一项，因为 single 模式
+      // 没有 projectDir，两种 source 形态要能互相区分。
+      const projectKey = JSON.stringify(source)
+      if (!seededProjects.current.has(projectKey)) {
+        seededProjects.current.add(projectKey)
+        useWritingStore.getState().seedManualGenImageJobs(read.sections)
+      }
       useWritingStore.getState().setSections(read.sections)
       useWritingStore.getState().setStatus('ready')
       autoFireWritingGenImages()

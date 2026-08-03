@@ -2421,6 +2421,10 @@ export type WritingScanResultIpc =
        *  该字段留空三种正常态都回 null。顺路跟 genre/outlineTotal 一起算，不为它新开
        *  一条 IPC 往返。 */
       imageStyle: string | null
+      /** 契约锁定的配图张数上限（image_count），见 parseImageCount 顶注——null 时由
+       *  调用方退回桌面端自己的默认上限（MAX_AUTO_FIRE_PER_WRITING_PROJECT），不是
+       *  "不限量"。 */
+      imageCount: number | null
       files: WritingFileMeta[]
     }
   | { ok: false; dirMissing?: true; error: string }

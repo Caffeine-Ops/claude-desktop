@@ -71,6 +71,21 @@ describe('scanWritingDoc · project 模式', () => {
     expect(r.ok && r.imageStyle).toBeNull()
   })
 
+  it('顺路读出 spec_lock「## 配图」段的 image_count 张数上限（契约的第一道花钱闸）', () => {
+    const dir = makeProject({
+      specLock: '## 配图\n- image_plan: inline\n- image_count: 3\n- image_style: 水墨风\n',
+      drafts: { '1-a.md': 'a' }
+    })
+    const r = scanWritingDoc({ kind: 'project', projectDir: dir })
+    expect(r.ok && r.imageCount).toBe(3)
+  })
+
+  it('没有 spec_lock / 字段缺失时 imageCount 回 null，由桌面端退回默认上限', () => {
+    const dir = makeProject({ drafts: { '1-a.md': 'a' } })
+    const r = scanWritingDoc({ kind: 'project', projectDir: dir })
+    expect(r.ok && r.imageCount).toBeNull()
+  })
+
   it('drafts 目录还没建（AI 刚 init 完）时回空列表，不是错误', () => {
     const dir = join(root, 'empty_proj')
     mkdirSync(dir)
@@ -108,6 +123,7 @@ describe('scanWritingDoc · single 模式', () => {
     expect(r.outlineTotal).toBeNull()
     // 单文件模式没有 spec_lock 可读，也没有 images/ 落点——恒 null。
     expect(r.imageStyle).toBeNull()
+    expect(r.imageCount).toBeNull()
     expect(r.files.map((f2) => f2.name)).toEqual(['周报.md'])
   })
 

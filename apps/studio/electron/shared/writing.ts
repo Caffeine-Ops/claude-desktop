@@ -102,11 +102,15 @@ export function parseOutlineTotal(designSpecText: string | null): number | null 
 
 // 「## 配图」段（spec_lock_reference.md：段名固定，逐字对齐，见该模板顶注）。
 const IMAGE_SECTION_HEADING = /^##\s*配图\s*$/m
-// `- image_style: 极简线条插画，低饱和暖色` / 全角冒号同 GENRE_LINE 一样要认。值尾部
-// 可能跟着「# 注释」（模板里 image_plan 那行就是这么写的，如
-// `- image_plan: inline          # none | cover-only | inline`）——要求 `#` 前至少一个
-// 空白才当注释切掉，避免风格描述本身偶然含 `#`（如配色代码）被误砍。
-const IMAGE_STYLE_LINE = /^\s*-\s*image_style\s*[:：]\s*(.+?)(?:\s+#.*)?$/m
+// `- image_style: 极简线条插画，低饱和暖色` / 全角冒号同 GENRE_LINE 一样要认。
+// **刻意不剥尾部注释**（2026-08 审查 M-1 修复前的版本曾试图剥 `\s+#.*`，被审查者
+// 实测证伪）：真实模板（spec_lock_reference.md）里带尾注释对齐的只有 `image_plan`
+// 和 `image_count` 两行，`image_style` 这一行从来不带。`image_style` 是自由文本
+// 创作性字段，画风描述本身完全可能含 `#`（配色 hex 码、话题标签），一旦尝试用
+// `#` 切注释，`- image_style: 低饱和暖色，主色 #E8A33D` 会被腰斩成「低饱和暖色，
+// 主色」——颜色信息丢失且零报错，全篇配图颜色跑偏。宁可将来某人手滑在这行后面加一句
+// `# 备注`被整段当成风格描述的一部分（无害，最多让提示词多几个字），也不能砍错。
+const IMAGE_STYLE_LINE = /^\s*-\s*image_style\s*[:：]\s*(.+)$/m
 
 /**
  * spec_lock.md 正文 → 配图段的 image_style 字段（生图提示词里的画风约束，见
@@ -127,6 +131,32 @@ export function parseImageStyle(specLockText: string | null): string | null {
   const m = IMAGE_STYLE_LINE.exec(segment)
   const v = m?.[1]?.trim()
   return v ? v : null
+}
+
+// `- image_count: 3`。只捕获紧跟在冒号后的数字前缀——不像 image_style 需要纠结尾部
+// 注释怎么切，数字本身不可能含 `#`，`(\d+)` 天然只取数字部分，后面不管跟不跟注释
+// 都不影响。
+const IMAGE_COUNT_LINE = /^\s*-\s*image_count\s*[:：]\s*(\d+)/m
+
+/**
+ * spec_lock.md 正文 → 配图段的 image_count 字段（本篇配图张数上限，见
+ * spec_lock_reference.md「配图」段说明：「生图是要花钱的，这是第一道闸（第二道在
+ * 桌面端的自动触发上限）」）。文件不存在 / 没有「## 配图」段 / 字段缺失或不是正整数
+ * ——都回 null，由调用方（autoFireWritingGenImages）退回桌面端自己的默认上限
+ * MAX_AUTO_FIRE_PER_WRITING_PROJECT。**不信任任意数字**：0 或负数不是合法的"上限"，
+ * 一律当缺失处理，不把契约里的野值当真。
+ */
+export function parseImageCount(specLockText: string | null): number | null {
+  if (!specLockText) return null
+  const start = IMAGE_SECTION_HEADING.exec(specLockText)
+  if (!start) return null
+  const rest = specLockText.slice(start.index + start[0].length)
+  const nextH2 = /^##\s+/m.exec(rest)
+  const segment = nextH2 ? rest.slice(0, nextH2.index) : rest
+  const m = IMAGE_COUNT_LINE.exec(segment)
+  if (!m) return null
+  const n = Number.parseInt(m[1], 10)
+  return Number.isFinite(n) && n > 0 ? n : null
 }
 
 // 文件名前导数字。写手按 SKILL.md「一节一文件，按序命名」产出，实际形态有

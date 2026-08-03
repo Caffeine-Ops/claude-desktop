@@ -3,6 +3,7 @@ import {
   parseWritingGenre,
   parseOutlineTotal,
   parseImageStyle,
+  parseImageCount,
   sortSectionNames,
   joinWritingSections,
   shouldPageBreak,
@@ -97,11 +98,18 @@ describe('parseOutlineTotal', () => {
 })
 
 describe('parseImageStyle', () => {
-  it('读出「## 配图」段的 image_style，剥掉尾部 # 注释', () => {
+  it('读出「## 配图」段的 image_style，即便同段前面有带尾注释的 image_plan/image_count 行', () => {
     const text =
       '# 写作契约\n\n## 配图\n- image_plan: inline          # none | cover-only | inline\n' +
       '- image_count: 3\n- image_style: 极简线条插画，低饱和暖色\n'
     expect(parseImageStyle(text)).toBe('极简线条插画，低饱和暖色')
+  })
+
+  it('M-1 回归：不剥 image_style 行本身的内容——画风里的配色 hex 码不会被当成注释砍掉', () => {
+    // 真实模板里只有 image_plan / image_count 带尾注释，image_style 从不带；
+    // 若像修复前那样用「空白+#」当注释分隔符，这里会被腰斩成「低饱和暖色，主色」。
+    const text = '## 配图\n- image_style: 低饱和暖色，主色 #E8A33D 点缀\n'
+    expect(parseImageStyle(text)).toBe('低饱和暖色，主色 #E8A33D 点缀')
   })
 
   it('文件不存在（null）回 null', () => {
@@ -123,6 +131,34 @@ describe('parseImageStyle', () => {
   it('不会越界读到下一个二级标题段落里的字段', () => {
     const text = '## 配图\n- image_plan: inline\n\n## 附录\n- image_style: 这是别的段落，不该被读到\n'
     expect(parseImageStyle(text)).toBeNull()
+  })
+})
+
+describe('parseImageCount', () => {
+  it('读出「## 配图」段的 image_count 张数上限', () => {
+    const text = '## 配图\n- image_plan: inline\n- image_count: 3\n- image_style: 水墨风\n'
+    expect(parseImageCount(text)).toBe(3)
+  })
+
+  it('文件不存在（null）回 null', () => {
+    expect(parseImageCount(null)).toBeNull()
+  })
+
+  it('没有「## 配图」段回 null', () => {
+    expect(parseImageCount('## 体裁\n- genre: workplace\n')).toBeNull()
+  })
+
+  it('字段缺失回 null（不猜数字）', () => {
+    expect(parseImageCount('## 配图\n- image_plan: none\n')).toBeNull()
+  })
+
+  it('0 或负数不是合法上限，回 null', () => {
+    expect(parseImageCount('## 配图\n- image_count: 0\n')).toBeNull()
+  })
+
+  it('不会越界读到下一个二级标题段落里的字段', () => {
+    const text = '## 配图\n- image_plan: inline\n\n## 附录\n- image_count: 99\n'
+    expect(parseImageCount(text)).toBeNull()
   })
 })
 
