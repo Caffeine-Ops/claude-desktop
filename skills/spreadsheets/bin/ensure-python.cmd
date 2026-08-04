@@ -1,15 +1,34 @@
 @echo off
 REM spreadsheets skill Python bootstrap - Windows.
 REM
-REM 与 ensure-python.sh 对应的 Windows 版。CMD 没有 `source` 语义，没法把
-REM 变量回灌父进程，所以这里改成「把就绪解释器路径写到 stdout 最后一行」，
-REM 约定调用方读取那一行作为 SHEETS_PY。SKILL.md 顶部对 Windows 的说明照此。
+REM Windows counterpart of ensure-python.sh. CMD has no `source` semantics and
+REM cannot export variables back to the caller, so this script instead writes
+REM the ready interpreter path as the LAST stdout line; callers read that line
+REM as SHEETS_PY. The Windows note at the top of SKILL.md follows this contract.
 REM
-REM venv 落在 %USERPROFILE%\.spreadsheets-skill\venv（用户可写；打包后的 skill
-REM 目录只读，venv 不能建那）。base 解释器优先 app 自带 runtime
-REM （PPT_MASTER_PYTHON_HOME，名字带 ppt-master 是历史原因——engine 只注入这
-REM 一个 python home 变量，所有 Python skill 共用，钉 3.12），否则回退系统
-REM py -3.12 / python。
+REM The venv lives in %USERPROFILE%\.spreadsheets-skill\venv (user-writable; the
+REM packaged skill dir is read-only so the venv must not go there). Base
+REM interpreter: the app's bundled runtime first (PPT_MASTER_PYTHON_HOME -- the
+REM ppt-master name is historical; the engine injects exactly one python home
+REM variable and every Python skill shares it, pinned to 3.12), else system
+REM py -3.12 / python.
+REM
+REM ############################################################################
+REM # THIS FILE MUST STAY CRLF-TERMINATED AND PURE ASCII. DO NOT ADD NON-ASCII #
+REM # CHARACTERS (2026-08-04 incident).                                        #
+REM #                                                                          #
+REM # cmd.exe parses batch files by byte offset, re-seeking as it goes. With    #
+REM # LF-only endings that re-seek lands mid-line, so multi-line ( ... ) blocks #
+REM # and for /f loops silently misexecute: `set` lines appear to never run and #
+REM # the final `echo SHEETS_PY=%VENV_PY%` expands to an empty string.         #
+REM #                                                                          #
+REM # Non-ASCII is just as fatal: on a GBK code page a UTF-8 character is read  #
+REM # as byte pairs, and the leftover trailing byte swallows the ASCII byte     #
+REM # that follows it -- an escaped `^>` loses its caret and turns into a real  #
+REM # redirection. `chcp 65001` does NOT fix this: it changes the console code  #
+REM # page, not how cmd.exe decodes this file, and it leaks into the caller's   #
+REM # session. Enforced by .gitattributes (eol=crlf) plus a repo test.          #
+REM ############################################################################
 setlocal enabledelayedexpansion
 
 if "%SHEETS_VENV_DIR%"=="" set "SHEETS_VENV_DIR=%USERPROFILE%\.spreadsheets-skill\venv"
@@ -17,14 +36,14 @@ set "SKILL_ROOT=%~dp0.."
 set "REQ=%SKILL_ROOT%\requirements.txt"
 set "VENV_PY=%SHEETS_VENV_DIR%\Scripts\python.exe"
 
-REM 1. 已就绪 -> 直接输出
+REM 1. Already provisioned -> report and exit.
 if exist "%VENV_PY%" if exist "%SHEETS_VENV_DIR%\.deps-ok" (
-  echo [spreadsheets] Python 就绪：%VENV_PY%
+  echo [spreadsheets] Python ready: %VENV_PY%
   echo SHEETS_PY=%VENV_PY%
   exit /b 0
 )
 
-REM 2. 选 base 解释器
+REM 2. Pick the base interpreter.
 set "BASE="
 if not "%PPT_MASTER_PYTHON_HOME%"=="" (
   if exist "%PPT_MASTER_PYTHON_HOME%\python.exe" set "BASE=%PPT_MASTER_PYTHON_HOME%\python.exe"
@@ -36,28 +55,28 @@ if "%BASE%"=="" (
   where python >nul 2>&1 && set "BASE=python"
 )
 if "%BASE%"=="" (
-  echo [spreadsheets] 错误：没有可用的 Python 解释器。请安装 Python 3.12 或确保 app 自带 runtime 完整。
+  echo [spreadsheets] ERROR: no usable Python interpreter found. Install Python 3.12 or make sure the app's bundled runtime is intact.
   exit /b 1
 )
 
-REM 3. 建 venv + pip install
+REM 3. Create the venv (if missing), then install dependencies.
 if not exist "%VENV_PY%" (
-  echo [spreadsheets] 用 %BASE% 建 venv -^> %SHEETS_VENV_DIR%
+  echo [spreadsheets] Creating venv with %BASE% in %SHEETS_VENV_DIR%
   %BASE% -m venv "%SHEETS_VENV_DIR%"
   if errorlevel 1 (
-    echo [spreadsheets] 错误：创建 venv 失败。
+    echo [spreadsheets] ERROR: failed to create the venv.
     exit /b 1
   )
 )
 
-echo [spreadsheets] 安装依赖（首次不到一分钟，之后秒过）…
+echo [spreadsheets] Installing dependencies (under a minute on first run, instant afterwards)...
 "%VENV_PY%" -m pip install --upgrade pip >nul 2>&1
 "%VENV_PY%" -m pip install -r "%REQ%"
 if errorlevel 1 (
-  echo [spreadsheets] 错误：pip install 失败。检查网络后重跑本脚本。
+  echo [spreadsheets] ERROR: pip install failed. Check your network and re-run this script.
   exit /b 1
 )
 break > "%SHEETS_VENV_DIR%\.deps-ok"
-echo [spreadsheets] Python 就绪：%VENV_PY%
+echo [spreadsheets] Python ready: %VENV_PY%
 echo SHEETS_PY=%VENV_PY%
 exit /b 0

@@ -14,3 +14,25 @@ skills/**/*.png binary
 skills/**/*.jpg binary
 skills/**/*.jpeg binary
 skills/**/*.mp4 binary
+
+# Windows 批处理必须 CRLF（2026-08-04 实锤）：cmd.exe 解析 .cmd/.bat 是按字节
+# 偏移边读边执行的，行尾只有 LF 时它对下一行的重定位会错乱——跨行的 `( … )` 块
+# 与 `for /f` 循环首当其冲，表现为「某些 set 行像没执行过」「中文注释被当成命令」，
+# 最终 `echo PPT_PY=%VENV_PY%` 展开成空串。三份 ensure-python.cmd 因此在 Windows
+# 上从来没真正建出过 venv，而脚本还可能以 0 退出，调用方（pptSkillInstaller 只看
+# 退出码）把 UI 置成假「就绪」，离真因十万八千里。
+#
+# 必须写在上面 `skills/** text eol=lf` 之后：后写覆盖先写，否则 skills/ 下的两份
+# .cmd 会被那条规则钉回 LF——**且优先级高于任何 core.autocrlf 设置**，在 Windows
+# runner 上检出也照样是 LF，改了等于没改。skills-src/ 本无属性（mac 上提交什么存
+# 什么，LF 一路保真到发布 zip），一并显式钉死。
+#
+# 配套纪律：这些 .cmd **内容必须保持纯 ASCII**。GBK 码页下 UTF-8 中文会被双字节
+# 配对读错，落单的尾字节会吞掉紧随的 ASCII 字符——`-^>` 的转义 `^` 被吞后 `>` 就
+# 变成真的重定向符。CRLF 只解决行尾，编码得靠不写非 ASCII 字符来保证（`chcp 65001`
+# 救不了：它改的是控制台码页，管不到批处理文件自身被解码的那一步，还会污染调用方
+# 会话）。skills/**/bin/*.sh 反过来必须留 LF——bash 吃 CRLF 会报 $'\r': command not found。
+skills/**/*.cmd text eol=crlf
+skills/**/*.bat text eol=crlf
+skills-src/**/*.cmd text eol=crlf
+skills-src/**/*.bat text eol=crlf
