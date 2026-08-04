@@ -84,15 +84,54 @@ export function toWritingAssetUrl(src: string): string {
  * @param src markdown 里写的原始 src。非 `./` / `../` 开头（绝对路径、http(s) 外链、
  *   protocol:// URL……）一律原样返回，只有相对路径才需要这步。
  *
- * `..` 跳出 base 之外的裁定（2026-08-03 code review Minor 6，此前是静默逃逸到根——
- * `base='/a'` + `src='../../../images/x.png'` 会吐出 `/images/x.png`，一个看似合法
- * 实则指向完全不相关目录的绝对路径）：视为非法输入，原样返回未解析的 src。理由——这个
- * 函数唯一的调用场景是写作正文里模型生成的相对路径，正常情况下最多上跳一级（drafts →
- * images 这两个兄弟目录），多级上跳意味着输入不符合预期（要么模型瞎写、要么恶意构造）；
- * 返回原样 src 而不是硬凑一个越界绝对路径，后续链式判定（isLocalAssetPath /
- * isWritingAssetSrc）对着这个未解析的相对串统统不命中，最终只是这张图刷不出来——比
- * 静默算出一个不受控的绝对路径、再拿它去查协议白名单安全得多。
+ * `..` 越界裁定（2026-08-04 code review Important 2 收紧）：只放行【一层】上跳
+ * （`../images/x.png`，drafts → images 这两个兄弟目录的唯一合法场景），超过一层一律
+ * 视为非法输入，原样返回未解析的 src。
+ *
+ * 【为什么从「放行 base 的所有上级层数」收紧到「只放一层」】此前的规则是「baseParts 弹空
+ * 才算越界」，即 base 越深、允许 `..` 弹得越多——`base='/p/proj/drafts'` 时
+ * `../../images/x.png` 曾被这份实现解析成功（`/p/images/x.png`），但 main 侧导出用的
+ * `resolveWritingAssetPath`（electron/main/core/writingExportPure.ts）从一开始就只放一层
+ * （钉死在 base 的直接父目录子树内，因为它的输出直接喂 `readFileSync` 塞进交付 Word/PDF，
+ * 没有第二道闸）。两侧标准不一致的后果是真实的「预览=导出」破口：`../../images/x.png` 在
+ * 预览里能解析出绝对路径、`writingasset://` 协议放行显示（该协议的白名单只查
+ * 「含 /images/、扩展名合法」，不检查有没有走出项目目录）→ 图正常显示；导出时 main 侧判越界、
+ * 原样返回相对串 → `readFileSync` 找不到 → 降级文字占位。同一张图，预览有、导出没有，
+ * 且全程零报错——这正是 `proposalDocx.ts` 里 imageParagraphs 注释写的那条不变量
+ * （"绝不出现『预览有图、成品 Word 没图』的静默丢失"）想堵住却被从外面绕过的情形。收紧
+ * 到与 main 侧同一条边界后，这条不变量在两侧都成立。
+ *
+ * （2026-08-03 code review Minor 6 原始动机仍然成立，只是边界从「base 的所有上级层数」改
+ * 收紧到「一层」：`base='/a'` + `src='../../../images/x.png'` 不该静默逃逸到 `/images/x.png`
+ * 这样一个看似合法实则不相关的绝对路径——返回原样 src，后续链式判定统统不命中，图刷不出来，
+ * 比算出一个不受控的绝对路径更安全。）
  */
+export function resolveRelativeAssetPath(base: string, src: string): string {
+  if (!base) return src
+  if (!src.startsWith('./') && !src.startsWith('../')) return src
+
+  const posixBase = toPosix(base)
+  const baseParts = posixBase.split('/').filter(Boolean)
+  // 只放一层上跳：起始层数固定为「base 去掉最后一段」，与 main 侧 resolveWritingAssetPath
+  // 的 `resolve(base, '..')` 边界同一语义。低于这个楼层的 '..' 一律判越界。
+  const floor = Math.max(0, baseParts.length - 1)
+  const srcParts = src.split('/')
+  for (const part of srcParts) {
+    if (part === '' || part === '.') continue
+    if (part === '..') {
+      if (baseParts.length <= floor) return src // 跳出 base 的直接父目录之外——视为非法，原样返回
+      baseParts.pop()
+    } else {
+      baseParts.push(part)
+    }
+  }
+
+  // posixBase 是绝对路径（AssistantMarkdown 调用方恒传绝对目录）才补前导 '/'；
+  // win32 盘符形态（`C:/Users/...`）本身已含「绝对」语义，不需要再补前导 '/'。
+  const prefix = posixBase.startsWith('/') ? '/' : ''
+  return prefix + baseParts.join('/')
+}
+
 /**
  * project/single 两种 {@link WritingDocSource} → 相对图路径解析的基准目录（`../images/x.png`
  * 就靠这个 base 走 {@link resolveRelativeAssetPath}）。**一处算，三处用**（纸面预览
@@ -110,27 +149,4 @@ export function toWritingAssetUrl(src: string): string {
  */
 export function writingAssetBaseDir(source: WritingDocSource | null): string | undefined {
   return source && source.kind === 'project' ? `${source.projectDir}/drafts` : undefined
-}
-
-export function resolveRelativeAssetPath(base: string, src: string): string {
-  if (!base) return src
-  if (!src.startsWith('./') && !src.startsWith('../')) return src
-
-  const posixBase = toPosix(base)
-  const baseParts = posixBase.split('/').filter(Boolean)
-  const srcParts = src.split('/')
-  for (const part of srcParts) {
-    if (part === '' || part === '.') continue
-    if (part === '..') {
-      if (baseParts.length === 0) return src // 跳出 base 之外——视为非法，不转，原样返回
-      baseParts.pop()
-    } else {
-      baseParts.push(part)
-    }
-  }
-
-  // posixBase 是绝对路径（AssistantMarkdown 调用方恒传绝对目录）才补前导 '/'；
-  // win32 盘符形态（`C:/Users/...`）本身已含「绝对」语义，不需要再补前导 '/'。
-  const prefix = posixBase.startsWith('/') ? '/' : ''
-  return prefix + baseParts.join('/')
 }

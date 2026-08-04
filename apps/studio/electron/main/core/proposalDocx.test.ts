@@ -204,10 +204,38 @@ describe('markdownToDocxBuffer 嵌图（产出图 proposal-drafts 路径，防�
 // 第 5 个参数 assetBaseDir 就是喂给这条路径的「节文件所在目录」，见 WalkEnv.assetBaseDir
 // 与 resolveWritingAssetPath（writingExportPure.ts）头注释。
 describe('markdownToDocxBuffer 嵌图（写作相对路径，assetBaseDir）', () => {
-  it('assetBaseDir 缺省时，相对路径图找不到文件、降级为文字占位（不抛错）', async () => {
+  // 2026-08-04 code review M-2：此前这条只断言 `buf.length > 500`，而一份完全空的 markdown
+  // 生成的 docx 就有 20411 字节——这条断言的实际含义只有「函数没抛异常」，对「是否真的降级」
+  // 零覆盖。改成与「传了 assetBaseDir、图真嵌入」的版本比体积：降级态应显著更小（没有 media
+  // 部件），且应与「压根没提到图」的纯文字基线同一量级（< 200 字节差，同下面 webp 用例的判据）。
+  it('assetBaseDir 缺省时，相对路径图找不到文件、降级为文字占位（不抛错，且真的没嵌入）', async () => {
     const md = '<!--proposal-section:content-->\n\n![配图](../images/gen-1.png)'
-    const buf = await markdownToDocxBuffer(md)
-    expect(buf.length).toBeGreaterThan(500)
+    const withoutAssetBaseDir = await markdownToDocxBuffer(md)
+    const noImageAtAll = await markdownToDocxBuffer(
+      '<!--proposal-section:content-->\n\n占位文字，没有图。'
+    )
+    // 降级态与「压根没提到图」的纯文字基线体积接近（同为一段文字段落），证明没有 media 部件
+    // 被嵌入——而不只是「没抛异常」。
+    expect(
+      Math.abs(withoutAssetBaseDir.byteLength - noImageAtAll.byteLength)
+    ).toBeLessThan(200)
+  })
+
+  it('图片文件不存在（用户手删 images/ 里的图）：readFileSync 失败，降级为文字占位、不抛错', async () => {
+    const projectDir = join(tmpdir(), 'writing-test-proj-missing-' + Date.now())
+    const draftsDir = join(projectDir, 'drafts')
+    const imagesDir = join(projectDir, 'images')
+    mkdirSync(draftsDir, { recursive: true })
+    mkdirSync(imagesDir, { recursive: true }) // images/ 目录本身存在，但目标文件不存在
+    const md = '<!--proposal-section:content-->\n\n![配图](../images/deleted.png)'
+    const withMissingFile = await markdownToDocxBuffer(md, undefined, undefined, undefined, draftsDir)
+    const noImageAtAll = await markdownToDocxBuffer(
+      '<!--proposal-section:content-->\n\n占位文字，没有图。'
+    )
+    // 路径本身能正确解析成绝对路径（assetBaseDir 有效、images/ 目录也存在），但文件缺失——
+    // 走 imageParagraphs 的 `readFileSync` try/catch 分支降级，与「压根没提到图」同一量级，
+    // 不抛错、不中断导出。
+    expect(Math.abs(withMissingFile.byteLength - noImageAtAll.byteLength)).toBeLessThan(200)
   })
 
   it('传入 assetBaseDir 后，相对路径图解析成绝对路径并真嵌入 docx', async () => {
@@ -272,12 +300,31 @@ describe('markdownToDocxBuffer 嵌图（写作相对路径，assetBaseDir）', (
     expect(withBase.byteLength - withoutImage.byteLength).toBeLessThan(200)
   })
 
-  // 越界安全阀落到真实导出链路的冒烟：drafts 之外两层的 `..` 不会被解析、不会被 readFileSync
-  // 尝试读取项目目录之外的文件，降级为文字占位，行为与「文件不存在」一致、不抛错。
-  it('相对路径越界（跳出 base 父目录之外）不解析，降级为文字占位', async () => {
-    const md = '<!--proposal-section:content-->\n\n![越界](../../../../../../etc/passwd)'
-    const buf = await markdownToDocxBuffer(md, undefined, undefined, undefined, '/a/b/drafts')
-    expect(buf.length).toBeGreaterThan(500)
+  // 越界安全阀落到真实导出链路的冒烟。2026-08-04 code review M-2：此前用 `/etc/passwd` 当靶子
+  // 是重言式——它没有扩展名，isEmbeddableImagePath 本来就会拒绝，就算把越界安全阀整个删掉
+  // 这条测试也照样绿，测的其实是「无扩展名图片会降级」而不是「越界会被拦」。换成一个真实存在、
+  // 扩展名合法、只是【在越界路径上】的 png：如果安全阀失效，这张图会被真嵌入（体积跳变）；
+  // 安全阀生效则与「压根没提到图」的基线同一量级。
+  it('相对路径越界（跳出 base 父目录之外）不解析，降级为文字占位（真实存在的图也不例外）', async () => {
+    const PNG_100 =
+      'iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAYAAABw4pVUAAAAH0lEQVR42u3BAQ0AAADCoPdPbQ43oAAAAAAAAAAAvg0hAAABmmDh1QAAAABJRU5ErkJggg=='
+    // 目录结构：<root>/a/b/drafts（assetBaseDir）与 <root>/a/images（越界两层才能到达，
+    // 超出「只放一层」的安全阀），后者放一张真实存在的 png——如果安全阀被绕过，这张图会被
+    // 真嵌入；安全阀生效的话，two-levels-up 的相对路径压根不会被解析，还是原样的相对串，
+    // readFileSync 找不到文件，降级为文字占位。
+    const root = join(tmpdir(), 'writing-test-escape-' + Date.now())
+    const draftsDir = join(root, 'a', 'b', 'drafts')
+    const escapedImagesDir = join(root, 'a', 'images') // 只跳一层本该落在这里，但越界请求跳了两层
+    mkdirSync(draftsDir, { recursive: true })
+    mkdirSync(escapedImagesDir, { recursive: true })
+    writeFileSync(join(escapedImagesDir, 'x.png'), Buffer.from(PNG_100, 'base64'))
+
+    const md = '<!--proposal-section:content-->\n\n![越界](../../images/x.png)'
+    const withEscape = await markdownToDocxBuffer(md, undefined, undefined, undefined, draftsDir)
+    const noImageAtAll = await markdownToDocxBuffer(
+      '<!--proposal-section:content-->\n\n占位文字，没有图。'
+    )
+    expect(Math.abs(withEscape.byteLength - noImageAtAll.byteLength)).toBeLessThan(200)
   })
 })
 

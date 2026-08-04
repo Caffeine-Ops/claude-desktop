@@ -551,6 +551,11 @@ export function WritingDocPanel(): React.JSX.Element | null {
     }
     setExportingDocx(true)
     try {
+      // 与 exportPdf 同源：mermaid 只能在 renderer 渲，先扫出正文里的块、逐个渲成 SVG 再
+      // 栅格化 PNG。此前 Word 导出恒不传这个字段，PDF 有流程图、Word 是灰字「[图示]」占位，
+      // 两条导出链不一致（2026-08-04 code review 补齐，对齐 ProposalDocPanel.handleExport
+      // 里 `format === 'docx' ? await renderMermaidImageMap(...) : undefined` 的写法）。
+      const mermaidImages = await renderMermaidImageMap(extractMermaidBlocks(markdown))
       const r = await window.chatApi.writingExportDocx({
         markdown,
         style: writingStyleFor(useWritingStore.getState().genre),
@@ -559,7 +564,8 @@ export function WritingDocPanel(): React.JSX.Element | null {
         // 解析成绝对路径才能 readFileSync 嵌图——与纸面预览（WritingPaper.tsx）同一条基准目录
         // 规则，见 writingAssetBaseDir 头注释。single 模式回传 undefined，main 侧据此跳过解析
         // （图片降级为文字占位，不静默产出一个臆测的错误路径）。
-        assetBaseDir: writingAssetBaseDir(useWritingStore.getState().source)
+        assetBaseDir: writingAssetBaseDir(useWritingStore.getState().source),
+        mermaidImages
       })
       setExportMsg(
         r.path ? { tone: 'ok', text: `已导出：${r.path}` } : { tone: 'muted', text: '已取消导出' }
@@ -591,11 +597,18 @@ export function WritingDocPanel(): React.JSX.Element | null {
       // 正文里的图恒为相对路径，PDF 导出复用 PROPOSAL_RENDER 通道生成 docx 字节再转 PDF——
       // 必须传同一条 assetBaseDir 规则（与上面 exportDocx 同源），否则这条链路只补了流程图、
       // 图片依旧因相对路径解析不出而降级成文字占位。
+      //
+      // 【两种模式都传 kind:'writing'，2026-08-04 code review 修】不能省略 single 模式的
+      // kind——single 模式的 assetBaseDir 恒为 undefined，若 main 侧拿「有没有 assetBaseDir」
+      // 当「是不是写作调用」的判据，single 模式会被误当方案调用、白挨一次方案专属的接地闸门
+      // （collectUngroundedImagePaths），把写作自己的图错判成「未接地」剔除。kind 是独立于
+      // assetBaseDir 的显式意图声明，两种模式都要传。
       const html = await renderProposalPdfHtml(
         markdown,
         writingStyleFor(useWritingStore.getState().genre),
         mermaidImages,
-        writingAssetBaseDir(useWritingStore.getState().source)
+        writingAssetBaseDir(useWritingStore.getState().source),
+        'writing'
       )
       const { bytes } = await window.chatApi.renderProposalPdf({ html })
       const r = await window.chatApi.writingExportPdf({ bytes, defaultBaseName: baseName })

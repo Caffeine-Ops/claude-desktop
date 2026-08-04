@@ -2478,6 +2478,14 @@ export interface WritingExportDocxPayload {
    * markdownToDocxBuffer 据此把相对路径解析成绝对路径才能嵌图；缺省时图片降级为文字占位。
    */
   assetBaseDir?: string
+  /**
+   * 预渲的 mermaid 图（code→{@link MermaidImage}），与 {@link ProposalRenderPayload.mermaidImages}
+   * 同义（2026-08-04 code review 补齐）：此前只有 PDF 导出传这个字段，Word 导出恒省略，导致
+   * 同一份稿子 PDF 里流程图正常显示、Word 里却是灰字「[图示]」占位——两条导出链行为不一致。
+   * 与 ProposalDocPanel 的写法对齐（`format === 'docx' ? await renderMermaidImageMap(...) :
+   * undefined`）：写作 Word 导出现在也在 renderer 侧预渲 mermaid 再传入。
+   */
+  mermaidImages?: Record<string, MermaidImage>
 }
 /** Payload for WRITING_EXPORT_PDF。`bytes` 是 renderer 经 renderProposalPdf 拿到的 PDF 字节。 */
 export interface WritingExportPdfPayload {
@@ -2573,11 +2581,25 @@ export interface ProposalRenderPayload {
   /**
    * 【写作专用】正文相对图路径的解析基准目录，与 {@link WritingExportDocxPayload.assetBaseDir}
    * 同义——写作 PDF 导出（WritingDocPanel.exportPdf）复用本通道生成 docx 字节再转 PDF，图片
-   * 解析必须走同一条路径才能「预览=导出一致」。方案文档的图恒为绝对路径，调用方不传，main
-   * 侧据此判定"是否跳过 collectUngroundedImagePaths 接地闸门"——见 PROPOSAL_RENDER handler
-   * 注释：写作没有 KB 接地这一套，误跑接地检查会把写作自己的图错判成「未接地」而剔除。
+   * 解析必须走同一条路径才能「预览=导出一致」。方案文档的图恒为绝对路径，调用方不传。
+   *
+   * **不要**用「这个字段有没有传」去判断调用方是不是写作（历史教训，2026-08-04 code review
+   * 抓到）：写作 single 模式（打开单个 .md，非项目）本来就不传 assetBaseDir（见
+   * writingAssetBaseDir 对 `kind: 'single'` 恒返回 undefined 的头注释），若拿它兼职当「是否
+   * 写作调用」的判据，single 模式会被误当成方案调用，白白挨一次 collectUngroundedImagePaths
+   * 接地检查——写作没有「接地」这个概念，检查通不过就会把图判成「未接地·疑似挪用」剔除，
+   * 而这句话在写作语境里毫无意义。判「是不是写作调用」必须用下面独立的 {@link kind} 字段。
    */
   assetBaseDir?: string
+  /**
+   * 【写作专用，显式意图字段】标记本次调用来自写作导出（WritingDocPanel.exportPdf），与
+   * assetBaseDir 是否传值【无关】——写作两种模式（project / single）都要传 `'writing'`，
+   * 哪怕 single 模式没有 assetBaseDir。main 侧 PROPOSAL_RENDER handler 据此跳过方案专属的
+   * collectUngroundedImagePaths 接地闸门（见上面 assetBaseDir 注释里的教训）。方案的两个
+   * 调用点（ProposalPreview.tsx / ProposalDocPanel.tsx）不传，缺省即走原有方案行为，逐字节
+   * 验证过不受影响。
+   */
+  kind?: 'writing'
 }
 
 /**

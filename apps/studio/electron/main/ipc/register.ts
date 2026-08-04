@@ -2837,22 +2837,29 @@ export function registerIpcHandlers(): void {
     IPC_CHANNELS.PROPOSAL_RENDER,
     async (_event, payload: ProposalRenderPayload): Promise<ProposalRenderResult> => {
       const markdown = typeof payload?.markdown === 'string' ? payload.markdown : ''
+      // assetBaseDir 只用来算「解析基准目录」，不能兼职当「这是不是写作调用」的判据——
+      // 2026-08-04 code review 抓到的洞：写作 single 模式（打开单个 .md，非项目）恒不传
+      // assetBaseDir（writingAssetBaseDir 对 single 恒返回 undefined），若拿它判定调用方
+      // 身份，single 模式会被误当方案调用。同时补上 typeof 守卫（与上面 markdown 同款）——
+      // 渲染侧若传入非串真值，`isAbsolute(非串)` 会直接抛 TypeError、整个 render reject。
+      const assetBaseDir = typeof payload?.assetBaseDir === 'string' ? payload.assetBaseDir : undefined
       // 预览也过同一接地闸门（与导出共用 collectUngroundedImagePaths）：未接地图在 docx 预览里
       // 同样降级为占位，保证「预览=导出一致」——绝不出现预览有图、成品 Word 没图（评审 AL3）。
       //
-      // 【写作调用跳过接地闸门】assetBaseDir 只有写作 PDF 导出（WritingDocPanel.exportPdf）会传
-      // ——方案文档的图恒为绝对路径，不需要这个字段。据它判定「这是写作调用」并跳过接地检查：
-      // collectUngroundedImagePaths 认的是「图必属本节所引文件（据《X》）的 assets 并集」，写作
-      // 正文没有这套引用标记，跑了只会把写作自己的相对路径图统统误判成「未接地」，导出出来变成
-      // 一堆「未接地·疑似挪用」占位框，而不是真的图（写作工作区没有 KB 检索这一套，接地校验
-      // 天然不适用——与 exportWritingDocx 的裸调用 markdownToDocxBuffer 一致，见其头注释）。
-      const ungrounded = payload?.assetBaseDir ? undefined : collectUngroundedImagePaths(markdown)
+      // 【写作调用跳过接地闸门】判据是显式的 payload.kind === 'writing'（WritingDocPanel.exportPdf
+      // 两种模式都会传，不看 assetBaseDir 有没有值）。collectUngroundedImagePaths 认的是「图
+      // 必属本节所引文件（据《X》）的 assets 并集」，写作正文没有这套引用标记，跑了只会把写作
+      // 自己的相对路径图统统误判成「未接地」，导出出来变成一堆「未接地·疑似挪用」占位框，而
+      // 不是真的图（写作工作区没有 KB 检索这一套，接地校验天然不适用——与 exportWritingDocx
+      // 的裸调用 markdownToDocxBuffer 一致，见其头注释）。方案的两个调用点不传 kind，缺省即
+      // 走原有分支，逐字节验证过不受影响。
+      const ungrounded = payload?.kind === 'writing' ? undefined : collectUngroundedImagePaths(markdown)
       const bytes = await markdownToDocxBuffer(
         markdown,
         payload?.style,
         ungrounded,
         payload?.mermaidImages,
-        payload?.assetBaseDir
+        assetBaseDir
       )
       return { bytes }
     }
@@ -3407,7 +3414,8 @@ export function registerIpcHandlers(): void {
         payload.markdown,
         payload.style,
         payload.defaultBaseName,
-        payload.assetBaseDir
+        payload.assetBaseDir,
+        payload.mermaidImages
       )
     }
   )

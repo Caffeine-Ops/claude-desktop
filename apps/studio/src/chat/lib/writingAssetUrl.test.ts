@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { resolveRelativeAssetPath, toWritingAssetUrl } from './writingAssetUrl'
+import { resolveRelativeAssetPath, toWritingAssetUrl, writingAssetBaseDir } from './writingAssetUrl'
 
 describe('toWritingAssetUrl', () => {
   it('写作项目配图转成 writingasset:// URL', () => {
@@ -79,5 +79,36 @@ describe('resolveRelativeAssetPath', () => {
     expect(resolveRelativeAssetPath('/a', '../../../images/x.png')).toBe(
       '../../../images/x.png'
     )
+  })
+
+  // 2026-08-04 code review Important 2：此前的边界是「base 越深、'..' 能弹得越多」——
+  // base='/p/proj/drafts'（3 段）时 '../../images/x.png' 曾被解析成功（'/p/images/x.png'）。
+  // main 侧导出用的 resolveWritingAssetPath（electron/main/core/writingExportPure.ts）从
+  // 一开始就只放一层，两侧标准不一致时这类两层 '..' 在预览里能显示、导出却降级成文字占位，
+  // 是一处真实的「预览=导出」破口（回归测试锁住，不能再放开）。
+  it('两层 .. 现在视为越界（即便 base 足够深、老规则本会放行）——原样返回', () => {
+    expect(resolveRelativeAssetPath('/p/proj/drafts', '../../images/x.png')).toBe(
+      '../../images/x.png'
+    )
+  })
+
+  it('单层 .. 仍然放行（唯一合法场景：drafts → images 兄弟目录）', () => {
+    expect(resolveRelativeAssetPath('/p/proj/drafts', '../images/x.png')).toBe(
+      '/p/proj/images/x.png'
+    )
+  })
+})
+
+describe('writingAssetBaseDir', () => {
+  it('project 模式返回 <projectDir>/drafts', () => {
+    expect(writingAssetBaseDir({ kind: 'project', projectDir: '/p/稿子' })).toBe('/p/稿子/drafts')
+  })
+
+  it('single 模式返回 undefined（配图功能整体只支持项目模式，不猜一个目录出来）', () => {
+    expect(writingAssetBaseDir({ kind: 'single', filePath: '/p/稿子.md' })).toBeUndefined()
+  })
+
+  it('source 为 null（尚未识别出写作项目）返回 undefined', () => {
+    expect(writingAssetBaseDir(null)).toBeUndefined()
   })
 })

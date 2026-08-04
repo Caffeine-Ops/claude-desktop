@@ -396,16 +396,17 @@ function createImgComponent(assetBaseDir?: string): NonNullable<Components['img'
       // imageParagraphs 共用同一个 isEmbeddableImagePath 谓词。仅对 URL 被改写的本地
       // 资产图（resolved !== path）生效，不影响外链图。
       //
-      // 2026-08-03 code review CONFIRMED（Important 3）：写作项目配图不受这条降级约束——
-      // isEmbeddableImagePath 的白名单（png/jpg/jpeg/gif）是为「预览要和 docx 导出保持一致」
-      // 这条不变量服务的，而写作预览眼下压根没有 docx 导出这条路径，webp/svg/bmp 经
-      // writingasset:// 协议本来就能正常服务。不排除的话，写作项目放一张 fig.webp，预览会
-      // 恒定退化成灰字「[图：fig.webp]」而不是真图——这条降级对写作资产是纯误伤。用
-      // isWritingAssetSrc(path) 判断是否为写作资产、命中则跳过整个降级分支。将来如果写作也
-      // 加上 docx/类似格式的导出，再把 isEmbeddableImagePath（或它的等价物）接回来即可，
-      // 到时候这行排除要一并去掉。
-      const isWritingAsset = isWritingAssetSrc(path)
-      if (resolved !== path && !isWritingAsset && !isEmbeddableImagePath(path)) {
+      // 2026-08-04 code review：写作项目配图不再豁免这条降级约束——2026-08-03 那条豁免的
+      // 理由是「写作预览眼下压根没有 docx/PDF 导出这条路径」，本次改动正是把写作的 docx/PDF
+      // 导出接上了（见 WritingDocPanel.tsx exportDocx/exportPdf），旧理由已经不成立：
+      // 豁免继续留着的话，用户在 `<项目>/images/` 放一张 fig.webp 并在正文引用，预览显示
+      // 真图（writingasset:// 协议放行 webp），导出却因 isEmbeddableImagePath 判定 webp
+      // 不可嵌而降级成灰字「[图：fig.webp]」——同一个不变量的第二处「预览有图、导出没图」
+      // 破口（第一处是相对路径解析边界，见 resolveRelativeAssetPath 头注释）。去掉豁免后
+      // webp/svg/bmp 在预览与导出两侧现在都统一走 isEmbeddableImagePath 降级为文字占位，
+      // 「预览=导出」逐字节一致——AI 自动出图走 embeddableExtFor() 恒产出可嵌格式，不受影响，
+      // 只有用户手放的非规范格式图片会在预览里也提前看到降级提示。
+      if (resolved !== path && !isEmbeddableImagePath(path)) {
         const caption = (alt && alt.trim()) || path.slice(path.lastIndexOf('/') + 1)
         return (
           <span className="my-2 inline-block text-[13px] text-neutral-400">

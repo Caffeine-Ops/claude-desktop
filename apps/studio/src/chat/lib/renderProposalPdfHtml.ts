@@ -122,11 +122,21 @@ export async function renderProposalPdfHtml(
   style: ProposalStyleConfig | undefined,
   mermaidImages: Record<string, MermaidImage> | undefined,
   // 【写作专用，可选】正文相对图路径（`../images/x.png`）的解析基准目录——方案调用方恒不传
-  // （方案图已是绝对路径）。见 ProposalRenderPayload.assetBaseDir 与 PROPOSAL_RENDER handler
-  // 注释：main 侧还据它是否存在来判定要不要跳过方案专属的接地闸门。
-  assetBaseDir?: string
+  // （方案图已是绝对路径）。写作 single 模式（无项目结构）同样不传——不能拿「传没传」当
+  // 「是不是写作调用」的判据，见下面 kind 参数与 ProposalRenderPayload.kind 头注释。
+  assetBaseDir?: string,
+  // 【写作专用，显式意图】标记这次渲染是写作导出，与 assetBaseDir 是否有值【无关】——写作
+  // 两种模式都要传 'writing'（哪怕 single 模式没有 assetBaseDir）。main 侧据此跳过方案专属
+  // 的接地闸门（collectUngroundedImagePaths）；方案的两个调用点不传，缺省即原行为不变。
+  kind?: 'writing'
 ): Promise<string> {
-  const { bytes } = await window.chatApi.renderProposal({ markdown, style, mermaidImages, assetBaseDir })
+  const { bytes } = await window.chatApi.renderProposal({
+    markdown,
+    style,
+    mermaidImages,
+    assetBaseDir,
+    kind
+  })
   const blob = new Blob([new Uint8Array(bytes)], {
     type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
   })
