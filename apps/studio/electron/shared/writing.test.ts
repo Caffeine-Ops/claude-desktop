@@ -167,11 +167,22 @@ describe('parseImageCount', () => {
     expect(parseImageCount('## 配图\n- image_plan: none\n')).toBe(0)
   })
 
-  it('m-4：image_plan: cover-only 无条件把上限压成 1，即便 image_count 残留了陈旧数值', () => {
-    // cover-only = 只配封面 = 恰好一张，同 none 一样不信任 image_count 可能残留的
-    // 旧数字——契约声明"只要封面"不该因为一个没同步删的数字放宽成 5 张。
-    expect(parseImageCount('## 配图\n- image_plan: cover-only\n- image_count: 5\n')).toBe(1)
+  it('m-4：image_plan: cover-only 把上限压到最多 1，image_count 缺失时退回 1', () => {
+    // cover-only = 只配封面 = 最多一张，image_count 缺失（未配置）时退回分支上限 1。
     expect(parseImageCount('## 配图\n- image_plan: cover-only\n')).toBe(1)
+  })
+
+  it('n-1（第五轮）：cover-only × image_count 显式值只能收紧，不能放宽——覆盖 {缺失,0,1,3,100}', () => {
+    // 修复前 cover-only 分支在读 image_count 之前就无条件 return 1，等于把用户/策划
+    // 显式写下的「一张都不要」（image_count: 0）放宽成了 1——这是 m-1 已经修过的
+    // 「0 被当未配置放宽」那个 bug 在 cover-only 分支上的镜像重演。矩阵覆盖：
+    // 缺失退回 1（未配置=用分支上限）；0 必须保持 0（显式收紧必须被尊重）；
+    // 1 本就等于分支上限，原样；3/100 都比分支上限 1 更宽，必须被夹到 1。
+    expect(parseImageCount('## 配图\n- image_plan: cover-only\n')).toBe(1)
+    expect(parseImageCount('## 配图\n- image_plan: cover-only\n- image_count: 0\n')).toBe(0)
+    expect(parseImageCount('## 配图\n- image_plan: cover-only\n- image_count: 1\n')).toBe(1)
+    expect(parseImageCount('## 配图\n- image_plan: cover-only\n- image_count: 3\n')).toBe(1)
+    expect(parseImageCount('## 配图\n- image_plan: cover-only\n- image_count: 100\n')).toBe(1)
   })
 
   it('不会越界读到下一个二级标题段落里的字段', () => {

@@ -194,11 +194,11 @@ interface WritingState {
 }
 
 /**
- * 供 `setSource` 判定"这是不是真的换了项目"：记的是【最近一次非 null 的 source】的
- * key，不是"上一次调用 setSource 时的 source"。2026-08 审查 C-1：用户切走会话时
- * `source` 会先变成 null，若比较对象是"上一次调用的值"，切回来那次调用看到的
- * `get().source` 已经是 null，永远判定成"变了"——等于没有这条判据。必须单独存一份
- * "最近一次真正处于活跃状态的项目是谁"，跨越 null 这个中间态存活。模块级变量（不进
+ * 供 `setSource` 判定「这是不是真的换了项目」：记的是【最近一次非 null 的 source】的
+ * key，不是「上一次调用 setSource 时的 source」。2026-08 审查 C-1：用户切走会话时
+ * `source` 会先变成 null，若比较对象是「上一次调用的值」，切回来那次调用看到的
+ * `get().source` 已经是 null，永远判定成「变了」——等于没有这条判据。必须单独存一份
+ * 「最近一次真正处于活跃状态的项目是谁」，跨越 null 这个中间态存活。模块级变量（不进
  * store，UI 不需要读它）——与 `writingGenImageFire.ts` 里 `lastSectionSignature` /
  * `warnedProjects` 同一惯例。
  */
@@ -209,47 +209,75 @@ let lastNonNullSourceKey: string | null = null
  * 同源（`JSON.stringify(source)`）。**2026-08 审查 C-1'：从 `useWritingPoll` 内部
  * 的 `useRef` 挪到这里，变成模块级、且 `setSource` 够得着它**。
  *
- * 【为什么必须挪】C-1 修复只堵住了"切走（source→null）再切回同一项目"这一条路：
+ * 【为什么必须挪】C-1 修复只堵住了「切走（source→null）再切回同一项目」这一条路：
  * 那条路上 `isGenuinelyNewProject` 判定为假，`genImageJobs` 不清，本来就不需要
- * 重新 seed。但"A → 切到另一个写作项目 B → 切回 A"是**另一条路**——A→B 与 B→A
- * 都满足"新 source 与上一个非 null source 不同"，两次都会清表（这是对的，否则
+ * 重新 seed。但「A → 切到另一个写作项目 B → 切回 A」是**另一条路**——A→B 与 B→A
+ * 都满足「新 source 与上一个非 null source 不同」，两次都会清表（这是对的，否则
  * B 的 job 键留在表里、键的第一段是节名，两份稿子撞同名节时会把 B 的记录误认成
- * A 的，反而"该出图却不出图"）。旧版 `seededProjects` 是组件 ref，`setSource`
- * 物理上碰不到它——于是 B→A 清表时没人同步撤销 A 的"已 seed"标记，A 的 job 表
- * 空了但 `useWritingPoll` 因为"A 已经 seed 过"而跳过补种，两轮稳定判据之后全篇
+ * A 的，反而「该出图却不出图」）。旧版 `seededProjects` 是组件 ref，`setSource`
+ * 物理上碰不到它——于是 B→A 清表时没人同步撤销 A 的「已 seed」标记，A 的 job 表
+ * 空了但 `useWritingPoll` 因为「A 已经 seed 过」而跳过补种，两轮稳定判据之后全篇
  * 指令块被当新指令重新发起（与 C-1 同一机制，只是中间态从 null 换成了另一个项目）。
  *
  * 挪成模块级之后，`setSource` 每次清表（`isGenuinelyNewProject` 为真）时可以
  * 顺手把【即将进入的】那个 source 的 key 从这个 Set 里删掉——见下面 `setSource`
  * 实现。这样任何一次清表都会同步撤销对应的 seed 标记，`useWritingPoll` 下一次
- * 成功读取时会看到"这个项目没 seed 过"、重新补种（把当下已存在的指令块登记回
+ * 成功读取时会看到「这个项目没 seed 过」、重新补种（把当下已存在的指令块登记回
  * manual），而不是把它们当新指令自动重发。
  *
- * 不朝"job 表按 source key 分槽"方向改（每个项目各自一份 `genImageJobs`）：那是
- * 结构性改造，爆炸半径大，此处只需要"清表的同时补种"这一条不变量就够，分槽方案
+ * 不朝「job 表按 source key 分槽」方向改（每个项目各自一份 `genImageJobs`）：那是
+ * 结构性改造，爆炸半径大，此处只需要「清表的同时补种」这一条不变量就够，分槽方案
  * 留档以后真有需要再做。这也意味着**来回切换项目时，非当前项目的审阅卡/任务态
- * 无法跨项目共存**——切到 B 时 A 的 5 张"已完成"审阅卡确实会被清空（这是清表的
- * 直接后果，不是本次修复要解决的问题），但重新补种保证了它不会引发"重新生成、
- * 重复扣费"，指令块只是退回"点此手动生成"的哨兵态。
+ * 无法跨项目共存**——切到 B 时 A 的 5 张「已完成」审阅卡确实会被清空（这是清表的
+ * 直接后果，不是本次修复要解决的问题），但重新补种保证了它不会引发「重新生成、
+ * 重复扣费」，指令块只是退回「点此手动生成」的哨兵态。
  */
 const seededProjects = new Set<string>()
 
 /**
- * 供 `useWritingPoll` 在首次成功读取时判定"要不要 seed"，并把判定结果登记回去
+ * 供 `useWritingPoll` 在首次成功读取时判定「要不要 seed」，并把判定结果登记回去
  * （查询与登记合并成一次调用，调用方不用自己管 Set 的读写）。返回 `true` = 这个
  * 项目本次挂载期间还没 seed 过，调用方现在就该做；`false` = 已经 seed 过，跳过。
  *
  * 导出成独立函数（而不是把 `seededProjects` 整个 Set 露出去）是为了让 C-1' 的
  * 判定逻辑可以脱离 `useWritingPoll`（一个 React hook，本仓库的测试目录不含
  * `src/chat/stores`，没法直接渲染它）被单独测试——`writingGenImageFire.test.ts`
- * 直接调用这个函数配合 `setSource` 验证"A → 切到 B → 切回 A"之后 `shouldSeedProject`
+ * 直接调用这个函数配合 `setSource` 验证「A → 切到 B → 切回 A」之后这个函数
  * 会不会正确地重新返回 `true`，不需要渲染整个 hook。
+ *
+ * 【2026-08 审查第五轮 n-3：改名 shouldSeedProject → claimSeedSlot】旧名字读起来
+ * 像一次无副作用的纯查询（「我该不该 seed？」），但函数体第二行就 `seededProjects.add(key)`
+ * ——同一个 key 在同一次 tick 里调用第二次就会返回 false。目前只有 `useWritingPoll`
+ * 这一个调用点，副作用不会被意外触发第二次，暂时无害；但名字本身会骗后来者以为可以
+ * 安全地多次调用（比如日志/调试代码里顺手加一次探测调用）。改成 `claimSeedSlot`——
+ * 「claim」（占用/领取）这个动词本身就暗示了「调一次就把名额领走了，别人/下一次调用
+ * 拿不到」，与 `seededProjects.add` 的真实语义对齐。
  */
-export function shouldSeedProject(source: WritingDocSource): boolean {
+export function claimSeedSlot(source: WritingDocSource): boolean {
   const key = JSON.stringify(source)
   if (seededProjects.has(key)) return false
   seededProjects.add(key)
   return true
+}
+
+/**
+ * 【2026-08 审查第五轮 n-2】测试专用重置：清空 `seededProjects`。
+ *
+ * 这张表是模块级 Set，生命周期是整个渲染进程（生产代码里合理——见顶注，`setSource`
+ * 在真的换项目时会同步删除对应 key，不需要「整表清零」这种操作）。但测试文件里没有
+ * 任何入口能清它：`writingGenImageFire.test.ts` 的 `beforeEach` 只重置了
+ * `useWritingStore` 与 `lastSectionSignature`/`warnedProjects`（经
+ * `resetWritingGenImageAutoFireState`），唯独漏了这张表——之所以现在还是绿的，
+ * 纯粹是因为全文件只有一条用例（C-1' 回归）调用 `claimSeedSlot`，且那条用例内部
+ * 自己完成了一次「A→B→A」的完整往返、把 A 的 key 显式清干净，没有把「已 seed」
+ * 状态泄漏给下一条用例。这是**用例执行顺序与调用次数的巧合**，不是设计保证——
+ * 谁再加一条调用 `claimSeedSlot` 的用例（比如 M-1 的回归测试就需要，见
+ * `writingGenImageFire.test.ts`），跑在 C-1' 用例前后都可能因为共享的模块级状态
+ * 而假绿/假红。给它配一个同类 reset，在 `beforeEach` 里调用，与
+ * `resetWritingGenImageAutoFireState` 同一套惯例（该函数的顶注也点了这个先例）。
+ */
+export function resetSeededProjectsState(): void {
+  seededProjects.clear()
 }
 
 export const useWritingStore = create<WritingState>((set, get) => ({
@@ -271,28 +299,28 @@ export const useWritingStore = create<WritingState>((set, get) => ({
   genImageJobs: {},
   imageReviews: [],
   setSource: (source) => {
-    // 2026-08 审查 C-1：genImageJobs / imageReviews 的清空条件必须比"每次 setSource
-    // 都清"更窄，只在【真的换了项目/文件】时才清——不是"切走"（source 变 null），也
-    // 不是"切回同一个项目"。
+    // 2026-08 审查 C-1：genImageJobs / imageReviews 的清空条件必须比「每次 setSource
+    // 都清」更窄，只在【真的换了项目/文件】时才清——不是「切走」（source 变 null），也
+    // 不是「切回同一个项目」。
     //
-    // 【为什么旧版"每次都清"是个 Critical】旧注释的理由是"旧文档的节名对新文档没有
-    // 意义"，但那只在【真的换了项目】时成立。切到别的会话看一眼再切回来，必然连续
-    // 触发两次 setSource（切走 source→null，切回 source→A），旧实现把这两次都当"换
-    // 文档"处理，5 张已经生成完、正等用户裁决的审阅卡连同 job 表一起被清空；随后
-    // seededProjects（下方模块级 Set）因为"这个项目本次挂载期间已经 seed 过"而跳过
+    // 【为什么旧版「每次都清」是个 Critical】旧注释的理由是「旧文档的节名对新文档没有
+    // 意义」，但那只在【真的换了项目】时成立。切到别的会话看一眼再切回来，必然连续
+    // 触发两次 setSource（切走 source→null，切回 source→A），旧实现把这两次都当「换
+    // 文档」处理，5 张已经生成完、正等用户裁决的审阅卡连同 job 表一起被清空；随后
+    // seededProjects（下方模块级 Set）因为「这个项目本次挂载期间已经 seed 过」而跳过
     // 补种 manual 哨兵——表空了却没人补——两轮轮询之后，稳定判据把全篇指令块当成
-    // "从没见过的新指令"重新发起，5 张图重复生成、重复扣费。且 MAX_AUTO_FIRE_PER_WRITING_PROJECT
+    // 「从没见过的新指令」重新发起，5 张图重复生成、重复扣费。且 MAX_AUTO_FIRE_PER_WRITING_PROJECT
     // 的配额是从 genImageJobs 表长度算的，表被清空 = 预算一起清零，切 N 次就是 5N 张图，
-    // 没有任何累计上限——触发动作只是"切个会话看一眼"这种一天几十次的日常操作。
+    // 没有任何累计上限——触发动作只是「切个会话看一眼」这种一天几十次的日常操作。
     //
     // 判定用 lastNonNullSourceKey（见其顶注）而不是 get().source：本次调用时 store 里
-    // 的 source 可能已经是 null（切走那一步已经把它置空），要比较的是"离开前那个真正
-    // 活跃的项目"，不是"上一次调用传了什么"。
+    // 的 source 可能已经是 null（切走那一步已经把它置空），要比较的是「离开前那个真正
+    // 活跃的项目」，不是「上一次调用传了什么」。
     const incomingKey = source ? JSON.stringify(source) : null
     const isGenuinelyNewProject = incomingKey !== null && incomingKey !== lastNonNullSourceKey
     if (incomingKey !== null) lastNonNullSourceKey = incomingKey
-    // 2026-08 审查 C-1'：清表的同时必须撤销这个项目的"已 seed"标记，否则重新进入
-    // 时 useWritingPoll 会因为"以为已经 seed 过"而跳过补种——job 表空了却没人
+    // 2026-08 审查 C-1'：清表的同时必须撤销这个项目的「已 seed」标记，否则重新进入
+    // 时 useWritingPoll 会因为「以为已经 seed 过」而跳过补种——job 表空了却没人
     // 登记 manual 哨兵，两轮之后全篇指令块被当新指令重新发起。见 seededProjects
     // 顶注。
     if (isGenuinelyNewProject && incomingKey !== null) seededProjects.delete(incomingKey)
@@ -312,7 +340,7 @@ export const useWritingStore = create<WritingState>((set, get) => ({
       // 刚起步的新稿子时，右栏会带着上一篇的 revealed 直接撑开一片空白。这一批字段
       // （sections/outlineTotal/imageStyle/imageCount/status/errMsg/revealed）不受
       // isGenuinelyNewProject 保护、依旧每次 setSource 都清——它们几秒内会被下一轮
-      // 轮询重新填满（同一个项目会填回一模一样的值），代价只是一次短暂的"重新加载"
+      // 轮询重新填满（同一个项目会填回一模一样的值），代价只是一次短暂的「重新加载」
       // 观感，不是数据丢失，与 genImageJobs/imageReviews 那种不可逆的丢失不是一回事。
       revealed: false,
       // 改写态一律跟着源清空：pending/queue/review 里的 sectionName 只对旧文档有意义，
@@ -328,7 +356,7 @@ export const useWritingStore = create<WritingState>((set, get) => ({
       // genImageJobs 的键 = 节名（磁盘文件名）+ 内容哈希，imageReviews 挂 sectionId = 节名
       // ——只有【真的换了项目】时旧文档的这些键才对新文档没有意义；切回同一个项目时，
       // 键对当前这份文档依然精确有效，清空只会造成上面 C-1 描述的重复发起，且会把用户
-      // 还没裁决的审阅卡凭空清没（用户会觉得"我的审阅卡怎么不见了"）。
+      // 还没裁决的审阅卡凭空清没（用户会觉得「我的审阅卡怎么不见了」）。
       ...(isGenuinelyNewProject ? { genImageJobs: {}, imageReviews: [] } : {})
     })
   },
@@ -396,7 +424,7 @@ export const useWritingStore = create<WritingState>((set, get) => ({
           const key = genImageDirectiveKey(sec.name, d.raw, d.occurrence)
           // ??= 而不是无条件覆写（2026-08 审查 I-1 修复）：这张表在调用时可能已经有该键的
           // 真实记录（pending 正在发起中 / done 已经生成完成），无条件覆写会把它们打回
-          // manual——卡片从"生成中/已完成"倒退回"点此生成"，用户再点一次就是对同一张图
+          // manual——卡片从「生成中/已完成」倒退回「点此生成」，用户再点一次就是对同一张图
           // 付两次钱（这次是用户手点的，但界面骗了他）。只在键还不存在时才登记哨兵。
           jobs[key] ??= { status: 'manual' }
         }
@@ -556,7 +584,7 @@ export function useWritingInProgress(): boolean {
 export function useWritingPoll(active: boolean): void {
   const source = useWritingStore((s) => s.source)
   const lastSignature = useRef<string | null>(null)
-  // seed 机制本身（"这个项目在本次挂载期间是否已经 seed 过"）的完整设计理由、
+  // seed 机制本身（「这个项目在本次挂载期间是否已经 seed 过」）的完整设计理由、
   // 以及它为什么现在是模块级而不是这里的 useRef，见 `seededProjects` 顶注
   // （2026-08 审查 I-1 → C-1 → C-1' 三轮演进都记在那里，不在这里重复）。
 
@@ -566,15 +594,15 @@ export function useWritingPoll(active: boolean): void {
     // 稳定判据（lastSectionSignature）与配额告警去重都要在此清零。
     //
     // 【2026-08 审查 C-1 追问：genImageJobs 已经不再清空了，这里还要不要清？—— 依然要清，
-    // 但理由变了】C-1 修复后，已经登记过的 job 键（pending/done/failed/manual）在"切走
-    // 再切回"时不会丢，它们的幂等判定（守卫③）不依赖这张签名表，清不清都不影响它们的
+    // 但理由变了】C-1 修复后，已经登记过的 job 键（pending/done/failed/manual）在「切走
+    // 再切回」时不会丢，它们的幂等判定（守卫③）不依赖这张签名表，清不清都不影响它们的
     // 正确性——真正受影响的只是【本次挂载期间从未见过、也还没登记 job 键的全新指令块】。
-    // 对这批全新内容而言，清零只是让"连续两轮不变才发起"的计数从头重来一遍，最坏后果是
-    // 多等一轮（~2s）才发起，不是错误发起——这张表本来就不承诺"正确性"（那是 genImageJobs
-    // 的职责），只承诺"多一层保守的节流"。反过来，如果不清零，"切走时内容恰好没有变化"
-    // 的全新指令块会在恢复轮询的第一轮就被判定"和记忆里的签名一样、已经稳定"而立即发起
-    // ——虽然这在逻辑上其实是安全的（内容全程没变=确定不是半截块），但为了让"连续两轮"
-    // 这个不变量的措辞始终成立、不必逐案例论证"这次例外为什么安全"，仍选择无条件清零，
+    // 对这批全新内容而言，清零只是让「连续两轮不变才发起」的计数从头重来一遍，最坏后果是
+    // 多等一轮（~2s）才发起，不是错误发起——这张表本来就不承诺「正确性」（那是 genImageJobs
+    // 的职责），只承诺「多一层保守的节流」。反过来，如果不清零，「切走时内容恰好没有变化」
+    // 的全新指令块会在恢复轮询的第一轮就被判定「和记忆里的签名一样、已经稳定」而立即发起
+    // ——虽然这在逻辑上其实是安全的（内容全程没变=确定不是半截块），但为了让「连续两轮」
+    // 这个不变量的措辞始终成立、不必逐案例论证「这次例外为什么安全」，仍选择无条件清零，
     // 用一次可忽略的额外延迟换取判据本身简单、好推理。
     resetWritingGenImageAutoFireState()
     let cancelled = false
@@ -612,9 +640,9 @@ export function useWritingPoll(active: boolean): void {
         return
       }
       lastSignature.current = signature
-      // 见 seededProjects / shouldSeedProject 顶注：只在"这个项目本次挂载期间还没
-      // seed 过"时才登记 manual 哨兵。
-      if (shouldSeedProject(source)) {
+      // 见 seededProjects / claimSeedSlot 顶注：只在「这个项目本次挂载期间还没
+      // seed 过」时才登记 manual 哨兵。
+      if (claimSeedSlot(source)) {
         useWritingStore.getState().seedManualGenImageJobs(read.sections)
       }
       useWritingStore.getState().setSections(read.sections)

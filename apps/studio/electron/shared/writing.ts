@@ -117,7 +117,7 @@ const IMAGE_STYLE_LINE = /^\s*-\s*image_style\s*[:：]\s*(.+)$/m
  * buildWritingGenImagePrompt）。文件不存在、没有「## 配图」段、段内没有该字段——三种都
  * 回 null，且三种都是正常态：职场快道刻意不建 spec_lock；`image_plan: none` 时按模板
  * 约定（spec_lock_reference.md）这两行本就留空。**不猜画风**：拼错的风格句会让生图
- * 结果偏离契约约定，宁可让提示词退化成"没有额外风格要求"（buildWritingGenImagePrompt
+ * 结果偏离契约约定，宁可让提示词退化成「没有额外风格要求」（buildWritingGenImagePrompt
  * 对空串的处理），也不要塞一个编造的默认风格进去。
  */
 export function parseImageStyle(specLockText: string | null): string | null {
@@ -149,19 +149,30 @@ const IMAGE_PLAN_LINE = /^\s*-\s*image_plan\s*[:：]\s*(\S+)/m
  * ——都回 null，由调用方（autoFireWritingGenImages）退回桌面端自己的默认上限
  * MAX_AUTO_FIRE_PER_WRITING_PROJECT。
  *
- * **三条 2026-08 审查修复（m-1 / m-4），都是"契约只能收紧、不能放宽"这条承诺本身
- * 要求的**：
- * ① `image_count: 0` 是合法值（"这篇一张都不要"），不再退化成 null→回退默认 5——
- *    0 与正整数一样是"契约给出的明确上限"，只有负数/非数字才算野值、才回 null。
+ * **四条 2026-08 审查修复（m-1 / m-4 / 第五轮 n-1），都是「契约只能收紧、不能放宽」
+ * 这条承诺本身要求的**：
+ * ① `image_count: 0` 是合法值（「这篇一张都不要」），不再退化成 null→回退默认 5——
+ *    0 与正整数一样是「契约给出的明确上限」，只有负数/非数字才算野值、才回 null。
  * ② `image_plan: none` 时无条件把上限压成 0，不看 image_count 字段写了什么。按模板
  *    约定 `image_plan: none` 时 image_count/image_style 两行本就该留空，但写手偶尔
- *    会残留陈旧数值（例如策划中途从"配图"改成"不配图"、忘记删掉这两行）；若照抄那个
- *    残留数字当上限，"这篇根本不配图"这个最常见、最该被闸住的场景反而完全不受契约
+ *    会残留陈旧数值（例如策划中途从「配图」改成「不配图」、忘记删掉这两行）；若照抄那个
+ *    残留数字当上限，「这篇根本不配图」这个最常见、最该被闸住的场景反而完全不受契约
  *    约束——不信任任何可能过期的字段组合，`none` 这个显式声明优先级最高。
- * ③ `image_plan: cover-only` 时无条件把上限压成 1——模板定义"只配封面"就是恰好
- *    一张（`image_count` 含封面一起算，也就是 cover-only 下 image_count 本该等于
- *    1）。与 ② 同一逻辑：不信任 image_count 可能残留的陈旧数值，`cover-only` 这个
- *    显式声明本身就该决定上限，不用去读那个数字对不对。
+ * ③ `image_plan: cover-only` 时上限是「`image_count` 与 1 取更小值」——模板定义
+ *    「只配封面」意味着最多一张，但 ④ 要求显式的 0 必须被尊重（用户/策划在
+ *    cover-only 之下仍然可能明确写「一张都不要」，例如从「只配封面」改主意改成
+ *    「彻底不配图」但手滑忘了把 image_plan 也改成 none）。`image_count` 缺失时
+ *    退回 planCap（也就是旧版的「无条件压成 1」），这是唯一的收紧方向。
+ * ④ 【第五轮 n-1，② ③ 共用的一般化】`cover-only` 分支修复前是「读 image_count
+ *    之前无条件 return 1」——这本身就是对 ③ 号规则的过度实现：它把 `cover-only`
+ *    ×「显式写 0」也算成了 1，等于放宽了用户显式写下的、比 cover-only 更严格的
+ *    上限。这正是 m-1（`none` 场景同一 bug 的镜像）已经修过的那类问题在 cover-only
+ *    分支上的重演——契约给出的任何显式数字，只能让上限变得更严，不能被分支本身
+ *    的默认值盖过去。改法统一成 `Math.min(planCap, parsedCount ?? planCap)`：
+ *    `planCap` 是分支自带的上限（`none`→0，`cover-only`→1，无 plan 或 `inline`→
+ *    Infinity 表示「不设分支上限，只看数字」），`parsedCount` 是 image_count 字段
+ *    本身解析出的数字（缺失/非法为 null）——两者取更小值，任何显式给出的数字都
+ *    只能收紧，不能被分支默认值放宽。
  */
 export function parseImageCount(specLockText: string | null): number | null {
   if (!specLockText) return null
@@ -171,12 +182,12 @@ export function parseImageCount(specLockText: string | null): number | null {
   const nextH2 = /^##\s+/m.exec(rest)
   const segment = nextH2 ? rest.slice(0, nextH2.index) : rest
   const plan = IMAGE_PLAN_LINE.exec(segment)?.[1]
-  if (plan === 'none') return 0
-  if (plan === 'cover-only') return 1
+  const planCap = plan === 'none' ? 0 : plan === 'cover-only' ? 1 : Number.POSITIVE_INFINITY
   const m = IMAGE_COUNT_LINE.exec(segment)
-  if (!m) return null
-  const n = Number.parseInt(m[1], 10)
-  return Number.isFinite(n) && n >= 0 ? n : null
+  const n = m ? Number.parseInt(m[1], 10) : NaN
+  const parsedCount = Number.isFinite(n) && n >= 0 ? n : null
+  if (planCap === Number.POSITIVE_INFINITY) return parsedCount
+  return Math.min(planCap, parsedCount ?? planCap)
 }
 
 // 文件名前导数字。写手按 SKILL.md「一节一文件，按序命名」产出，实际形态有

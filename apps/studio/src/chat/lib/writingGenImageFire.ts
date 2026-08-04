@@ -46,7 +46,7 @@ export function buildWritingGenImagePrompt(
  * 本次发起时项目是否仍然有效：① 仍是 project 模式且 projectDir 没变——网络往返期间
  * 用户可能切走了写作项目（甚至切成了另一份 project）；② 目标节仍在当前 sections 里
  * ——节可能已被删除/重命名。两条都不满足就不写表：生成已经完成（图已经落盘在旧项目的
- * images/ 里，写盘动作本身无害），但此刻已经没有"当下这份文档"可挂审阅卡/任务态，
+ * images/ 里，写盘动作本身无害），但此刻已经没有「当下这份文档」可挂审阅卡/任务态，
  * 硬写只会把旧项目的状态串到新项目上。与提案侧 fireGenImageDirective 第 43-45 /
  * 58-62 行的节存在性守卫同一理由，这里多一条 projectDir 比对因为写作没有 sessionId
  * 那样天然绑定的归属会话。
@@ -107,15 +107,15 @@ export async function fireWritingGenImage(
 // 这个精度问题：只要内容有哪怕一个字符不同，哈希必然不同（哈希碰撞概率对本场景可忽略），
 // 且 `sections` 已经在内存里，不需要额外读盘或提升 mtime 精度。
 //
-// 不清空的理由（切换项目不清）：写作允许来回切换多个项目，这张表只影响"多等一轮"还是
-// "立刻发起"，不影响正确性上限——真正的正确性防线是 genImageJobs 的幂等判定（守卫③）。
+// 不清空的理由（切换项目不清）：写作允许来回切换多个项目，这张表只影响「多等一轮」还是
+// 「立刻发起」，不影响正确性上限——真正的正确性防线是 genImageJobs 的幂等判定（守卫③）。
 // 但**effect 每次重新开始轮询时会清空它**（见 stores/writing.ts 的 `resetWritingGenImageAutoFireState`
-// 调用点及其注释）——那是为了保证"连续两轮"里的两轮确实是两次真实相隔 2 秒的观察，不是
-// "现在"跟"几分钟前随便哪次"的比较，与本文件不清空的取舍并不矛盾：不清空是为了跨越"频繁的
-// 心跳级 tick"共用签名基准，效果重启是为了不让"轮询暂停又恢复"的间隙污染稳定性保证。
+// 调用点及其注释）——那是为了保证「连续两轮」里的两轮确实是两次真实相隔 2 秒的观察，不是
+// 「现在」跟「几分钟前随便哪次」的比较，与本文件不清空的取舍并不矛盾：不清空是为了跨越「频繁的
+// 心跳级 tick」共用签名基准，效果重启是为了不让「轮询暂停又恢复」的间隙污染稳定性保证。
 const lastSectionSignature = new Map<string, string>()
 
-// M-2：上限告警只在"这个项目第一次跨过阈值"时打一次，不是每 2 秒重复刷。写作靠轮询触发，
+// M-2：上限告警只在「这个项目第一次跨过阈值」时打一次，不是每 2 秒重复刷。写作靠轮询触发，
 // 若不去重，一小时就是 1800 条带对象的 console.warn；提案侧没有这个问题是因为它挂在离散的
 // 「落节」事件上，触顶最多告警几次。
 const warnedProjects = new Set<string>()
@@ -150,33 +150,51 @@ export function autoFireWritingGenImages(): void {
     directives: parseGenImageDirectives(sec.markdown)
   }))
 
-  // 孤儿 job 键清理。判据升级为"这个键在当前正文里还找不找得到"（2026-08 审查 m-5，
-  // 取代原来只判"节名还在不在"的 M-3 版本）：
+  // 孤儿 job 键清理。判据升级为「这个键在当前正文里还找不找得到」（2026-08 审查 m-5，
+  // 取代原来只判「节名还在不在」的 M-3 版本）：
   //
   // M-3 原版只能清掉【节被改名/删除】留下的键（键前缀=节名，节没了自然清得掉）；但
   // 【节还在、指令块内容被改过】的情况清不掉——key 的第三段是指令原文的内容哈希，
-  // 改一次构图描述（"再暗一点""换成俯视角"……）哈希就变、key 就变，旧 key 的节名
-  // 前缀依然精确匹配"节还在"，永远留在表里。用户对同一张图反复调构图（很常见的
+  // 改一次构图描述（「再暗一点」「换成俯视角」……）哈希就变、key 就变，旧 key 的节名
+  // 前缀依然精确匹配「节还在」，永远留在表里。用户对同一张图反复调构图（很常见的
   // 用法）改 5 版就把 MAX_AUTO_FIRE_PER_WRITING_PROJECT 配额吃满，此后这篇稿子里
   // 任何真正的新指令块都不再自动出图，且因 M-2 的 warn 去重只在触顶那一次说一句话，
   // 用户完全无感（m-5 审查实测复现）。
   //
-  // 修法：直接从当前 sections 解析出全部"合法"key（不区分节是否改名——节没了自然
+  // 修法：直接从当前 sections 解析出全部「合法」key（不区分节是否改名——节没了自然
   // 不会贡献任何 key，节还在但某条指令内容变了也不会贡献旧 key，两类孤儿一次性
   // 统一处理），凡是不在这个合法集合里的旧 key 一律清掉。
   //
   // 【为什么不会误伤在飞的 pending】fireWritingGenImage 发起那一刻，key 必然是从
   // 【当前正文】解析出的 `d.raw` 算出来的，只要内容在生图 IPC 往返期间没有再变，
   // 这里重新解析当前 sections 得到的合法集合里一定还有这个 key——差集不会把它清掉。
-  // 只有当内容在往返期间又被改写（key 因内容变化而不再"合法"）时才会被清，而那种
-  // 情况下原指令本身也已经不是"当下这份正文"的一部分了，清掉是正确的（fire 完成后
+  // 只有当内容在往返期间又被改写（key 因内容变化而不再「合法」）时才会被清，而那种
+  // 情况下原指令本身也已经不是「当下这份正文」的一部分了，清掉是正确的（fire 完成后
   // 会再把 done/failed 写回一个此刻已经孤立的 key，下一轮又会被这里清掉，自愈）。
+  //
+  // 【2026-08 审查第五轮 M-1：sections 空读的这一轮必须整体跳过清扫，这是本任务
+  // 第 4 次踩「表被清空但没人重新登记哨兵」这同一个根因】上面差集清理的前提是
+  // 「validKeys 是从可信的当前正文推出来的」。但 `s.sections` 本身也可能在某一轮
+  // 恰好是空数组——不是「项目目录被删」（那条路走的是 scan 失败 dirMissing，
+  // 在 setStatus+return 那一步就退出了，根本进不到这个函数），而是「scan 成功
+  // （files: []）、但 read 阶段 readdirSync(drafts) 抛错」这种更窄的缝：项目目录
+  // 还在，只是 drafts/ 恰好在这一帧被瞬时移走又重建，或者网络共享盘（writingDocSource.ts
+  // 明确要支持 UNC 路径）抖了一下。这种情况下 read.ok 为真但一节都没读到，
+  // `directivesBySection` 是空数组，`validKeys` 随之为空集，差集会把 genImageJobs
+  // 全表键都判成孤儿、一次性抹光——而这条路径不经过 setSource，`seededProjects`
+  // 里这个项目的「已 seed」标记完全不受影响，下一轮文件正常回来时没人会重新补种
+  // manual 哨兵，稳定判据走完两轮之后，全篇指令块被当成「从没见过的新指令」重新
+  // 发起，等价于把整篇稿子的配图重新生成一遍、重复扣费。
+  // 「一节都没读到」本身不是可信的清理依据——不清扫，等下一轮 sections 非空时
+  // 再正常跑差集（真实的孤儿清理，如「节被改名/删除」「指令内容改写」，参见上面
+  // m-5 那段注释），照样能清干净，只是晚一轮，不会有任何正确性损失。
   const validKeys = new Set(
     directivesBySection.flatMap(({ sec, directives }) =>
       directives.map((d) => genImageDirectiveKey(sec.name, d.raw, d.occurrence))
     )
   )
-  const orphanKeys = Object.keys(s.genImageJobs).filter((k) => !validKeys.has(k))
+  const orphanKeys =
+    s.sections.length === 0 ? [] : Object.keys(s.genImageJobs).filter((k) => !validKeys.has(k))
   if (orphanKeys.length > 0) {
     useWritingStore.setState((st) => {
       const jobs = { ...st.genImageJobs }
@@ -205,7 +223,7 @@ export function autoFireWritingGenImages(): void {
     // 一半）——parseGenImageDirectives 对半截块本就解析不出东西，但下一秒它就会变成
     // 完整块，若那一刻立刻发起，等于把「刚好扫到的这一帧」当成定稿，稍有不慎就会撞上
     // AI 还没写完图说、只解析出半句 prompt 的畸形指令。连续两轮不变才发起，用轮询间隔
-    // （2s）本身当"这一节先歇一会儿"的信号。签名用内容哈希而非 mtimeMs:length，理由见
+    // （2s）本身当「这一节先歇一会儿」的信号。签名用内容哈希而非 mtimeMs:length，理由见
     // `lastSectionSignature` 顶注（I-2）。
     const sigKey = `${projectDir}#${sec.name}`
     const signature = genImageRawHash(sec.markdown)

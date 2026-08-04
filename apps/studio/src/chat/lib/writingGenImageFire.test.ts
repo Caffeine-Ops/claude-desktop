@@ -7,7 +7,7 @@ import {
   resetWritingGenImageAutoFireState,
   MAX_AUTO_FIRE_PER_WRITING_PROJECT
 } from './writingGenImageFire'
-import { useWritingStore, shouldSeedProject } from '../stores/writing'
+import { useWritingStore, claimSeedSlot, resetSeededProjectsState } from '../stores/writing'
 
 describe('buildWritingGenImagePrompt', () => {
   it('把契约锁定的画风拼进提示词——风格来自 spec_lock 的 image_style，不是硬编码', () => {
@@ -93,6 +93,13 @@ beforeEach(() => {
   // 否则前一个用例留下的"已稳定"签名会让下一个用例的第一轮就误判成稳定（同生产代码里
   // useWritingPoll 每次 effect 重启都要调用的理由一致）。
   resetWritingGenImageAutoFireState()
+  // 第五轮 n-2 修复：seededProjects（stores/writing.ts 的模块级 Set，claimSeedSlot
+  // 读写它）此前没有任何测试入口能清零。全文件曾经只有 C-1' 那一条用例调用
+  // claimSeedSlot、且它自己完成了一次「A→B→A」的完整往返把 key 清干净，绿灯纯粹是
+  // 用例顺序与调用次数的巧合——再加一条调用它的用例（比如下面 M-1 的回归测试）就可能
+  // 让「已 seed」状态跨用例泄漏，产生假绿/假红。每个用例开始前显式清零，同
+  // resetWritingGenImageAutoFireState 一套惯例。
+  resetSeededProjectsState()
   // m-3 修复：useWritingStore 是跨整个 bun test 进程存活的模块级单例（目前只有本文件
   // 会碰它，但显式重置不依赖这个巧合）。**C-1 修复之后尤其必须显式清**：setSource 现在
   // 对"切回同一个项目"不再清 genImageJobs/imageReviews（那正是 C-1 要的行为），而下面
@@ -198,6 +205,40 @@ describe('autoFireWritingGenImages · M-3 孤儿 job 键清理', () => {
   })
 })
 
+describe('autoFireWritingGenImages · 第五轮 M-1 回归：空 sections 那一轮不清孤儿键', () => {
+  it('scan.ok 但 sections 读成空数组的这一轮之后，文件正常回来也不会重复发起', async () => {
+    // 第 1 步：正常发起一次，模拟稳定判据走完两轮后的真实首次生图。
+    useWritingStore.getState().setSections([section('1-a.md', directiveBlock(0))])
+    autoFireWritingGenImages() // tick1：记签名，不发起
+    autoFireWritingGenImages() // tick2：签名稳定 → 发起
+    await flush()
+    expect(calls.length).toBe(1)
+
+    // 第 2 步：模拟「scan 成功但 read 阶段 readdirSync(drafts) 抛错」那一帧——
+    // sections 被设成空数组，但这条路径不经过 setSource，genImageJobs 与
+    // seededProjects 都不受影响（与生产代码 useWritingPoll 的 read.ok 分支
+    // 对齐：这一帧仍然会调用 autoFireWritingGenImages，因为「磁盘元信息没变」
+    // 的短路分支与「元信息变了但重读失败」都不会跳过它）。
+    useWritingStore.getState().setSections([])
+    autoFireWritingGenImages()
+
+    // 第 3 步：文件正常回来，内容与第 1 步完全相同——真实场景里网络盘抖动
+    // 恢复后重读到的就是同一份正文。跑两轮（对应轮询恢复后的第 1、2 次 tick）。
+    useWritingStore.getState().setSections([section('1-a.md', directiveBlock(0))])
+    autoFireWritingGenImages()
+    autoFireWritingGenImages()
+    await flush()
+
+    // 修复前：空 sections 那一轮的差集清扫会把 genImageJobs 全表键判成孤儿、一次
+    // 清空；文件回来后幂等守卫（守卫③）找不到旧记录，会把这条已经生成过的指令块
+    // 当成「从没见过的新指令」重新发起——calls.length 会变成 2，等价于重复扣费。
+    // 修复后：空 sections 那一轮整体跳过清扫，job 键原样保留，幂等守卫照常拦住
+    // 重复发起，calls.length 应该始终是 1。
+    expect(calls.length).toBe(1)
+    expect(Object.keys(useWritingStore.getState().genImageJobs).length).toBe(1)
+  })
+})
+
 describe('autoFireWritingGenImages · m-5 孤儿判据升级：节还在但指令内容变了', () => {
   it('反复调同一张图的构图描述不会让旧 key 永久累积、吃满配额', async () => {
     // 模拟"再暗一点""换成俯视角"……反复改写同一个 genimage 块 5 次：每次内容变
@@ -288,10 +329,10 @@ describe("autoFireWritingGenImages · C-1' 回归：切到另一个写作项目�
     const md = directiveBlock(0)
 
     // A 首次打开：模拟"这是一份已经写了一半、带着旧指令块的稿子"——
-    // useWritingPoll 首次成功读取时会调用 shouldSeedProject 决定要不要补种。
+    // useWritingPoll 首次成功读取时会调用 claimSeedSlot 决定要不要补种。
     useWritingStore.getState().setSource(A)
     useWritingStore.getState().setSections([section('1-a.md', md)])
-    expect(shouldSeedProject(A)).toBe(true) // 第一次打开 A，应该 seed
+    expect(claimSeedSlot(A)).toBe(true) // 第一次打开 A，应该 seed
     useWritingStore.getState().seedManualGenImageJobs([section('1-a.md', md)])
     autoFireWritingGenImages()
     autoFireWritingGenImages()
@@ -303,12 +344,12 @@ describe("autoFireWritingGenImages · C-1' 回归：切到另一个写作项目�
     useWritingStore.getState().setSource(B)
     useWritingStore.getState().setSections([])
 
-    // 切回 A：C-1' 的核心断言——`shouldSeedProject(A)` 这次必须重新返回 true。
+    // 切回 A：C-1' 的核心断言——`claimSeedSlot(A)` 这次必须重新返回 true。
     // 修复前，`seededProjects` 是 `useWritingPoll` 内部的组件 ref，`setSource`
     // 物理上碰不到它，A 会一直"以为自己已经 seed 过"、返回 false，没人再补种；
     // 表空了、稳定判据走完两轮后就会把这个旧指令块当"从没见过"重新发起。
     useWritingStore.getState().setSource(A)
-    expect(shouldSeedProject(A)).toBe(true)
+    expect(claimSeedSlot(A)).toBe(true)
     useWritingStore.getState().setSections([section('1-a.md', md)])
     useWritingStore.getState().seedManualGenImageJobs([section('1-a.md', md)])
 
