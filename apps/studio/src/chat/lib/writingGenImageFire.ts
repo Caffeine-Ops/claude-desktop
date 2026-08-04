@@ -143,17 +143,40 @@ export function autoFireWritingGenImages(): void {
   if (s.source?.kind !== 'project') return
   const projectDir = s.source.projectDir
 
-  // M-3：顺手清掉"节已不在当前 sections 里"的孤儿 job 键（节被改名/删除后残留）。
-  // `writingProject.ts` 的注释明写"AI 正在改名"是预期场景，目前写作流水线虽然还没有
-  // 显式的改名指令、这条路径不可达，但孤儿键一旦出现有三重代价：① 若恰好是 pending，
-  // 永远等不到 stillTargetable 通过、卡片永远转圈；② 白占 MAX_AUTO_FIRE_PER_WRITING_PROJECT
-  // 配额；③ 改名后的同一条指令因为 key 含旧节名而变成"新"key，会被重新自动发起——
-  // 对同一张图付两次钱。键格式是 `${sectionName}#${occurrence}#${hash}`（见
-  // genImageDirectiveKey），用"是否以某个现存节名+`#`开头"判定归属。
-  const validNames = new Set(s.sections.map((sec) => sec.name))
-  const orphanKeys = Object.keys(s.genImageJobs).filter(
-    (k) => ![...validNames].some((name) => k.startsWith(`${name}#`))
+  // 每节的指令块只解析一次，孤儿清理（下面）与发起循环（再下面）共用这份结果，
+  // 避免 parseGenImageDirectives 对同一节内容跑两遍。
+  const directivesBySection = s.sections.map((sec) => ({
+    sec,
+    directives: parseGenImageDirectives(sec.markdown)
+  }))
+
+  // 孤儿 job 键清理。判据升级为"这个键在当前正文里还找不找得到"（2026-08 审查 m-5，
+  // 取代原来只判"节名还在不在"的 M-3 版本）：
+  //
+  // M-3 原版只能清掉【节被改名/删除】留下的键（键前缀=节名，节没了自然清得掉）；但
+  // 【节还在、指令块内容被改过】的情况清不掉——key 的第三段是指令原文的内容哈希，
+  // 改一次构图描述（"再暗一点""换成俯视角"……）哈希就变、key 就变，旧 key 的节名
+  // 前缀依然精确匹配"节还在"，永远留在表里。用户对同一张图反复调构图（很常见的
+  // 用法）改 5 版就把 MAX_AUTO_FIRE_PER_WRITING_PROJECT 配额吃满，此后这篇稿子里
+  // 任何真正的新指令块都不再自动出图，且因 M-2 的 warn 去重只在触顶那一次说一句话，
+  // 用户完全无感（m-5 审查实测复现）。
+  //
+  // 修法：直接从当前 sections 解析出全部"合法"key（不区分节是否改名——节没了自然
+  // 不会贡献任何 key，节还在但某条指令内容变了也不会贡献旧 key，两类孤儿一次性
+  // 统一处理），凡是不在这个合法集合里的旧 key 一律清掉。
+  //
+  // 【为什么不会误伤在飞的 pending】fireWritingGenImage 发起那一刻，key 必然是从
+  // 【当前正文】解析出的 `d.raw` 算出来的，只要内容在生图 IPC 往返期间没有再变，
+  // 这里重新解析当前 sections 得到的合法集合里一定还有这个 key——差集不会把它清掉。
+  // 只有当内容在往返期间又被改写（key 因内容变化而不再"合法"）时才会被清，而那种
+  // 情况下原指令本身也已经不是"当下这份正文"的一部分了，清掉是正确的（fire 完成后
+  // 会再把 done/failed 写回一个此刻已经孤立的 key，下一轮又会被这里清掉，自愈）。
+  const validKeys = new Set(
+    directivesBySection.flatMap(({ sec, directives }) =>
+      directives.map((d) => genImageDirectiveKey(sec.name, d.raw, d.occurrence))
+    )
   )
+  const orphanKeys = Object.keys(s.genImageJobs).filter((k) => !validKeys.has(k))
   if (orphanKeys.length > 0) {
     useWritingStore.setState((st) => {
       const jobs = { ...st.genImageJobs }
@@ -169,13 +192,14 @@ export function autoFireWritingGenImages(): void {
   const jobsAfterCleanup = useWritingStore.getState().genImageJobs
   let fired = Object.values(jobsAfterCleanup).filter((j) => j.status !== 'manual').length
 
-  // M-4：契约自己声明的第一道花钱闸（spec_lock.md「## 配图」段的 image_count）只能收紧
-  // 桌面端的硬上限，不能放宽——`imageCount` 来自 AI 写的文件，不可信；哪怕契约里填了
-  // 100，最终上限也不会超过 MAX_AUTO_FIRE_PER_WRITING_PROJECT。契约值缺失/非法
-  // （parseImageCount 已经把这些情况统一成 null）时退回桌面端默认上限。
+  // M-4/m-4：契约自己声明的第一道花钱闸（spec_lock.md「## 配图」段的 image_count，
+  // 含 image_plan: none/cover-only 覆写的隐含值）只能收紧桌面端的硬上限，不能放宽——
+  // `imageCount` 来自 AI 写的文件，不可信；哪怕契约里填了 100，最终上限也不会超过
+  // MAX_AUTO_FIRE_PER_WRITING_PROJECT。契约值缺失/非法（parseImageCount 已经把这些
+  // 情况统一成 null）时退回桌面端默认上限。
   const cap = Math.min(s.imageCount ?? MAX_AUTO_FIRE_PER_WRITING_PROJECT, MAX_AUTO_FIRE_PER_WRITING_PROJECT)
 
-  for (const sec of s.sections) {
+  for (const { sec, directives } of directivesBySection) {
     // 守卫②·稳定判据：该节这一轮的内容签名与上一轮不同 → 本轮不发起，只记签名。
     // AI 还在写这一节时文件仍在变，此刻的指令块可能是半截的（围栏未闭合、构图描述写了
     // 一半）——parseGenImageDirectives 对半截块本就解析不出东西，但下一秒它就会变成
@@ -189,7 +213,7 @@ export function autoFireWritingGenImages(): void {
     lastSectionSignature.set(sigKey, signature)
     if (signature !== prevSignature) continue
 
-    for (const d of parseGenImageDirectives(sec.markdown)) {
+    for (const d of directives) {
       // 守卫③·幂等：键已存在（无论 pending/failed/done/manual）就跳过，防止同一指令块
       // 被下一轮轮询再次发起——这是本任务最重要的正确性要求，写作靠轮询触发、没有它
       // 就是每 2s 重复出图、重复烧钱。

@@ -7,7 +7,7 @@ import {
   resetWritingGenImageAutoFireState,
   MAX_AUTO_FIRE_PER_WRITING_PROJECT
 } from './writingGenImageFire'
-import { useWritingStore } from '../stores/writing'
+import { useWritingStore, shouldSeedProject } from '../stores/writing'
 
 describe('buildWritingGenImagePrompt', () => {
   it('把契约锁定的画风拼进提示词——风格来自 spec_lock 的 image_style，不是硬编码', () => {
@@ -50,13 +50,20 @@ let calls: { projectDir: string; prompt: string }[]
 // m-3 修复：收集每次 mock IPC 调用返回的 promise，flush() 直接 await 它们本身，而不是
 // 盲猜"两轮 setTimeout(0) 够不够"。fireWritingGenImage 未来若多一个 await，固定次数的
 // setTimeout 链会在"还没跑完"时就放行断言，calls.length 还是 0，上限/幂等那几条用例会
-// 因此假绿（断言通过但根本没测到东西）；Promise.all 只要 mock 本身被调用过就一定等得到。
+// 因此假绿（断言通过但根本没测到东西）；只要 mock 本身被调用过就一定等得到。
+//
+// m-6 修复：用 `Promise.allSettled` 而不是 `Promise.all`——后者一旦其中一个 promise
+// reject 就会立刻抛出，让 `flush()` 本身失败，断言根本跑不到，错误堆栈也会指向
+// flush 而不是真正想验的东西。失败路径用例（下面"失败路径"那条）就是靠这个改动才能
+// 正常工作。
 let pending: Promise<unknown>[]
+// 控制 mock 是否本轮走失败分支：只有"失败路径"那条用例会置 true。
+let shouldFail: boolean
 
-/** 等目前为止已发起的全部 IPC 调用 resolve，再多等一轮微任务让它们各自的
- *  then 续体（addImageReview/setGenImageJob 等）跑完。 */
+/** 等目前为止已发起的全部 IPC 调用 settle（无论成功失败），再多等一轮微任务让它们
+ *  各自的 then/catch 续体（addImageReview/setGenImageJob 等）跑完。 */
 async function flush(): Promise<void> {
-  await Promise.all(pending)
+  await Promise.allSettled(pending)
   await Promise.resolve()
   await Promise.resolve()
 }
@@ -64,11 +71,17 @@ async function flush(): Promise<void> {
 beforeEach(() => {
   calls = []
   pending = []
+  shouldFail = false
   // window 在裸 bun 运行时不存在，需要自己搭一个最小桩——只有出图触发器用到的
   // chatApi.writingImageGenerate 这一个方法。
   ;(globalThis as { window?: unknown }).window = {
     chatApi: {
       writingImageGenerate: (args: { projectDir: string; prompt: string }) => {
+        if (shouldFail) {
+          const p = Promise.reject(new Error('未配置出图 API，请到设置里填写 key 与地址'))
+          pending.push(p)
+          return p
+        }
         calls.push(args)
         const p = Promise.resolve({ path: `${args.projectDir}/images/x.png`, relPath: '../images/x.png' })
         pending.push(p)
@@ -185,6 +198,43 @@ describe('autoFireWritingGenImages · M-3 孤儿 job 键清理', () => {
   })
 })
 
+describe('autoFireWritingGenImages · m-5 孤儿判据升级：节还在但指令内容变了', () => {
+  it('反复调同一张图的构图描述不会让旧 key 永久累积、吃满配额', async () => {
+    // 模拟"再暗一点""换成俯视角"……反复改写同一个 genimage 块 5 次：每次内容变
+    // （raw 变 → 哈希变 → key 变）。M-3 原版的孤儿判据只看"节名还在不在"——节
+    // （1-a.md）全程都在，旧版本的 key 永远清不掉，5 版之后表里堆 5 条陈旧记录，
+    // MAX_AUTO_FIRE_PER_WRITING_PROJECT 配额被这些"已经不对应任何当前正文"的
+    // 记录吃满。m-5 把判据换成"这个 key 在当前正文里还找不找得到"之后，每一版
+    // 定稿都会把上一版的陈旧 key 清掉，表应该始终只有 1 条。
+    for (let i = 0; i < 5; i++) {
+      useWritingStore.getState().setSections([
+        section('1-a.md', directiveBlock(i)),
+        section('2-b.md', '正文，暂时没有指令块')
+      ])
+      autoFireWritingGenImages()
+      autoFireWritingGenImages()
+      await flush()
+    }
+    // 5 次修订都合法地各发起了一次生图——每次都是真正的新构图请求，发起本身没错，
+    // 错的是"发起完之后旧记录赖着不走"。
+    expect(calls.length).toBe(5)
+    // 表里此刻应该只剩最后一版的 key，前 4 版的陈旧记录都该被清掉。
+    expect(Object.keys(useWritingStore.getState().genImageJobs).length).toBe(1)
+
+    // 关键验证：另一节（2-b.md）此刻才第一次冒出一个全新指令块——如果前面 4 版
+    // 陈旧记录没被清掉，此刻 fired 计数会被那些跟当前正文毫无关系的旧记录撑到
+    // 上限，这条真正的新指令会被上限静默拦住、用户毫无察觉。
+    useWritingStore.getState().setSections([
+      section('1-a.md', directiveBlock(4)),
+      section('2-b.md', directiveBlock(99))
+    ])
+    autoFireWritingGenImages()
+    autoFireWritingGenImages()
+    await flush()
+    expect(calls.length).toBe(6)
+  })
+})
+
 describe('autoFireWritingGenImages · stillTargetable 守卫', () => {
   it('生图 IPC 返回前项目被切走：不写审阅卡，不留孤儿状态', async () => {
     const md = directiveBlock(0)
@@ -228,5 +278,62 @@ describe('autoFireWritingGenImages · C-1 回归：切走会话再切回同一�
     autoFireWritingGenImages()
     await flush()
     expect(calls.length).toBe(1)
+  })
+})
+
+describe("autoFireWritingGenImages · C-1' 回归：切到另一个写作项目再切回", () => {
+  it('A 首次打开(旧稿子) → 切到 B → 切回 A → 两轮 autoFire 不应重新发起', async () => {
+    const A = { kind: 'project' as const, projectDir: PROJECT_DIR }
+    const B = { kind: 'project' as const, projectDir: '/proj-b' }
+    const md = directiveBlock(0)
+
+    // A 首次打开：模拟"这是一份已经写了一半、带着旧指令块的稿子"——
+    // useWritingPoll 首次成功读取时会调用 shouldSeedProject 决定要不要补种。
+    useWritingStore.getState().setSource(A)
+    useWritingStore.getState().setSections([section('1-a.md', md)])
+    expect(shouldSeedProject(A)).toBe(true) // 第一次打开 A，应该 seed
+    useWritingStore.getState().seedManualGenImageJobs([section('1-a.md', md)])
+    autoFireWritingGenImages()
+    autoFireWritingGenImages()
+    await flush()
+    expect(calls.length).toBe(0) // seed 生效：manual 态不会被自动发起，正确
+
+    // 切到另一个写作项目 B（真的换了项目，A 的 job 表被清空——这本身是对的，
+    // 避免 B 的 job 键跟 A 撞同名节）。
+    useWritingStore.getState().setSource(B)
+    useWritingStore.getState().setSections([])
+
+    // 切回 A：C-1' 的核心断言——`shouldSeedProject(A)` 这次必须重新返回 true。
+    // 修复前，`seededProjects` 是 `useWritingPoll` 内部的组件 ref，`setSource`
+    // 物理上碰不到它，A 会一直"以为自己已经 seed 过"、返回 false，没人再补种；
+    // 表空了、稳定判据走完两轮后就会把这个旧指令块当"从没见过"重新发起。
+    useWritingStore.getState().setSource(A)
+    expect(shouldSeedProject(A)).toBe(true)
+    useWritingStore.getState().setSections([section('1-a.md', md)])
+    useWritingStore.getState().seedManualGenImageJobs([section('1-a.md', md)])
+
+    autoFireWritingGenImages()
+    autoFireWritingGenImages()
+    await flush()
+    expect(calls.length).toBe(0)
+  })
+})
+
+describe('fireWritingGenImage · 失败路径', () => {
+  it('IPC 失败时 job 置 failed，错误文案保留"未配置"字样（卡片据此显示"去设置"按钮）', async () => {
+    shouldFail = true
+    const md = directiveBlock(0)
+    useWritingStore.getState().setSections([section('1-a.md', md)])
+    autoFireWritingGenImages()
+    autoFireWritingGenImages()
+    await flush()
+
+    const [d] = parseGenImageDirectives(md)
+    const key = genImageDirectiveKey('1-a.md', d.raw, d.occurrence)
+    const job = useWritingStore.getState().genImageJobs[key]
+    expect(job?.status).toBe('failed')
+    // friendlyImageError 对含"未配置"字样的错误有专门文案（"尚未配置出图 API……"），
+    // 卡片正是靠错误文案里还有没有"未配置"决定要不要显示"去设置"按钮。
+    expect(job?.error).toContain('未配置')
   })
 })

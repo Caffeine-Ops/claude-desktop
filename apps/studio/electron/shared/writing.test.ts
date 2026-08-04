@@ -167,6 +167,13 @@ describe('parseImageCount', () => {
     expect(parseImageCount('## 配图\n- image_plan: none\n')).toBe(0)
   })
 
+  it('m-4：image_plan: cover-only 无条件把上限压成 1，即便 image_count 残留了陈旧数值', () => {
+    // cover-only = 只配封面 = 恰好一张，同 none 一样不信任 image_count 可能残留的
+    // 旧数字——契约声明"只要封面"不该因为一个没同步删的数字放宽成 5 张。
+    expect(parseImageCount('## 配图\n- image_plan: cover-only\n- image_count: 5\n')).toBe(1)
+    expect(parseImageCount('## 配图\n- image_plan: cover-only\n')).toBe(1)
+  })
+
   it('不会越界读到下一个二级标题段落里的字段', () => {
     const text = '## 配图\n- image_plan: inline\n\n## 附录\n- image_count: 99\n'
     expect(parseImageCount(text)).toBeNull()
