@@ -101,6 +101,119 @@ describe('markdownToWechatHtml · 与 export.py 的行为对齐', () => {
   })
 })
 
+// ── P1a 给 export.py 补的三样东西，这里是它们的 TS 对齐 ──────────────────────────────
+// export.py 的 md_to_wechat_html 早于本轮任务就支持图片行、genimage/mermaid 占位框；
+// TS 这份此前只覆盖了标题/段落/列表/引用/分隔线/粗斜体。下面三组用例专门盯住新补的行为，
+// 用法与断言口径抄自 export.py 对应的 Python 单测（test_export.py 的 md_to_wechat_html 用例）。
+describe('markdownToWechatHtml · 图片行（对齐 export.py 的独占一行规则）', () => {
+  const IMG_STYLE = {
+    body: 'font-size:16px;',
+    img: 'display:block;max-width:100%;',
+    figcaption: 'text-align:center;color:#999;'
+  }
+
+  it('独占一行的图片渲成 <img> + <figcaption>，不包进 <p>', () => {
+    const html = markdownToWechatHtml('![一张示意图](../images/x.png)', IMG_STYLE)
+    expect(html).toBe(
+      '<img src="../images/x.png" alt="一张示意图" style="display:block;max-width:100%;" />\n' +
+        '<figcaption style="text-align:center;color:#999;">一张示意图</figcaption>'
+    )
+    expect(html).not.toContain('<p')
+  })
+
+  it('图说为空时不产出 figcaption', () => {
+    const html = markdownToWechatHtml('![](../images/x.png)', IMG_STYLE)
+    expect(html).toContain('<img')
+    expect(html).not.toContain('<figcaption')
+  })
+
+  it('图说里的 HTML 特殊字符要转义（alt 属性内连引号也要转义，否则提前闭合属性）', () => {
+    const html = markdownToWechatHtml('![<b>"AI"</b> & 图](x.png)', IMG_STYLE)
+    // alt 是属性值：& < > " 全部要转义，否则图说里的双引号会把 alt="..." 提前截断，
+    // 后面的文本被解释成新属性——是一处真实的注入面。
+    expect(html).toContain('alt="&lt;b&gt;&quot;AI&quot;&lt;/b&gt; &amp; 图"')
+    expect(html).not.toContain('alt="<b>')
+    // figcaption 是文本节点：& < > 转义，引号对齐 export.py 的 html.escape(quote=False) 不转义。
+    expect(html).toContain('<figcaption style="text-align:center;color:#999;">&lt;b&gt;"AI"&lt;/b&gt; &amp; 图</figcaption>')
+  })
+
+  it('style 缺 img/figcaption 键时回退到内置默认样式，不渲染成完全无样式的裸元素', () => {
+    const html = markdownToWechatHtml('![图说](x.png)', { body: 'font-size:16px;' })
+    expect(html).toContain('style="display:block;max-width:100%;height:auto;margin:1.4em auto 0.4em auto;"')
+    expect(html).toContain('style="display:block;text-align:center;font-size:13px;color:#999999;"')
+  })
+
+  it('句子中间夹的图（非独占一行）不渲成 <img>，原样当文字转义漏进 <p>——照抄 export.py 的取舍', () => {
+    // export.py 的 md_to_wechat_html 本身对行内图片就是这个态度：真正拦这种稿子的硬闸
+    // （inline_images）在 export.py 的 main() 里，是 CLI 专属前置校验，不属于这个纯渲染函数。
+    const html = markdownToWechatHtml('这段话里夹了张 ![小图](x.png) 图片。', { body: 'font-size:16px;' })
+    expect(html).not.toContain('<img')
+    expect(html).toContain('<p')
+    expect(html).toContain('![小图](x.png)')
+  })
+
+  it('普通 markdown 链接（无前导感叹号）不会被误判成图片', () => {
+    const html = markdownToWechatHtml('[链接文字](https://example.com)', { body: 'font-size:16px;' })
+    expect(html).not.toContain('<img')
+    expect(html).toContain('<p')
+    expect(html).toContain('[链接文字](https://example.com)')
+  })
+})
+
+describe('markdownToWechatHtml · genimage/mermaid 占位框（对齐 export.py 的 fence_placeholder_html）', () => {
+  it('```genimage 块渲成占位框，HTML 里不出现围栏源码，占位框里带图说', () => {
+    const md = ['```genimage', '图说: 封面配图', '一只猫在写代码', '```'].join('\n')
+    const html = markdownToWechatHtml(md, FALLBACK_WECHAT_STYLE)
+    expect(html).toContain('封面配图')
+    expect(html).toContain('待出图')
+    expect(html).not.toContain('```')
+    expect(html).not.toContain('图说:')
+    expect(html).not.toContain('图说：')
+    expect(html).not.toContain('一只猫在写代码')
+  })
+
+  it('```mermaid 块渲成占位框，HTML 里不出现 graph TD 之类的源码', () => {
+    const md = ['```mermaid', '图说: 流程示意', 'graph TD', 'A-->B'].join('\n') + '\n```'
+    const html = markdownToWechatHtml(md, FALLBACK_WECHAT_STYLE)
+    expect(html).toContain('流程示意')
+    expect(html).toContain('待渲染的信息图')
+    expect(html).not.toContain('graph TD')
+    expect(html).not.toContain('A-->B')
+    expect(html).not.toContain('```')
+  })
+
+  it('没有图说的 mermaid 块不硬塞占位文案，只出占位框本体，不抛异常', () => {
+    const md = ['```mermaid', 'graph TD', 'A-->B', '```'].join('\n')
+    expect(() => markdownToWechatHtml(md, FALLBACK_WECHAT_STYLE)).not.toThrow()
+    const html = markdownToWechatHtml(md, FALLBACK_WECHAT_STYLE)
+    expect(html).toContain('待渲染的信息图')
+    expect(html).not.toContain('graph TD')
+  })
+
+  it('空的 genimage 块（无正文无图说）渲成占位框，不抛异常', () => {
+    const md = ['```genimage', '```'].join('\n')
+    expect(() => markdownToWechatHtml(md, FALLBACK_WECHAT_STYLE)).not.toThrow()
+    expect(markdownToWechatHtml(md, FALLBACK_WECHAT_STYLE)).toContain('待出图')
+  })
+
+  it('未闭合的围栏一路吃到文末，不抛异常也不泄漏源码', () => {
+    const md = ['正文第一行', '```genimage', '图说: 没写完的图', '后面都被吃进围栏了'].join('\n')
+    expect(() => markdownToWechatHtml(md, FALLBACK_WECHAT_STYLE)).not.toThrow()
+    const html = markdownToWechatHtml(md, FALLBACK_WECHAT_STYLE)
+    expect(html).toContain('正文第一行')
+    expect(html).toContain('没写完的图')
+    expect(html).not.toContain('后面都被吃进围栏了')
+    expect(html).not.toContain('```')
+  })
+
+  it('其余语言的围栏块（如 ```python）不受影响，仍按逐行旧路径渲染——不是本次要修的通用代码块渲染', () => {
+    const md = ['```python', 'print(1)', '```'].join('\n')
+    const html = markdownToWechatHtml(md, FALLBACK_WECHAT_STYLE)
+    expect(html).toContain('print(1)')
+    expect(html).toContain('```python')
+  })
+})
+
 describe('loadWechatStyle', () => {
   it('读到真实的 wechat-default 样式 JSON（字段名对齐 export.py 的 schema）', () => {
     const style = loadWechatStyle('wechat-default')
