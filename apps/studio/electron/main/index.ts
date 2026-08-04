@@ -18,7 +18,16 @@ patchProcessEvents()
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { app, dialog, Menu, protocol, session, webContents, type MenuItemConstructorOptions } from 'electron'
+import {
+  app,
+  dialog,
+  Menu,
+  protocol,
+  session,
+  webContents,
+  type BrowserWindow,
+  type MenuItemConstructorOptions
+} from 'electron'
 import { electronApp, is } from '@electron-toolkit/utils'
 
 // TEMP-DEBUG: dev 下开远程调试端口，便于用 Chrome DevTools 连进 web tab 的
@@ -253,7 +262,58 @@ function buildMenu(): Menu {
   return Menu.buildFromTemplate(template)
 }
 
+/**
+ * 把工作区窗口带到用户面前：已存在就 restore + show + focus，被销毁了才重建
+ * shell + 唯一的 studio tab。
+ *
+ * 三个调用方共用它：dock / ⌘Tab（app.on('activate')，mac）、托盘的「显示」与
+ * 图标单击（Windows 关窗后窗口只是隐藏，托盘是唯一入口）、以及第二实例被拦下
+ * 时（second-instance——用户双击桌面图标其实就是想看到窗口）。
+ *
+ * 重建分支基本只在窗口异常销毁后才走到：服务早已就绪（startOpenDesignServices
+ * 只在 before-quit 才停），无需再等探活。
+ */
+function revealWorkspaceWindow(): BrowserWindow | null {
+  const existing = getShellWindow()
+  if (existing && !existing.isDestroyed()) {
+    if (existing.isMinimized()) existing.restore()
+    existing.show()
+    existing.focus()
+    return existing
+  }
+  const win = createShellWindow()
+  try {
+    newStudioTab()
+  } catch (err) {
+    console.warn('[main] newStudioTab on reveal failed:', err)
+  }
+  return win
+}
+
+/**
+ * 单实例锁。窗口关进托盘后（win32，见 tabRegistry 的 close 拦截）应用是
+ * 「看不见但活着」的——用户再双击桌面图标就会起第二个实例：两份 daemon 抢同一个
+ * 端口、两份 engine 各自 spawn CLI 子进程、appSettings 互相覆盖。拿不到锁的新实例
+ * 直接退场，并让已有实例把窗口带到前台（second-instance），这正是用户点图标真正
+ * 想要的结果。
+ *
+ * dev 下**刻意不加锁**：electron-vite 的主进程热重启是「旧进程退出」与「新进程
+ * 启动」短暂重叠的，加锁会让重启后的新实例拿不到锁当场自杀，热重载直接废掉。
+ */
+const isSecondaryInstance = !is.dev && !app.requestSingleInstanceLock()
+if (isSecondaryInstance) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    revealWorkspaceWindow()
+  })
+}
+
 app.whenReady().then(async () => {
+  // 第二实例：锁没拿到，上面已经 app.quit()。ready 与 quit 的竞态下这个回调
+  // 仍可能被调度到——直接退场，绝不能让它注册 IPC / 起服务 / 建窗口。
+  if (isSecondaryInstance) return
+
   // 与 package.json build.appId 保持一致（Windows AUMID，通知/任务栏分组
   // 按它归属）。2026-07-05 随 appId 一起从 com.anthropic.* 改名，见
   // package.json 的 //note-appId。
@@ -404,7 +464,11 @@ app.whenReady().then(async () => {
     }
   })()
 
-  createTray(() => getShellWindow())
+  // 托盘的目标窗口解析器刻意用 revealWorkspaceWindow 而不是裸 getShellWindow：
+  // Windows 上关窗只是隐藏，托盘是回到应用的**唯一**入口——万一窗口真被销毁过
+  // （渲染进程连环崩溃之类），裸 getShellWindow 会返回 null，托盘「显示」就成了
+  // 点不动的死项，应用变成一个打不开的图标。这里让它有能力把窗口造回来。
+  createTray(() => revealWorkspaceWindow())
 
   // 回放录像解包缓存的后台清理（>14 天未用的目录）。失败静默、不阻塞启动；
   // 被清掉的包重开时自动重新解包，无功能损失。
@@ -437,35 +501,32 @@ app.whenReady().then(async () => {
     // tabRegistry 的 'close' handler），此时窗口对象、engine、正在跑的
     // fusion-code 子进程全都还在——直接 show 回来，任务和进度原样呈现，
     // 不重建 tab（重建会新起 webContents，旧的迟到 IPC 打到清空的路由表
-    // 就是那堆 `unknown tab` 噪音，还有大树重挂载闪烁）。
-    const existing = getShellWindow()
-    if (existing && !existing.isDestroyed()) {
-      existing.show()
-      existing.focus()
-      return
-    }
-    // 兜底：窗口真被销毁了（理论上只在真退出后，那时不会再触发 activate；
-    // 保留此路径防御异常销毁）。服务早已就绪（startOpenDesignServices 只在
-    // before-quit 才停），无需再等探活，重建 shell + 唯一的 studio tab。
-    createShellWindow()
-    try {
-      newStudioTab()
-    } catch (err) {
-      console.warn('[main] newStudioTab on activate failed:', err)
-    }
+    // 就是那堆 `unknown tab` 噪音，还有大树重挂载闪烁）。窗口真被销毁时的
+    // 重建兜底在 revealWorkspaceWindow 里。
+    revealWorkspaceWindow()
   })
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  // darwin：平台惯例，窗口全关不退应用（dock 图标常驻）。
+  //
+  // win32：关窗走 hide（见 tabRegistry 的 close 拦截），正常路径根本到不了
+  //   这里。能到这里只有两种情况——① 真退出，此时 quit 流程已在跑，什么都不做
+  //   即可；② 窗口异常销毁（渲染进程连环崩溃之类），这时**刻意不 quit**：托盘
+  //   还在，用户点一下就能把窗口重建回来（revealWorkspaceWindow），后台正在跑
+  //   的任务不该因为一次窗口异常被连锅端掉。
+  //
+  // linux：托盘在不少桌面环境不显示（见 tabRegistry 的 close 注释），窗口没了
+  //   就真的没有入口了——保持「关窗即退」的原语义。
+  if (process.platform === 'linux') {
     app.quit()
   }
 })
 
 app.on('before-quit', (event) => {
-  // 真退出意图（⌘Q / 菜单退出 / 托盘退出 / app.quit()）。红叉走 hide 分支
-  // 永远到不了这里（见 tabRegistry 的 'close' handler），所以这里的确认框
-  // 只在用户真想退应用时弹。
+  // 真退出意图（⌘Q / 菜单退出 / 托盘「退出」/ 更新重启 / app.quit()）。mac 红叉
+  // 与 Windows 的 X 都走 hide 分支，永远到不了这里（见 tabRegistry 的 'close'
+  // handler），所以这里的确认框只在用户真想退应用时弹。
   //
   // 有活跃任务才拦一道：退出会 dispose 每个 engine → kill 正在跑的
   // fusion-code 子进程，把用户正在生成的 PPT/长任务拦腰截断。给一个原生

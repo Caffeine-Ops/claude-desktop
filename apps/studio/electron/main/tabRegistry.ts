@@ -11,7 +11,7 @@ import { fileURLToPath } from 'url'
 import appIcon from '../../resources/icon.png?asset'
 import { ChatEngine, createChatEngine } from './core/engine'
 import { getThemeMode, resolveIsDarkTheme, setThemeMode } from './core/appSettings'
-import { clearUnread } from './tray'
+import { clearUnread, notifyHiddenToTray } from './tray'
 import { finishSplashThenSettle, loadSplashIntoShell, showSplashError } from './splash'
 import { resolveStudioTabUrl } from './services/openDesignServices'
 import {
@@ -300,20 +300,43 @@ export function createShellWindow(): BrowserWindow {
     broadcastFullscreen(false)
   })
 
-  // macOS 红叉 = 隐藏窗口，不退应用（平台惯例）。拦下 close：非真退出时
-  // preventDefault + hide，engine / fusion-code 子进程 / 所有 SessionRuntime
-  // 原样存活，正在跑的任务继续在后台推进；dock 点一下经 app.on('activate')
-  // 直接 show 回来（见 index.ts，不重建 tab，也就没有 unknown-tab 噪音与
-  // 重挂载闪烁）。真退出（⌘Q / 菜单 / before-quit 已置 isQuitting）才放行到
-  // 下方 'closed' 走完整 dispose。
+  // 关窗口 ≠ 退应用。拦下 close：非真退出时 preventDefault + hide，engine /
+  // fusion-code 子进程 / 所有 SessionRuntime 原样存活，正在跑的任务继续在后台
+  // 推进；mac 从 dock（app.on('activate')）、Windows 从托盘（单击图标或右键
+  // 「显示」）把窗口原样带回来——不重建 tab，也就没有 unknown-tab 噪音与重挂载
+  // 闪烁。真退出（⌘Q / 菜单退出 / 托盘「退出」/ 更新重启，都会先经 before-quit
+  // 置 isQuitting）才放行到下方 'closed' 走完整 dispose。
   //
-  // 其它平台（win/linux）不拦：那里关窗即退应用是惯例，且 window-all-closed
-  // 已 app.quit()——保持原语义。
+  // - darwin：红叉 = 隐藏窗口是平台惯例，一直如此。
+  // - win32：2026-08-04 改。此前 X 直接 app.quit()（window-all-closed 分支），
+  //   一次误点就把正在生成的 PPT / 长任务连同 CLI 子进程一起 kill 掉，且没有
+  //   任何确认——这类任务动辄跑几分钟到几十分钟，损失远大于「进程还挂在托盘
+  //   里」。改为最小化到托盘，退出的唯一入口是托盘右键「退出」（before-quit
+  //   那道「有任务在跑」确认框仍然有效）。
+  // - linux：**刻意不拦**。托盘在不少桌面环境（GNOME 原生无 StatusNotifier
+  //   支持）根本不显示，隐藏了窗口等于用户既找不回窗口也没法退出——比关窗即退
+  //   糟得多。保持 window-all-closed → app.quit() 的原语义。
   win.on('close', (event) => {
-    if (process.platform === 'darwin' && !isQuitting) {
+    const hidesToTray = process.platform === 'darwin' || process.platform === 'win32'
+    if (hidesToTray && !isQuitting) {
       event.preventDefault()
       win.hide()
+      // Windows 用户对「点 X 应用还活着」没有心理预期（mac 用户有），给一次
+      // 气泡提示说明去哪儿找它、怎么真退出。每个进程生命周期只提示一次。
+      notifyHiddenToTray()
     }
+  })
+
+  // Windows 关机 / 注销 / 重启（Electron 43 起这是**窗口**事件，不是 app 事件）。
+  // 系统给的时间窗很短，而上面那道 close 拦截在系统眼里就是「这个应用拒绝退出」，
+  // 会弹「此应用阻止你关机」甚至被强杀。会话确实要结束了就立刻钉死退出意图，
+  // 让随后的 close 直接放行到 'closed' 走完整 dispose（engine / CLI 子进程清理）。
+  //
+  // 刻意只听 session-end 不听 query-session-end：后者是「系统在问能不能关机」，
+  // 用户完全可能在那之后取消关机——那时 isQuitting 已被污染成 true，下一次点 X
+  // 就会直接退出应用。
+  win.on('session-end', () => {
+    isQuitting = true
   })
 
   // Shutdown path: closing the shell is equivalent to quitting the
@@ -1065,6 +1088,36 @@ function layoutActiveTab(): void {
  * own isHydrating guard assumes we don't do that).
  */
 /**
+ * 这个 webContents 现在还能收 IPC 吗？所有广播的统一闸门。
+ *
+ * `isDestroyed()` 单独用是不够的（2026-08-04 实锤）：渲染进程崩溃后
+ * WebContents **对象仍然活着**——上面的崩溃恢复只摘 view、不 destroy
+ * webContents——但它背后的 render frame 已经没了，再 send 会让 Electron 内部
+ * 打出 `Error sending from webFrameMain: Render frame was disposed before
+ * WebFrameMain could be accessed` 加一整段栈。
+ *
+ * 后果不是多几行日志：组件下载 worker 与 ppt skill 安装器每 ~110ms 广播一次
+ * 进度，崩溃后这两条栈就把 runtime.log 刷成了纯噪音（那份 8264 行的日志里
+ * 8000+ 行是它们），真正有用的 `渲染进程退出 reason=crashed exitCode=-36861`
+ * 反而被埋在里面——排查一个「打不开」的包时，这正是最不该丢的那一行。
+ *
+ * **为什么这不会永久闭麦一个救得回来的 tab**（Electron 43 实测，不是推演）：
+ * `isCrashed()` 在 `wc.reload()` **一调用就复位成 false**，比 did-finish-load
+ * 还早。探针跑法：crash → 崩溃回调内 true → 调完 reload() 立刻 false →
+ * did-finish-load false → 2.5s 后仍 false。所以上面那条「重载一次」的恢复路径
+ * 一旦救回来，广播立刻恢复；只有救不回来（重载额度耗尽、frame 真没了）的 tab
+ * 才被这道闸门挡住——那正是我们要挡的。
+ *
+ * 代价：reload() 到新 frame 就绪之间有个几百毫秒的窗口，isCrashed 已 false 但
+ * frame 还没建好，那期间的 send 仍可能打出一两行 disposed 日志。那是**瞬时**
+ * 噪音、且不影响功能，与崩溃后每 110ms 一条的永久刷屏不是一回事，不值得为它
+ * 再加一层 frame 级状态跟踪。
+ */
+function canSendIpc(wc: WebContents): boolean {
+  return !wc.isDestroyed() && !wc.isCrashed()
+}
+
+/**
  * Push the full updater state to every renderer that can receive IPC
  * (shell + studio tab). Unlike broadcastAppearanceChanged there is NO
  * skip-the-writer id: updater transitions originate in MAIN
@@ -1073,12 +1126,12 @@ function layoutActiveTab(): void {
  * appearance sync black hole (chat/canvas share one webContents).
  */
 export function broadcastUpdaterState(state: UpdaterState): void {
-  if (shellWindow && !shellWindow.isDestroyed()) {
+  if (shellWindow && !shellWindow.isDestroyed() && canSendIpc(shellWindow.webContents)) {
     shellWindow.webContents.send(IPC_CHANNELS.UPDATER_STATE_CHANGED, state)
   }
   for (const ctx of tabs.values()) {
     const wc = ctx.view.webContents
-    if (wc.isDestroyed()) continue
+    if (!canSendIpc(wc)) continue
     wc.send(IPC_CHANNELS.UPDATER_STATE_CHANGED, state)
   }
 }
@@ -1088,13 +1141,13 @@ export function broadcastUpdaterState(state: UpdaterState): void {
  * 个文件 + 建 venv 期间会高频广播（worker 侧已按 100ms 节流），web tab 跳过。
  */
 export function broadcastPptSkillStatus(payload: PptSkillStatus): void {
-  if (shellWindow && !shellWindow.isDestroyed()) {
+  if (shellWindow && !shellWindow.isDestroyed() && canSendIpc(shellWindow.webContents)) {
     shellWindow.webContents.send(IPC_CHANNELS.PPT_SKILL_STATUS, payload)
   }
   for (const ctx of tabs.values()) {
     if (ctx.kind === 'web') continue
     const wc = ctx.view.webContents
-    if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.PPT_SKILL_STATUS, payload)
+    if (canSendIpc(wc)) wc.send(IPC_CHANNELS.PPT_SKILL_STATUS, payload)
   }
 }
 
@@ -1103,13 +1156,13 @@ export function broadcastPptSkillStatus(payload: PptSkillStatus): void {
  * web tab 跳过（它们没有 chatApi）。
  */
 export function broadcastRuntimeComponentsState(payload: RuntimeComponentsState): void {
-  if (shellWindow && !shellWindow.isDestroyed()) {
+  if (shellWindow && !shellWindow.isDestroyed() && canSendIpc(shellWindow.webContents)) {
     shellWindow.webContents.send(IPC_CHANNELS.RUNTIME_COMPONENTS_STATE, payload)
   }
   for (const ctx of tabs.values()) {
     if (ctx.kind === 'web') continue
     const wc = ctx.view.webContents
-    if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.RUNTIME_COMPONENTS_STATE, payload)
+    if (canSendIpc(wc)) wc.send(IPC_CHANNELS.RUNTIME_COMPONENTS_STATE, payload)
   }
 }
 
@@ -1120,13 +1173,13 @@ export function broadcastRuntimeComponentsState(payload: RuntimeComponentsState)
  * preload，也没有空态 rail 要更新。
  */
 export function broadcastScenarioCatalog(catalog: ScenarioCatalog): void {
-  if (shellWindow && !shellWindow.isDestroyed()) {
+  if (shellWindow && !shellWindow.isDestroyed() && canSendIpc(shellWindow.webContents)) {
     shellWindow.webContents.send(IPC_CHANNELS.SCENARIO_CATALOG_CHANGED, catalog)
   }
   for (const ctx of tabs.values()) {
     if (ctx.kind === 'web') continue
     const wc = ctx.view.webContents
-    if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.SCENARIO_CATALOG_CHANGED, catalog)
+    if (canSendIpc(wc)) wc.send(IPC_CHANNELS.SCENARIO_CATALOG_CHANGED, catalog)
   }
 }
 
@@ -1138,12 +1191,12 @@ export function broadcastScenarioCatalog(catalog: ScenarioCatalog): void {
  * 的形态下复刻 2026-07-04 的 appearance 同步黑洞。
  */
 export function broadcastAuthState(state: AuthState): void {
-  if (shellWindow && !shellWindow.isDestroyed()) {
+  if (shellWindow && !shellWindow.isDestroyed() && canSendIpc(shellWindow.webContents)) {
     shellWindow.webContents.send(IPC_CHANNELS.AUTH_STATE_CHANGED, state)
   }
   for (const ctx of tabs.values()) {
     const wc = ctx.view.webContents
-    if (wc.isDestroyed()) continue
+    if (!canSendIpc(wc)) continue
     wc.send(IPC_CHANNELS.AUTH_STATE_CHANGED, state)
   }
 }
@@ -1156,13 +1209,13 @@ export function broadcastAuthState(state: AuthState): void {
  * preload AND no KB UI to update, so there's nothing to reach.
  */
 export function broadcastKbSyncStatus(payload: KbSyncStatus): void {
-  if (shellWindow && !shellWindow.isDestroyed()) {
+  if (shellWindow && !shellWindow.isDestroyed() && canSendIpc(shellWindow.webContents)) {
     shellWindow.webContents.send(IPC_CHANNELS.KB_SYNC_STATUS, payload)
   }
   for (const ctx of tabs.values()) {
     if (ctx.kind === 'web') continue
     const wc = ctx.view.webContents
-    if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.KB_SYNC_STATUS, payload)
+    if (canSendIpc(wc)) wc.send(IPC_CHANNELS.KB_SYNC_STATUS, payload)
   }
 }
 
@@ -1172,13 +1225,13 @@ export function broadcastKbSyncStatus(payload: KbSyncStatus): void {
  * payload 带 domain：文档与图片两个域的任务可并行，订阅方按域路由。
  */
 export function broadcastKbCatalogStatus(payload: KbCatalogStatusPayload): void {
-  if (shellWindow && !shellWindow.isDestroyed()) {
+  if (shellWindow && !shellWindow.isDestroyed() && canSendIpc(shellWindow.webContents)) {
     shellWindow.webContents.send(IPC_CHANNELS.KB_CATALOG_STATUS, payload)
   }
   for (const ctx of tabs.values()) {
     if (ctx.kind === 'web') continue
     const wc = ctx.view.webContents
-    if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.KB_CATALOG_STATUS, payload)
+    if (canSendIpc(wc)) wc.send(IPC_CHANNELS.KB_CATALOG_STATUS, payload)
   }
 }
 
@@ -1189,13 +1242,13 @@ export function broadcastKbCatalogStatus(payload: KbCatalogStatusPayload): void 
  * is equally "other". Web tabs are skipped (no preload, no KB UI).
  */
 export function broadcastKbBuildStatus(payload: KbBuildStatus): void {
-  if (shellWindow && !shellWindow.isDestroyed()) {
+  if (shellWindow && !shellWindow.isDestroyed() && canSendIpc(shellWindow.webContents)) {
     shellWindow.webContents.send(IPC_CHANNELS.KB_BUILD_STATUS, payload)
   }
   for (const ctx of tabs.values()) {
     if (ctx.kind === 'web') continue
     const wc = ctx.view.webContents
-    if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.KB_BUILD_STATUS, payload)
+    if (canSendIpc(wc)) wc.send(IPC_CHANNELS.KB_BUILD_STATUS, payload)
   }
 }
 
@@ -1214,7 +1267,7 @@ export function broadcastAppearanceChanged(sourceWebContentsId: number): void {
   // Phase 4 物理下线。）
   for (const ctx of tabs.values()) {
     const wc = ctx.view.webContents
-    if (wc.isDestroyed() || wc.id === sourceWebContentsId) continue
+    if (!canSendIpc(wc) || wc.id === sourceWebContentsId) continue
     wc.send(IPC_CHANNELS.APPEARANCE_CHANGED)
   }
 }

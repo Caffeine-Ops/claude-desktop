@@ -15,14 +15,22 @@ type Lang = 'zh' | 'en'
  * hand; with two languages and two keys the maintenance cost is
  * trivial.
  */
-const TRAY_STRINGS: Record<Lang, { show: string; quit: string }> = {
+const TRAY_STRINGS: Record<
+  Lang,
+  { show: string; quit: string; hiddenTitle: string; hiddenBody: string }
+> = {
   zh: {
     show: '显示',
-    quit: '退出'
+    quit: '退出',
+    hiddenTitle: '仍在后台运行',
+    hiddenBody: '窗口已收进托盘，正在跑的任务不会中断。点这个图标可以打开窗口，右键选「退出」才会真正关闭。'
   },
   en: {
     show: 'Show',
-    quit: 'Quit'
+    quit: 'Quit',
+    hiddenTitle: 'Still running',
+    hiddenBody:
+      'The window is tucked away in the tray and running tasks keep going. Click this icon to bring it back, or right-click and choose Quit to close for real.'
   }
 }
 
@@ -47,6 +55,8 @@ let unreadCount = 0
 // 曾配对一个 unreadIcon（未读时换成红点 + setTitle 计数），2026-07-16
 // 随「菜单栏红点退役、未读只留 Dock 徽标」删除——tray 图标恒为此 idle 态。
 let idleIcon: Electron.NativeImage | null = null
+// Windows「关窗 = 收进托盘」的一次性气泡是否已提示过（见 notifyHiddenToTray）。
+let hiddenBalloonShown = false
 
 function buildIcon(): Electron.NativeImage {
   if (process.platform === 'darwin') {
@@ -124,8 +134,37 @@ export function createTray(resolver: () => BrowserWindow | null): Tray {
   tray.setToolTip(app.getName())
   tray.setContextMenu(buildMenu(currentLang))
   tray.on('click', () => showResolvedWindow())
+  // Windows 的托盘惯例是双击图标还原窗口。双击也会先派发一次 click，
+  // showResolvedWindow 幂等（已可见的窗口只是再 focus 一次），重复无害。
+  tray.on('double-click', () => showResolvedWindow())
 
   return tray
+}
+
+/**
+ * Windows 上窗口被 X 收进托盘后的一次性气泡提示（每个进程生命周期最多一次）。
+ *
+ * 为什么需要：mac 用户对「红叉只是关窗口」有心理预期，Windows 用户没有——
+ * 点了 X 窗口消失、进程却还活着，不提示的话看起来就是「应用退不干净」。
+ * 气泡说清两件事：任务还在跑、真退出走托盘右键。
+ *
+ * `displayBalloon` 是 Windows-only API（其它平台调用直接 no-op，但这里仍然
+ * 显式按平台早退，省得依赖未文档化的 no-op 行为）。刻意不做持久化「不再提示」
+ * ——进程内一次的频率已经够低，落盘一个 flag 反而多一份要维护的状态。
+ */
+export function notifyHiddenToTray(): void {
+  if (process.platform !== 'win32') return
+  if (hiddenBalloonShown) return
+  if (!tray || tray.isDestroyed()) return
+  hiddenBalloonShown = true
+  const labels = TRAY_STRINGS[currentLang]
+  try {
+    tray.displayBalloon({ title: labels.hiddenTitle, content: labels.hiddenBody })
+  } catch (err) {
+    // 气泡在「专注助手」开启或通知被系统策略禁用时会抛——纯提示性功能，
+    // 失败不影响隐藏到托盘本身。
+    console.warn('[tray] displayBalloon failed:', err)
+  }
 }
 
 /**

@@ -56,6 +56,8 @@ bun run build:mac    # 只打 Electron 壳：verify:fusion + build:icons + prebu
 
 **发版必须走 `dist:*` 不是 `build:*`**：`build:mac` 的 prebundle 只是拷贝 daemon dist 与 studio out/ 的现成产物，不重新构建它们——改了前端/daemon/契约包后直接 `build:mac`，打进安装包的是陈旧代码且零报错。
 
+**改「按名保留一批文件、其余删掉」的打包配置（`electronLanguages`、arch slice…），必须打一次目标平台的 `--dir` 包并 `ls` 那个目录**：这类裁剪永远静默——列错了跟「你就是想删光」长得一模一样。`electron-builder --win --dir` 在 macOS 上能跑（wine 只有 nsis/签名才要），成本一次下载，比发一版坏包便宜太多。踩过的实锤：`electronLanguages` 写 mac 的下划线拼法（`zh_CN`）放顶层通吃三平台，Windows 的 pak 是连字符（`zh-CN`）且**没有裸 `en.pak`**，精确匹配 0 命中 → `locales/` 55 个 pak 全删 → Chromium 渲染 `<input type=file>` 时渲染进程必崩（exitCode=-36861），v0.0.43~0.0.45 三个 Windows 版本装完打不开而 mac 全好。现在 `scripts/afterPack.cjs` 的 `assertLocalesSurvived` 会硬失败拦住它，**断言本身也做过负向测试**（故意写坏拼法确认构建 exit=1）——只跑正向的断言等于没有断言。
+
 包内脚本约定（apps/studio）：`dev` = 整个桌面应用；`dev:next`/`build:next` = Next 前端独立入口（main 的 spawnStudioDev 调 `dev:next`，root 的 `prebuild:resources` 调 `build:next`）；刻意没有裸 `build`。改完代码以 `bun run typecheck` 为准——**没有单元测试、没有 ESLint**，类型检查是唯一的自动化防线。
 
 ## 内置写作技能
