@@ -45,7 +45,7 @@ export function buildWritingGenImagePrompt(
 /**
  * 【2026-08 终审 #2】判定这一轮 `read.sections` 是不是「可疑地读空」——scan 阶段已经
  * 证明 drafts/ 下有文件（`scanFilesCount > 0`），但 read 阶段却一节都没读到
- * （`sectionsCount === 0`）。这个组合只有一种解释：`readWritingSections` 内部对
+ * （`sectionsCount === 0`）。这个组合最可能的解释是：`readWritingSections` 内部对
  * `readdirSync(drafts)` 抛错时静默兜底成 `{ ok: true, sections: [] }`
  * （`writingProject.ts:230`，与轮询孤儿清扫的 M-1 那条窄缝同源）——不是「项目真的
  * 没有内容」，而是这一轮读盘本身不可信（网络共享盘抖动、目录正被 rename）。
@@ -65,12 +65,24 @@ export function buildWritingGenImagePrompt(
  * （一致，放行 seed，seed 到的是空集合，无害）；「已有项目但这轮读空」是两次观察
  * 不一致（scan 非 0、read 是 0，拦住）。
  *
- * 【这条判据不区分什么】scan 与 read 是两次独立的 IPC 往返（中间隔着一次真实的
- * await），理论上「scan 那一刻文件还没创建、read 那一刻文件已经创建完但内容读
- * 失败」这种两次观察之间状态本身在变的窄缝依然可能通过（`scanFilesCount === 0`
- * 但 read 其实该有内容却读失败）——代价是把这一轮真实的新内容错误当成「新项目」
- * 提前 seed 成 manual，后果是这条新指令退化成「手动点一下才出图」，不是重复扣费，
- * 权衡后不额外处理。
+ * 【⚠️ 这条判据没有堵住什么 —— 2026-08 终审复审实证，别读成「这一族已收口」】
+ * 本判据依赖 scan 与 read 内层 scan **两次观察的不一致**。但 `readWritingSections`
+ * 内部会**重跑一次同款 `scanWritingDoc`**（`writingProject.ts:230`），两次 readdir
+ * 之间只隔一次 IPC 往返（毫秒级）。因此：
+ *
+ * - 故障**恰好起始于两次 readdir 之间** → `scanFilesCount > 0`、read 空 → 本判据生效 ✅
+ * - 故障**在外层 scan 之前就已经在进行中** → 两次一起兜底成空 → `scanFilesCount` 同样
+ *   是 0 → **本判据不生效，C-1 在这条路径上原样成立**（seed 名额被空耗 → 文件回来后
+ *   没人补种哨兵 → 整篇指令块被当新指令，两轮后重新发起、**重复扣费**）。
+ *
+ * 而网络共享盘抖动、目录 rename 这类真实故障**大多属于后者**（首个 tick 落进一段
+ * 正在持续的故障，比恰好落在两次 readdir 的缝里概率高得多）。也就是说本判据覆盖的
+ * 是较窄的那一半。要真正闭合，得让「seed 名额」与「确实成功读到过内容」绑定，
+ * 而不是与「首次成功返回」绑定 —— 属结构性改动，未在收尾轮做，见账本残留清单。
+ *
+ * 另一条不区分的窄缝：「scan 那一刻文件还没创建、read 那一刻已创建但读失败」
+ * （`scanFilesCount === 0` 但 read 其实该有内容）会被当成「新项目」提前 seed 成
+ * manual —— 后果是这条新指令退化成「手动点一下才出图」，不烧钱，权衡后不处理。
  */
 export function isReadSuspiciouslyEmpty(scanFilesCount: number, sectionsCount: number): boolean {
   return scanFilesCount > 0 && sectionsCount === 0
