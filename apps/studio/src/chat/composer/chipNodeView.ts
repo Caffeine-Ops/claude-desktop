@@ -5,6 +5,7 @@ import { fileTypeIconPaths, type IconPath } from '../components/chat/FileTypeIco
 import { findSkillChipSpec } from './skillChipRegistry'
 import { autoOpenPreviewPanel, previewPanelKind } from '../runtime/imageAttachmentAdapter'
 import { splitWorkspaceBusyNow } from '../stores/filePreview'
+import { templateKindFromPath, TEMPLATE_MENTION_ICON } from '../lib/mentionDisplay'
 
 /**
  * NodeView for the `slash` / `mention` atom nodes. Renders the same pill
@@ -67,20 +68,6 @@ const PREVIEWABLE_IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp
 function isPreviewableImage(name: string): boolean {
   const dot = name.lastIndexOf('.')
   return dot >= 0 && PREVIEWABLE_IMAGE_EXT.has(name.slice(dot + 1).toLowerCase())
-}
-
-/**
- * 判定一个 mention 的裸路径是不是 TemplateGalleryPopover 写进去的内置模版
- * 引用（`templatePlaceholderPlugin`/`onTemplatePicked` 的产物）——同
- * `pptAssetProtocol.ts` ALLOWED_SEGMENTS 的三个目录片段，渲染侧没有
- * node:path，直接认 `/` 前提（mentionPath 在本文件其它地方也是这个前提）。
- * 命中后 chip 主体可点：重开 TemplateGalleryPopover 换选另一个模版。
- */
-function templateKindFromPath(path: string): 'brand' | 'layout' | 'deck' | null {
-  if (path.includes('/templates/brands/')) return 'brand'
-  if (path.includes('/templates/layouts/')) return 'layout'
-  if (path.includes('/templates/decks/')) return 'deck'
-  return null
 }
 
 /**
@@ -333,7 +320,7 @@ function buildImgIcon(src: string, size = 14): HTMLImageElement {
  * palette + icon; the raw value comes from `node.attrs.value`.
  *
  * `opts.onTemplateChipClick`（mention 专属，2026-07-22）：当这个 mention 的
- * 裸路径落在 ppt-master 内置模版目录下（`templateKindFromPath` 命中）时，
+ * 裸路径落在 ppt-creator 内置模版目录下（`templateKindFromPath` 命中）时，
  * chip 主体可点——回调把 `getPos()` 精确捕获的位置 + chip 的
  * `getBoundingClientRect()` 交给上层，上层重开 TemplateGalleryPopover 让
  * 用户换选另一个模版，选中后原子替换这个位置的节点（见
@@ -346,7 +333,7 @@ export function createChipNodeView(
   return (node: PMNode, view: EditorView, getPos: () => number | undefined): NodeView => {
     const raw = (node.attrs.value as string) ?? ''
 
-    // A known slash skill (e.g. `/ppt-master`) swaps the glyph for its
+    // A known slash skill (e.g. `/ppt-creator`) swaps the glyph for its
     // coloured Icons8 icon and gives the pill a friendly label. Everything
     // else — and all mentions — keeps the neutral sparkle/file glyph.
     // Lookup is by the verbatim `value`, so this is purely visual;
@@ -438,6 +425,9 @@ export function createChipNodeView(
 
     const buildRestingIcon = (): SVGSVGElement | HTMLImageElement => {
       if (skill) return buildImgIcon(skill.image)
+      // 内置模版 chip：目录路径没有扩展名，fileTypeIconPaths 会 fallback 成
+      // GENERIC 通用文档图标，认不出这是「模版」——换成专属的模版图标。
+      if (templateKind) return buildImgIcon(TEMPLATE_MENTION_ICON)
       if (variant === 'mention') return buildColorIcon(fileTypeIconPaths(raw.replace(/^@"?|"$/g, '')))
       return buildStrokeIcon(SPARKLE_ICON_PATHS, 13, '1.9')
     }
@@ -560,7 +550,7 @@ export function createChipNodeView(
       // `resetWithSlashCommand` 的整段替换走进「同位置同类型」的 update
       // 路径——DOM 保留旧技能的图标/标签/data-pm-slash，而 doc/store 已是
       // 新技能，ScenarioRail（订 composer.text）随之显示与可见 chip 错位的
-      // 推荐行。真机 CDP 实锤：store=spreadsheets、DOM chip=ppt-master。
+      // 推荐行。真机 CDP 实锤：store=spreadsheets、DOM chip=ppt-creator。
       update: (updated) =>
         updated.type === node.type && (updated.attrs.value as string) === raw,
       // 兜底收起预览：× 删除走 mousedown 直接删节点，mouseleave 未必触发；

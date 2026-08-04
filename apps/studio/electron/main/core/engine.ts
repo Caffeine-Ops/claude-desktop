@@ -53,9 +53,9 @@ import {
   detectSystemClaude,
   detectSystemClaudeSync,
   resolveBundledCliPath,
-  resolveBundledPythonHome,
   resolveBundledSkillsPluginDir,
   resolveCoworkPluginEntries,
+  resolveEffectivePythonHome,
   resolveJsRuntimeBin,
   isElectronJsRuntime,
   resolveSystemClaudeJsEntry
@@ -141,7 +141,7 @@ const SKILL_PASSTHROUGH_KEYS: ReadonlySet<string> = new Set([
   'GEMINI_BASE_URL',
   'GEMINI_TRANSCRIBE_MODEL',
   'ENABLE_GARDEN_IMAGEGEN',
-  // ppt-master web image search (scripts/image_search.py → PIXABAY_API_KEY).
+  // ppt-creator web image search (scripts/image_search.py → PIXABAY_API_KEY).
   // A stock-photo API key, not a model-routing credential — same rationale as
   // the OPENAI_/GEMINI_ keys above, safe under the system backend.
   'PIXABAY_API_KEY'
@@ -1788,12 +1788,15 @@ export class ChatEngine extends EventEmitter {
     // are baked into the child at spawn — skills installed mid-session only
     // appear in NEW sessions (the market UI says so on install success).
     const coworkPluginEntries = resolveCoworkPluginEntries()
-    // Bundled standalone Python home for the ppt-master skill's bootstrap.
-    // Injected as PPT_MASTER_PYTHON_HOME into BOTH backends' child env (see the
-    // env: block below) so `bin/ensure-python.sh` can build its venv off our
-    // pinned 3.12 instead of the machine's bare python3. null in dev / on a
-    // platform we don't bundle — the bootstrap then falls back to system python.
-    const pythonHome = resolveBundledPythonHome()
+    // Standalone Python home for the ppt-creator skill's bootstrap. Injected as
+    // PPT_MASTER_PYTHON_HOME into BOTH backends' child env (see the env: block
+    // below) so `bin/ensure-python.sh` can build its venv off this interpreter
+    // instead of blindly trying the machine's bare python3. Bundled/downloaded
+    // runtime wins when present (pinned 3.12); otherwise falls back to a
+    // detected system 3.11/3.12 (see resolveEffectivePythonHome in cliDetect —
+    // same "one source of truth" discipline as isCliAvailable). null when
+    // neither is found — the bootstrap script then tries system PATH on its own.
+    const pythonHome = resolveEffectivePythonHome()
     const resume = opts?.resume === true
     this.logEvent('openSession:begin', { sessionId, resume, cliPath, backend })
     // Report the env the CHILD will actually see, not raw process.env:
@@ -1824,8 +1827,8 @@ export class ChatEngine extends EventEmitter {
       // empty array = nothing installed from the skills market yet.
       coworkPluginDirs:
         coworkPluginEntries.length > 0 ? coworkPluginEntries.map((e) => e.pluginDir) : '(none)',
-      // null = no bundled Python runtime (dev / unbundled platform); the
-      // ppt-master bootstrap then falls back to system python3.
+      // null = no bundled AND no detected system Python; the ppt-creator
+      // bootstrap then falls back to whatever python3 it finds on PATH.
       pythonHome: pythonHome ?? '(none)'
     })
 
@@ -2017,7 +2020,7 @@ export class ChatEngine extends EventEmitter {
               process.env.CLAUDE_CODE_ATTRIBUTION_HEADER ?? 'false',
             ENABLE_TOOL_SEARCH:
               process.env.ENABLE_TOOL_SEARCH ?? 'true',
-            // ppt-master skill bootstrap reads this to pick its venv base
+            // ppt-creator skill bootstrap reads this to pick its venv base
             // interpreter. Respect a user-exported override; otherwise hand
             // over the bundled 3.12 home (omitted when null so the bootstrap
             // falls back to system python on its own).
@@ -2043,7 +2046,7 @@ export class ChatEngine extends EventEmitter {
             // Same passthrough under system claude: PPT_MASTER_PYTHON_HOME is a
             // main-process runtime path, not an env.json gateway key, so it
             // never affects claude's model routing — safe to hand over so the
-            // ppt-master skill works under the system backend too.
+            // ppt-creator skill works under the system backend too.
             ...(process.env.PPT_MASTER_PYTHON_HOME
               ? {}
               : pythonHome

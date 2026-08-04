@@ -41,7 +41,7 @@ interface ReplayState {
    */
   slides: ReplaySlide[] | null
   /**
-   * ppt-master 八项确认的选择快照（manifest.meta.confirmSnapshots）——
+   * ppt-creator 八项确认的选择快照（manifest.meta.confirmSnapshots）——
    * CanvasConfirm 回放态离线渲染的唯一数据源（cat/rec 都从这里来，不 fetch
    * 真实 server）。旧格式包（此字段落地前导出的）为 null，SlidesWorkspace
    * 据此让「问题」tab 在 confirm 阶段直接跳过（聊天轨不受影响）。

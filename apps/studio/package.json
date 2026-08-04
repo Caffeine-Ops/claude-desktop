@@ -1,6 +1,6 @@
 {
   "name": "@claude-desktop/studio",
-  "version": "0.0.39",
+  "version": "0.0.47",
   "description": "Claude Desktop 单包形态（原 apps/desktop 已并入）：electron/ 是 Electron 宿主（main+preload+shared），app/ + src/ 是统一前端（Next.js，prod 走 static export 由 app:// 协议加载）。",
   "private": true,
   "author": "Caffeine-Ops",
@@ -19,9 +19,10 @@
     "build:icons": "bash scripts/build-icons.sh",
     "prebundle:daemon": "bun scripts/prebundle-daemon.mjs",
     "verify:fusion": "bun scripts/verify-fusion-bin.mjs",
-    "build:mac": "bun run verify:fusion && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --mac dmg:${EB_MAC_ARCH_NAME:-arm64} zip:${EB_MAC_ARCH_NAME:-arm64} --publish never",
-    "build:win": "bun run verify:fusion win && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --win --publish never",
-    "build:linux": "bun run verify:fusion && bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --linux --publish never",
+    "//note-verify-fusion": "verify:fusion 已从 build:* 链里摘掉——CLI 二进制不再随包，打包时 fusion-bin/ 根本不参与，跑它只会因为目录为空而误报。它的走查逻辑没有退役，而是搬去了两个更该在的地方：发布脚本 publish-components.ts（算 sha256 之前，挡住把截断产物连同它自己的 sha 一起发出去）与下载 worker（原子落位之前）。这个 script 保留，供本地手工检查 fusion-bin/ 里的副本。",
+    "build:mac": "bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --mac dmg:${EB_MAC_ARCH_NAME:-arm64} zip:${EB_MAC_ARCH_NAME:-arm64} --publish never",
+    "build:win": "bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --win --publish never",
+    "build:linux": "bun run build:icons && bun run prebundle:daemon && electron-vite build && electron-builder --linux --publish never",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
     "start": "electron-vite preview",
     "postinstall": "electron-builder install-app-deps",
@@ -34,12 +35,19 @@
   "//note-port": "Next dev 端口默认 3100（避开 next 默认 3000——被同源 fork 抢占串味的历史坑，见 electron/main/services/openDesignServices.ts WEB_DEV_PORT 注释）。壳 spawn dev:next 时注入 STUDIO_DEV_PORT 保证监听端口与壳侧探活/加载常量恒等；独立 bun run dev:next 时走 3100 默认值。",
   "//note-build-appId": "（注释只能放顶层：electron-builder 对 build 块做 schema 校验，未知属性直接报错。）2026-07-05 appId 从 com.anthropic.claude-desktop 改名：与官方 Claude Desktop 的 bundle id 完全同名会让 mac 的 Squirrel ShipIt / updater 缓存目录（都按 appId 组织）在双装机器上互相污染。副作用：mac TCC 权限（麦克风等）按 bundle id 记忆，升级到本版后需重新授权一次。",
   "//note-build-productName": "2026-07-05 productName Claude Desktop → Cowork（应用显示名 = dock/菜单/关于/退出确认框）。改 productName 通常会漂 userData 目录（默认按显示名组织）丢用户历史，但 main/index.ts 已在 whenReady 前 app.setPath('userData', 读回的当前真实目录) 显式钉死存储路径——显示名与数据目录彻底解耦，故此处可安全改名、老会话零丢失。appId 不跟着改（updater/TCC 缓存按它组织，见上）。",
+  "//note-build-artifactName": "2026-07-30 安装包文件名 Claude-Desktop-* → Cowork-*（mac/win 两处 artifactName），跟 productName 对齐——此前显示名早已是 Cowork，只有 CI 产出的 dmg/zip/exe 还叫旧名，用户下载到的文件名与应用名对不上。CI 侧零改动：build.yml 全程用 dist/*.dmg|*.zip|*.exe|*.blockmap glob 收集、action-gh-release 用 release-out/* 上传，没有任何硬编码文件名。副作用只有一个：electron-updater 的增量下载靠上一版同名 .blockmap 做 diff，改名那一版在老客户端上找不到旧 blockmap 会回退成全量下载（一次性，之后恢复增量）；latest-mac.yml / latest.yml 里的 url 由 electron-builder 按 artifactName 现算，自动跟着改，不用手动同步。",
   "//note-build-publish": "自动更新 feed（方案 A，2026-07-05）：代码仓私有，安装包发到独立的**公开** release 仓——electron-updater 匿名读公开 release，客户端不携带任何 GitHub token（私有仓 provider 需要把 token 打进客户端，官方明说仅供测试）。build.publish 的 owner/repo 会被 electron-builder 写进安装包内的 app-update.yml（即客户端 feed 地址）；CI 的 action-gh-release 用 repository 参数发到同一个仓，两处必须一致。",
   "//note-build-mac-identity": "mac 刻意**不写 identity**（2026-07-05 移除）：曾硬编码 'Shenzhen Panda Run…(LBL475BGZL)'，本地钥匙串命中没事，但 CI 上证书是经 CSC_LINK 临时导入的，electron-builder 在 CI 环境按名匹配不到就把 identity 字符串当 CSC 文件路径找 → 报 'apps/studio/<identity> doesn't exist'、签名步骤根本没走到（v0.0.18 首发翻车实锤）。删掉后 electron-builder 自动用 CSC_LINK 导入的证书（p12 里只有一张 Developer ID，无歧义）；本地免签打包一律 -c.mac.identity=null，不受钥匙串多证书干扰。",
-  "//note-build-files": "build.files 的否定 glob（2026-07-09）：!.next/**、!out/** 挡住 Next 两条构建链的巨大缓存/导出产物——它们不是 Electron 运行时资源，且 .next/dev/cache 会被 dev server 高频增删，电子打包遍历时撞文件生命周期竞态报 ENOENT（曾致整包失败）。!**/onnxruntime-web/** 剔掉 @huggingface/transformers 的 web 后端：embedWorker 是 Node utilityProcess，走 transformers.node.cjs，只 require onnxruntime-node + onnxruntime-common（web 版全是浏览器 .wasm，Node 侧一行都不加载），前端也无 import——纯 129M 死重量。删这条前先确认前端没有直接 import transformers/onnxruntime-web。",
+  "//note-build-files": "build.files 的否定 glob（2026-07-09）：!.next/**、!out/** 本意挡住 Next 两条构建链的巨大缓存/导出产物，!**/onnxruntime-web/** 剔掉 @huggingface/transformers 的 web 后端（embedWorker 是 Node utilityProcess，走 transformers.node.cjs，只 require onnxruntime-node + onnxruntime-common，web 版全是浏览器 .wasm 纯 129M 死重量，前端也无 import，删前先确认无直接 import）。!**/@anthropic-ai/claude-agent-sdk-*/** 剔掉 SDK 的平台专属 optionalDependencies（claude-agent-sdk-darwin-arm64 等，单个 ~207M 内置官方 claude 二进制）——engine.ts openSession 的 query() 调用永远显式传 pathToClaudeCodeExecutable（cliDetect 解析的 fusion-code/系统 claude），这份内置二进制从未被读取，纯属 optionalDependencies 安装带来的死重量；千万别写成不带连字符的 claude-agent-sdk*，那会连 SDK 本体一起删掉（sdk.mjs 被 externalizeDepsPlugin 排除在 bundle 外、运行时从 node_modules require，删掉直接起不来）。",
+  "//note-build-files-bug": "2026-07-30 实锤 electron-builder 26.x 一个配置归一化 bug：顶层 files 字符串数组会被 doMergeConfigs/normalizeFiles 折叠成 FileSet 对象另起 matcher，但 mac/win/linux.files 不做这层归一化、仍是字符串——若这些平台块只写否定模式，它们会被 unshift 成 matchers[0]，getMainFileMatchers 判定「只有否定模式」就注入 **/*（dot:true）把 app 目录整个扫进 asar，顶层白名单形同虚设（v0.0.40 实测因此多打进 ~260M：prebundled 与 extraResources 重复一份、.next/out/src/public 等源码统统进去）。规避：mac/win/linux.files 里也各自补上跟顶层一致的 4 条正向模式（out-electron/resources/env.json/package.json），让 matchers[0] 不再「只含否定」。改动后必查 dist/builder-debug.yml 的 firstOrDefaultFilePatterns 第一条不是 '**/*'。",
+  "//note-build-runtime-components": "CLI 二进制(233MB) 与 python-runtime(70MB) 曾经在 mac/win 段里随包分发，2026-07-29 起改为首次启动按需下载（见 electron/main/services/componentInstaller.ts 与 docs/runtime-components-deploy.md）。搬走的理由：它们占安装包体积的绝大部分，且版本节奏与 app 完全不同（CLI 一个月变一次、app 一周几次）——随包意味着换个 CLI 版本就得重发一次 app。运行时解析仍保留 resourcesPath 候选（cliDetect.ts），所以老包升级上来照常能用。",
+  "//note-build-electronLanguages": "2026-07-30 只保留 en / zh 两族 locale：Electron 自带 220 个 .lproj（Chromium 自己的界面翻译，跟我们的 i18n 无关），未压缩约 47M，产品只做中英双语，其余全是死重量。用 electron-builder 内置字段而不是自己写 afterPack 删——它在 framework 准备阶段（beforeCopyExtraFiles）执行、早于用户 afterPack 与签名。",
+  "//note-build-electronLanguages-naming": "【2026-08-04 事故根因，改这几个数组前必读】locale 名在 mac 与 win/linux 上拼法不同，写错的一方会被**整个清空**且零报错：app-builder-lib 的 removeUnusedLanguagesIfNeeded 是精确匹配（`wantedLanguages.includes(path.basename(file, ext))`），命不中就删。mac 用下划线的 .lproj（en.lproj / en_GB.lproj / zh_CN.lproj），win/linux 用连字符的 .pak，且**没有裸 en.pak，只有 en-US.pak / en-GB.pak**（见 electron/script/zip_manifests/dist_zip.win.x64.manifest）。0.0.44~0.0.45 把 mac 拼法（en/en_GB/zh_CN/zh_TW）写在顶层通吃三平台，于是 Windows 包的 locales/ 里 55 个 pak 一个不剩——Chromium 渲染 `<input type=file>` 这类需要本地化字符串的原生控件时渲染进程直接崩（reason=crashed exitCode=-36861），首页 HomeHero 就有一个隐藏 file input，表现为 Windows 装完打不开、停在闪屏（electron/electron#45251 同因）。所以：**顶层不放这个字段**（放顶层就是把 mac 的拼法强加给 win/linux），三平台各写各的；en-US 必须留，它是 Chromium 的最终兜底 locale，删了非中文系统全线崩。afterPack 里有 assertLocalesSurvived 兜底断言，别删。",
+  "//note-build-afterPack": "afterPack 钩子（scripts/afterPack.cjs）干的是 files glob 表达不了的事：按目标 CPU 架构剔除原生模块里不匹配的那一份。files 只能按 OS 过滤（!**/onnxruntime-node/bin/**/win32/** 那三行），glob 里拿不到当前构建的 arch；而 onnxruntime-node 把三平台×两架构全挂在同一个包的 bin/napi-v6/<os>/<arch>/ 下、postinstall 只下载构建机自己那一份——于是在 arm64 机器上打 x64 包，会把 arm64 的 dylib 原样装进 x64 包（v0.0.42 实测：主二进制 x86_64、libonnxruntime 却是 arm64，35M 死重量且 Intel Mac 上知识库向量检索直接加载失败）。钩子在签名前跑，删的是 app.asar.unpacked 下的真实目录，不动 asar header，也不涉及 asar integrity（unpacked 文件本就不在校验范围）。",
   "build": {
     "appId": "com.caffeineops.claude-desktop",
     "productName": "Cowork",
+    "afterPack": "./scripts/afterPack.cjs",
     "publish": [
       {
         "provider": "github",
@@ -58,43 +66,22 @@
       "package.json",
       "!.next/**/*",
       "!out/**/*",
-      "!**/onnxruntime-web/**"
+      "!**/onnxruntime-web/**",
+      "!**/@anthropic-ai/claude-agent-sdk-*/**"
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
-      "artifactName": "Claude-Desktop-${version}-${arch}-${os}.${ext}",
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
-        }
-      ],
+      "electronLanguages": ["en", "en_GB", "zh_CN", "zh_TW"],
+      "artifactName": "Cowork-${version}-${arch}-${os}.${ext}",
+      "target": ["dmg", "zip"],
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "extraResources": [
         {
-          "from": "fusion-bin/fusion-code-cli",
-          "to": "fusion-code-cli"
-        },
-        {
           "from": "prebundled",
           "to": "prebundled"
-        },
-        {
-          "from": "python-runtime/mac",
-          "to": "python-runtime"
         },
         {
           "from": "demo-replays",
@@ -103,32 +90,22 @@
         }
       ],
       "files": [
+        "out-electron/**/*",
+        "resources/**/*",
+        "env.json",
+        "package.json",
         "!**/onnxruntime-node/bin/**/win32/**",
         "!**/onnxruntime-node/bin/**/linux/**"
       ]
     },
     "win": {
-      "artifactName": "Claude-Desktop-${version}-${arch}.${ext}",
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
+      "electronLanguages": ["en-US", "en-GB", "zh-CN", "zh-TW"],
+      "artifactName": "Cowork-${version}-${arch}.${ext}",
+      "target": ["nsis"],
       "extraResources": [
-        {
-          "from": "fusion-bin/fusion-code-cli.exe",
-          "to": "fusion-code-cli.exe"
-        },
         {
           "from": "prebundled",
           "to": "prebundled"
-        },
-        {
-          "from": "python-runtime/win",
-          "to": "python-runtime"
         },
         {
           "from": "demo-replays",
@@ -137,6 +114,10 @@
         }
       ],
       "files": [
+        "out-electron/**/*",
+        "resources/**/*",
+        "env.json",
+        "package.json",
         "!**/onnxruntime-node/bin/**/darwin/**",
         "!**/onnxruntime-node/bin/**/linux/**"
       ]
@@ -152,7 +133,12 @@
       "**/@img/**"
     ],
     "linux": {
+      "electronLanguages": ["en-US", "en-GB", "zh-CN", "zh-TW"],
       "files": [
+        "out-electron/**/*",
+        "resources/**/*",
+        "env.json",
+        "package.json",
         "!**/onnxruntime-node/bin/**/darwin/**",
         "!**/onnxruntime-node/bin/**/win32/**"
       ]

@@ -1,12 +1,58 @@
 import { execFile, type ExecFileException } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { app } from 'electron'
 
+import { componentDir, readComponentRecord } from './componentPaths'
+
 const execFileP = promisify(execFile)
+
+/**
+ * 按需下载的 CLI 落点（存在且记账有效时返回一个候选，否则空数组）。
+ *
+ * 拆成函数而不是内联，是为了让「记账 + readyProbe 双条件」这个判据只有一处：
+ * componentInstaller 判断「装没装」用的也是 readComponentRecord。两处用同一个
+ * 真相，才不会出现「门说没装好、引擎其实能跑」或反过来。
+ */
+function downloadedCliCandidate(bundledName: string): string[] {
+  try {
+    const rec = readComponentRecord('cli', bundledName)
+    if (!rec) return []
+    return [join(componentDir('cli'), bundledName)]
+  } catch {
+    // app 尚未 ready 等极早期调用：拿不到 userData 就当作没下载过，别让整条
+    // 解析链因为一个可选候选而抛。
+    return []
+  }
+}
+
+/** 按需下载的 python-runtime 落点。判据同 CLI：记账 + 解释器真在盘上。 */
+function downloadedPythonCandidate(interpreterRel: string): string[] {
+  try {
+    const rec = readComponentRecord('python-runtime', interpreterRel)
+    return rec ? [componentDir('python-runtime')] : []
+  } catch {
+    return []
+  }
+}
+
+/** 「AI 引擎当前可用吗」——与 engine spawn 时用的是同一个解析函数。
+ *
+ *  为什么门必须用这个而不是「下载装过没有」：只要 resolveBundledCliPath() 解析
+ *  得出路径，engine 就起得来，门就不该挡；反之亦然。一个真相、一个函数，杜绝
+ *  「门说没准备好、引擎其实能跑」这类自相矛盾。中间态（包里还带二进制）的用户
+ *  因此一次门都不会看到——这是拆桥前不打扰任何人的保证。 */
+export function isCliAvailable(): boolean {
+  try {
+    resolveBundledCliPath()
+    return true
+  } catch {
+    return false
+  }
+}
 
 /**
  * Resolve the absolute path of the bundled fusion-code CLI binary. Pure
@@ -34,6 +80,18 @@ export function resolveBundledCliPath(): string {
   const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string })
     .resourcesPath
   const candidates = [
+    // 按需下载的那一份，**刻意排在 resourcesPath 之前**。
+    //
+    // 顺序即「谁覆盖谁」。放后面的话，任何一个 Resources 里还带着旧二进制的包
+    // （升级路径、或拆桥后的回滚）都会永远用不上新下载的版本。放前面则三种形态
+    // 都对：新包（Resources 无二进制）命中这条；老包升上来且用户下过 → 命中这条，
+    // 拿到的是新的，正是想要的；老包且从没下过 → 落到下面的 resourcesPath 照旧
+    // 能用——**这正是「先接下载、后拆桥」的中间态不翻车的保证**。
+    //
+    // 代价：下载的那份若被杀软删了一半，会挡住本来可用的 Resources 兜底。所以判据
+    // 是 readComponentRecord（记账 + readyProbe 双条件）而不是裸 existsSync，
+    // 且 componentInstaller 的启动自检还会对它跑一次结构走查，不过就当作未安装。
+    ...downloadedCliCandidate(bundledName),
     ...(resourcesPath ? [resolve(resourcesPath, bundledName)] : []),
     resolve(process.cwd(), '../free-code/cli'),
     resolve(process.cwd(), '../../../free-code/cli'),
@@ -178,7 +236,7 @@ export {
 
 /**
  * Resolve the bundled standalone Python *home* directory (the dir holding
- * `bin/python3` on mac/Linux, `python.exe` on Windows). The ppt-master skill is
+ * `bin/python3` on mac/Linux, `python.exe` on Windows). The ppt-creator skill is
  * a Python skill: its scripts shell out via `python3 ${SKILL_DIR}/scripts/...`
  * and need ~18 deps with native extensions (PyMuPDF/Pillow/numpy). We ship a
  * pinned 3.12 runtime (python-build-standalone, CI download — see build.yml)
@@ -213,6 +271,10 @@ export function resolveBundledPythonHome(): string | null {
   const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string })
     .resourcesPath
   const candidates = [
+    // 按需下载的那一份，同 resolveBundledCliPath 的理由排在 resourcesPath 之前。
+    // 注意它**没有平台子层**（一台机器只有一种平台），与随包/dev 的
+    // `<platform>/` 布局不同——现有的 resourcesPath 候选本就不带平台子层，模式一致。
+    ...downloadedPythonCandidate(interpreterRel),
     ...(resourcesPath ? [resolve(resourcesPath, 'python-runtime')] : []),
     resolve(selfDir, '../../python-runtime', platformDir),
     resolve(process.cwd(), 'python-runtime', platformDir),
@@ -224,6 +286,139 @@ export function resolveBundledPythonHome(): string | null {
     if (existsSync(join(p, interpreterRel))) return p
   }
   return null
+}
+
+/**
+ * 系统已安装的 Python home（满足 `resolveBundledPythonHome()` 同款契约形状：
+ * mac `<home>/bin/python3`、win `<home>\python.exe`）。ppt-creator/writing/
+ * spreadsheets 三个 skill 的 `ensure-python.sh|cmd` 消费的是这个契约，不是
+ * python 本身——检测函数复用同一形状，脚本零改动即可接受注入。
+ *
+ * **版本闸门只认 3.11 / 3.12**：python-runtime 组件存在的唯一理由就是躲开
+ * ≥3.13 没有预编译 wheel、pip 退化源码编译卡死的坑（见上面 resolveBundledPythonHome
+ * 注释引用的 [[2026-05-25-py314-无wheel-venv编译卡死]]）。检测到 3.13+ 必须
+ * 视为「没有可用的系统 python」、照旧下载 70MB 的捆绑 runtime——宽版本闸门
+ * 省下的下载流量远不值一次离奇的 pip 编译失败。
+ */
+export interface SystemPythonHome {
+  home: string
+  version: '3.11' | '3.12'
+}
+
+const SYSTEM_PYTHON_CACHE_TTL_MS = 30_000
+let systemPythonCache: { info: SystemPythonHome | null; ts: number } | null = null
+
+/** 供将来「用户装了/卸了 python」场景强制重扫，同 invalidateCache() 的用途。 */
+export function invalidateSystemPythonCache(): void {
+  systemPythonCache = null
+}
+
+/**
+ * 同步、零 spawn 扫描版本化安装路径。componentInstaller 的
+ * `getRuntimeComponentsState()` 在冷启动同步路径里调用（splash 还压着的
+ * 那几毫秒），不能有任何 execFile/spawn。30s TTL 缓存对齐 detectSystemClaude
+ * 的纪律，避免同一秒内的多次 IPC 轮询重复做文件系统 IO。
+ *
+ * `COWORK_DISABLE_SYSTEM_PYTHON=1`（env.json / 远端下发）是杀开关：线上发现
+ * 某类系统 python 有问题时，不发版即可整体退回「只用捆绑 runtime」的旧行为。
+ */
+export function detectSystemPythonHomeSync(): SystemPythonHome | null {
+  if (process.env.COWORK_DISABLE_SYSTEM_PYTHON === '1') return null
+  if (systemPythonCache && Date.now() - systemPythonCache.ts < SYSTEM_PYTHON_CACHE_TTL_MS) {
+    return systemPythonCache.info
+  }
+  const info = scanSystemPythonHomes()
+  systemPythonCache = { info, ts: Date.now() }
+  return info
+}
+
+function scanSystemPythonHomes(): SystemPythonHome | null {
+  const versions: ReadonlyArray<'3.12' | '3.11'> = ['3.12', '3.11']
+
+  if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA
+    for (const version of versions) {
+      const tag = version.replace('.', '')
+      const homes = [
+        ...(localAppData ? [join(localAppData, 'Programs', 'Python', `Python${tag}`)] : []),
+        `C:\\Program Files\\Python${tag}`,
+        `C:\\Python${tag}`
+      ]
+      for (const home of homes) {
+        if (existsSync(join(home, 'python.exe'))) return { home, version }
+      }
+    }
+    // py launcher 注册的安装本就落在上面几个目录，不额外做 `py -0p` 之类的
+    // spawn 探测——这里必须保持同步零 spawn。
+    return null
+  }
+
+  // mac：python.org 安装器 + Homebrew keg（注意不能用裸 /opt/homebrew 当
+  // home——`bin/python3` 在那层可能指向任意版本，必须钻进 keg 内的
+  // Framework 路径让目录名与版本号严格对应）。
+  for (const version of versions) {
+    const homes = [
+      `/Library/Frameworks/Python.framework/Versions/${version}`,
+      `/opt/homebrew/opt/python@${version}/Frameworks/Python.framework/Versions/${version}`,
+      `/usr/local/opt/python@${version}/Frameworks/Python.framework/Versions/${version}`
+    ]
+    for (const home of homes) {
+      if (existsSync(join(home, 'bin', 'python3'))) return { home, version }
+    }
+  }
+
+  // pyenv：目录名带 patch 号（3.12.7），取每个大版本下最高 patch。故意不进
+  // shims（~/.pyenv/shims/python3）——那是依赖 pyenv shell 环境的转发脚本，
+  // existsSync 能过但脱离 PATH 时不可执行，会让脚本以为有解释器结果一跑就炸。
+  try {
+    const pyenvVersionsDir = join(homedir(), '.pyenv', 'versions')
+    const entries = readdirSync(pyenvVersionsDir)
+    for (const version of versions) {
+      const matches = entries.filter((e) => e.startsWith(`${version}.`)).sort()
+      const best = matches[matches.length - 1]
+      if (best) {
+        const home = join(pyenvVersionsDir, best)
+        if (existsSync(join(home, 'bin', 'python3'))) return { home, version }
+      }
+    }
+  } catch {
+    /* 没装 pyenv，目录不存在——忽略，不是错误 */
+  }
+
+  return null
+}
+
+/**
+ * 异步验真：`existsSync` 过的目录里，解释器可能已损坏或被系统隔离（企业
+ * 杀软/macOS Gatekeeper 隔离属性），existsSync 看不出这些。只在
+ * componentInstaller 决定「跳过 70MB 下载」前调用——宁可多花几百毫秒验证，
+ * 也不能让一个假 ready 的系统 python 换来 venv 建不出来的胶囊卡死。
+ */
+export async function verifySystemPython(info: SystemPythonHome): Promise<boolean> {
+  const interpreter =
+    process.platform === 'win32' ? join(info.home, 'python.exe') : join(info.home, 'bin', 'python3')
+  try {
+    const { stdout } = await execFileP(interpreter, ['--version'], {
+      timeout: 3000,
+      windowsHide: true
+    })
+    // Python ≥3.4 把 --version 输出打到 stdout（早期版本打 stderr，但我们
+    // 只认 3.11/3.12，不用兼容那个年代）。
+    const match = stdout.match(/Python (\d+)\.(\d+)/)
+    return match ? `${match[1]}.${match[2]}` === info.version : false
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 「PPT_MASTER_PYTHON_HOME 该注入什么」与「python 组件是否就绪」的唯一入口：
+ * 捆绑/已下载的 runtime 优先，其次系统检测到的 python。isComponentAvailable
+ * 与 engine.ts/pptSkillInstaller.ts 的注入侧必须共用这一个函数——同
+ * isCliAvailable 的纪律，杜绝「组件说就绪、实际注入 null」的自相矛盾。
+ */
+export function resolveEffectivePythonHome(): string | null {
+  return resolveBundledPythonHome() ?? detectSystemPythonHomeSync()?.home ?? null
 }
 
 /**

@@ -53,6 +53,8 @@ export interface MarketDeps {
   skillsRoot?: string;
   /** kind=plugin 的安装根。默认 ~/.cowork/plugins（COWORK_PLUGINS_DIR 可覆盖，与 electron 侧共用同一 env）。 */
   pluginsRoot?: string;
+  /** kind=template 的安装根。默认 ~/.cowork/ppt-templates（COWORK_PPT_TEMPLATES_DIR 可覆盖）。 */
+  templatesRoot?: string;
   fetchImpl?: typeof fetch;
   nowMs?: () => number;
   /** 下载并发，默认 3（对 gitee raw 客气一点）。 */
@@ -89,11 +91,26 @@ export function defaultPluginsRoot(): string {
   return path.join(homedir(), '.cowork', 'plugins');
 }
 
+/**
+ * ppt-creator 版式模板的安装根（2026-07-29）。刻意**不叫** `templates`——
+ * `~/.cowork/templates` 太泛，将来若有别的模板体系（方案模板、表格模板）
+ * 会撞在一起；这个目录里装的就是 ppt-creator 认得的那种版式目录。
+ *
+ * 与另外两个根的区别：这里装的东西 CLI 完全不感知，是 composer 的模板
+ * 选择器按绝对路径引用的静态资源（见 contracts 里 MarketEntryKind 的注释）。
+ */
+export function defaultTemplatesRoot(): string {
+  const env = process.env.COWORK_PPT_TEMPLATES_DIR;
+  if (env && env.trim()) return env.trim();
+  return path.join(homedir(), '.cowork', 'ppt-templates');
+}
+
 function resolved(deps: MarketDeps) {
   return {
     baseUrl: (deps.baseUrl ?? resolveMarketBaseUrl()).replace(/\/+$/, ''),
     skillsRoot: deps.skillsRoot ?? defaultSkillsRoot(),
     pluginsRoot: deps.pluginsRoot ?? defaultPluginsRoot(),
+    templatesRoot: deps.templatesRoot ?? defaultTemplatesRoot(),
     fetchImpl: deps.fetchImpl ?? globalThis.fetch,
     nowMs: deps.nowMs ?? (() => Date.now()),
     concurrency: deps.concurrency ?? 3,
@@ -106,8 +123,13 @@ function resolved(deps: MarketDeps) {
 /** kind → 安装根的唯一映射点（daemon 内部用；对外 URL 前缀走 contracts 的
  * marketRemoteDirFor，两者含义不同——一个是本地路径，一个是远端目录名，
  * 但都由同一个 kind 驱动，故意保持相邻方便对照）。 */
-function rootFor(d: { skillsRoot: string; pluginsRoot: string }, kind: MarketEntryKind): string {
-  return kind === 'plugin' ? d.pluginsRoot : d.skillsRoot;
+function rootFor(
+  d: { skillsRoot: string; pluginsRoot: string; templatesRoot: string },
+  kind: MarketEntryKind,
+): string {
+  if (kind === 'plugin') return d.pluginsRoot;
+  if (kind === 'template') return d.templatesRoot;
+  return d.skillsRoot;
 }
 
 // ── registry 拉取（进程内缓存，TTL 5min）─────────────────────────────────
@@ -171,11 +193,12 @@ export async function listInstalled(
 ): Promise<SkillsMarketInstalledItem[]> {
   const d = resolved(deps);
   const byId = new Map(registry?.entries.map((e) => [e.id, e]) ?? []);
-  const [skills, plugins] = await Promise.all([
+  const [skills, plugins, templates] = await Promise.all([
     listInstalledInRoot(d.skillsRoot, byId),
     listInstalledInRoot(d.pluginsRoot, byId),
+    listInstalledInRoot(d.templatesRoot, byId),
   ]);
-  return [...skills, ...plugins];
+  return [...skills, ...plugins, ...templates];
 }
 
 async function listInstalledInRoot(
@@ -194,6 +217,10 @@ async function listInstalledInRoot(
     if (!ent.isDirectory() || ent.name.startsWith('.')) continue;
     const dir = path.join(root, ent.name);
     const looksLikeItem =
+      // 市场装的东西一定有这份安装记账——kind=template 的目录既没有
+      // plugin.json 也没有 SKILL.md，只能靠它认出来（对技能/插件同样成立，
+      // 放在最前面还省掉两次 stat）。
+      (await exists(path.join(dir, INSTALLED_SKILL_META_FILENAME))) ||
       (await exists(path.join(dir, '.claude-plugin', 'plugin.json'))) ||
       (await hasAnySkillMd(path.join(dir, 'skills'))) ||
       (await exists(path.join(dir, 'SKILL.md'))); // 老式扁平手放目录兜底
@@ -343,7 +370,9 @@ export async function* installSkill(
     // 条目自己的 .claude-plugin/plugin.json 写进 staging——rename 上位后自动
     // 落在正确位置（staging/.claude-plugin/... → <id>/.claude-plugin/...），
     // 不需要在最终目录再补一次。
-    await ensureItemPluginManifest(stagingDir);
+    // 模板不是插件：写一份指向不存在的 skills/ 的 plugin.json 只会让人以为
+    // 这个目录能被 CLI 加载（它不能，它只是一堆给 ppt-creator 读的 SVG）。
+    if (entry.kind !== 'template') await ensureItemPluginManifest(stagingDir);
 
     // 旧安装的 sha 索引：同 sha 的文件本地 copy，不重下（增量更新的核心）
     const targetDir = path.join(root, entry.id);
@@ -436,7 +465,12 @@ async function fetchOneFile(
     }
   }
 
-  const url = `${d.baseUrl}/${marketRemoteDirFor(entry.kind)}/${entry.id}/${file.path}`;
+  // 按段 encodeURIComponent：文件名允许中文与空格（ppt-creator 的模板资源里
+  // 就有 `大型 logo.png`），裸拼进 URL 只能靠 fetch 实现的隐式编码兜着，不同
+  // 运行时行为不一致。逐段编码后 `/` 仍是路径分隔符，纯 ASCII 名字编码前后
+  // 完全相同——对既有技能条目的 URL 零影响。
+  const encodedPath = file.path.split('/').map(encodeURIComponent).join('/');
+  const url = `${d.baseUrl}/${marketRemoteDirFor(entry.kind)}/${entry.id}/${encodedPath}`;
   let lastErr: unknown;
   for (let attempt = 0; attempt <= d.retries; attempt++) {
     if (attempt > 0) await sleep(300 * 2 ** (attempt - 1));
@@ -482,9 +516,9 @@ export async function uninstallSkill(
   if (!MARKET_SAFE_ID.test(name)) {
     return { ok: false, warning: `invalid skill name: ${name}` };
   }
-  // 不知道调用方要卸载的是 skill 还是 plugin，两个根都探一下——正常只会
-  // 命中其中一个（id 全局唯一），命中哪个删哪个。
-  for (const root of [d.skillsRoot, d.pluginsRoot]) {
+  // 不知道调用方要卸载的是 skill / plugin / template，三个根都探一下——
+  // 正常只会命中其中一个（id 在 registry 里全局唯一），命中哪个删哪个。
+  for (const root of [d.skillsRoot, d.pluginsRoot, d.templatesRoot]) {
     const dir = path.join(root, name);
     if (await exists(dir)) {
       await fs.rm(dir, { recursive: true, force: true });

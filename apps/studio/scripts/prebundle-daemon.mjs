@@ -30,8 +30,18 @@
 // from the workspace store; plain `node` can't resolve it under bun's layout).
 
 import { build } from 'esbuild'
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
+import { createHash } from 'node:crypto'
+import { dirname, extname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -144,6 +154,161 @@ for (const dir of RESOURCE_DIRS) {
   }
   cpSync(src, join(out, dir), { recursive: true, dereference: true })
   console.log(`[prebundle] copied resource dir: ${dir}`)
+}
+
+// ── 图片量化（2026-07-30）────────────────────────────────────────────────────
+// RESOURCE_DIRS 里的示例插图/截图原本是无损直出 PNG，124 张共 64M，占安装包的
+// 一大块（open-design-landing 那 16 张就 21.8M，而且它在 design-templates/ 与
+// plugins/_official/examples/ 下各存了一份完全相同的副本）。256 色量化后降到
+// 22.6M，实测视觉无可见劣化（平坦区无色带、细节保留）；PNG 在 dmg 里几乎不再
+// 二次压缩，所以省下的字节接近 1:1 落到安装包上。
+//
+// 刻意**只压 prebundled 里的副本，不碰源仓库**：源资产保持无损原图，其它用途
+// 和二次编辑都不受影响，plugins/_official 从上游同步回来也不会打架。
+//
+// 范围就是 RESOURCE_DIRS —— apps/studio/out 是上面单独拷的 next 静态导出，故
+// 天然被排除在外（它由 next build 产出，在这里压了下次构建就被覆盖，要治得去
+// 前端侧改）。
+//
+// 缓存：prebundled 每次 rm 重建，压缩结果落在 repo 外的 .image-cache/（按源文件
+// 的 路径+mtime+size 做 key），否则每次打包都要重压 124 张图。
+const SKIP_IMAGE_OPTIMIZE = process.env.SKIP_IMAGE_OPTIMIZE === '1'
+const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg'])
+const cacheDir = join(pkgRoot, '.image-cache')
+
+/** sharp 是 @huggingface/transformers 的传递依赖，不在 studio 的直接 deps 里，
+ *  裸 `import 'sharp'` 在 bun 的扁平 store 布局下解析不到——沿用 findPkgDir
+ *  那套按 store 目录名前缀扫描的办法拿到真实路径。 */
+async function loadSharp() {
+  const dir = findPkgDir('sharp')
+  if (!dir) return null
+  try {
+    return (await import(join(dir, 'lib', 'index.js'))).default
+  } catch (err) {
+    console.warn(`[prebundle] sharp 加载失败：${err.message}`)
+    return null
+  }
+}
+
+function collectImages(root) {
+  const found = []
+  const walk = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = join(d, e.name)
+      if (e.isDirectory()) walk(p)
+      else if (e.isFile() && IMAGE_EXTS.has(extname(e.name).toLowerCase())) found.push(p)
+    }
+  }
+  walk(root)
+  return found
+}
+
+if (SKIP_IMAGE_OPTIMIZE) {
+  console.log('[prebundle] SKIP_IMAGE_OPTIMIZE=1，跳过图片量化（安装包会大约 35M）')
+} else {
+  const sharp = await loadSharp()
+  if (!sharp) {
+    // 硬失败而不是静默跳过：prebundle 是发版链的一环，「少压了 35M」这种问题
+    // 在产物里看不出任何异常，正是这个仓库反复踩过的静默失败模式。真要绕开
+    // 用 SKIP_IMAGE_OPTIMIZE=1 显式声明。
+    console.error(
+      '[prebundle] 找不到 sharp（@huggingface/transformers 的传递依赖）——' +
+        '图片量化无法执行，安装包会比预期大约 35M。\n' +
+        '  先跑 bun install；确实要跳过就显式声明 SKIP_IMAGE_OPTIMIZE=1。'
+    )
+    process.exit(1)
+  }
+
+  mkdirSync(cacheDir, { recursive: true })
+  const targets = RESOURCE_DIRS.map((d) => join(out, d)).filter((d) => existsSync(d))
+  const images = targets.flatMap(collectImages)
+
+  let before = 0
+  let after = 0
+  let cacheHits = 0
+  let grew = 0
+
+  // 并发压缩：sharp 内部走 libvips 线程池，同时喂 8 个任务能吃满多核又不至于
+  // 把内存顶爆（单张 1024² RGBA 解码约 4M）。
+  const CONCURRENCY = 8
+  let cursor = 0
+  const workers = Array.from({ length: CONCURRENCY }, async () => {
+    while (cursor < images.length) {
+      const p = images[cursor++]
+      const st = statSync(p)
+      before += st.size
+
+      // key 用**文件内容**的 hash，不用 path+mtime：cpSync 默认不保留时间戳
+      // （preserveTimestamps 缺省 false），每趟 prebundle 拷出来的 mtime 都是新
+      // 的，拿它做 key 会几乎全部 miss 还把废条目堆进缓存目录。内容 hash 既稳定
+      // 又天然给两份相同的 open-design-landing 插图共用同一条缓存。
+      const raw = readFileSync(p)
+      const key = createHash('sha1').update(raw).digest('hex')
+      const cached = join(cacheDir, `${key}${extname(p).toLowerCase()}`)
+
+      if (existsSync(cached)) {
+        const buf = readFileSync(cached)
+        writeFileSync(p, buf)
+        after += buf.length
+        cacheHits++
+        continue
+      }
+
+      try {
+        const isPng = extname(p).toLowerCase() === '.png'
+        const buf = isPng
+          ? await sharp(raw).png({ quality: 90, compressionLevel: 9, palette: true }).toBuffer()
+          : await sharp(raw).jpeg({ quality: 82, mozjpeg: true }).toBuffer()
+
+        // 透明度护栏（兜底，正常走不到）：实测 sharp 的 palette PNG 会正确保留真
+        // 实的 alpha（拿一张左半全透明的图验证过，产物 hasAlpha 仍为 true）；它只
+        // 会丢掉“通道存在但全是 255”的冗余 alpha，那种丢弃无害——当前资产里唯一
+        // 带 alpha 的 social-media-dashboard/.preview/hero.png 正是这种。留这道检查
+        // 是防止日后换 sharp 版本或加新格式时静默压掉真透明：只要源图有 alpha 而
+        // 产物没了，就数一遍源图有没有非满值像素，真用到了就整张放弃压缩。raw
+        // 解码不便宜，但它只在这个窄路径上触发。
+        if (isPng && buf.length < st.size) {
+          const srcMeta = await sharp(raw).metadata()
+          if (srcMeta.hasAlpha && !(await sharp(buf).metadata()).hasAlpha) {
+            const { data } = await sharp(raw).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+            let alphaUsed = false
+            for (let i = 3; i < data.length; i += 4) {
+              if (data[i] !== 255) { alphaUsed = true; break }
+            }
+            if (alphaUsed) {
+              console.warn(`[prebundle] 保留原图（含真实透明像素，量化会压掉 alpha）：${relative(out, p)}`)
+              after += st.size
+              writeFileSync(cached, raw)
+              continue
+            }
+          }
+        }
+
+        // 小图/已优化过的图量化后可能反而变大，那就保留原文件。
+        if (buf.length < st.size) {
+          writeFileSync(p, buf)
+          writeFileSync(cached, buf)
+          after += buf.length
+        } else {
+          grew++
+          after += st.size
+          writeFileSync(cached, raw) // 缓存原图，下趟直接命中、不再白压一次
+        }
+      } catch (err) {
+        // 单张图压不动不该打断整个打包（可能是异常色彩空间/损坏文件）。
+        console.warn(`[prebundle] 跳过 ${relative(out, p)}：${err.message}`)
+        after += st.size
+      }
+    }
+  })
+  await Promise.all(workers)
+
+  const mb = (n) => `${(n / 1048576).toFixed(1)}M`
+  console.log(
+    `[prebundle] 图片量化 ${images.length} 张：${mb(before)} → ${mb(after)}` +
+      `（省 ${mb(before - after)}${cacheHits ? `，${cacheHits} 张命中缓存` : ''}` +
+      `${grew ? `，${grew} 张压后变大已保留原图` : ''}）`
+  )
 }
 
 console.log(`[prebundle] done → ${out}`)

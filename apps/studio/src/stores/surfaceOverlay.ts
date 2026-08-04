@@ -1,16 +1,20 @@
 /**
  * 「面开关」—— SurfaceHost 里挂在 chat/canvas 之上的**独立面**（插件市场
- * `?market=1`、知识库 `?kb=1`），机制统一收在这里。
+ * `?market=1`、知识库 `?kb=1`），机制统一收在这里。**设置页 overlay 状态
+ * 也放这个文件**（见下方 `useSettingsOverlayStore`），但它 2026-07-31 起
+ * 已经不是「面开关」的一种——它是纯内存开关，不挂 query，理由见其头注释。
  *
  * ## 形态：为什么是「第三/四个面」而不是全屏 overlay
  *
  * SurfaceHost 本身就渲染在 rail 右侧的 shell-stage 里（app/layout.tsx），所以
  * 一个面挂在它那一层天然就是「rail 常驻 + 右侧内容区换成它」——用户定稿的形态
- * （market 2026-07-17，kb 2026-07-17 跟齐）。对照组是**设置页**（`?settings=1`）：
- * 那个仍是 canvas App 内部 `fixed inset-0` 的全屏 overlay，逃出 stage 连 rail
- * 一起盖住，所以它必须自画一条 244px 导航 + 「返回应用」。知识库原本是设置页
+ * （market 2026-07-17，kb 2026-07-17 跟齐）。对照组是**设置页**：那仍是
+ * canvas App 内部 `fixed inset-0` 的全屏 overlay，逃出 stage 连 rail 一起
+ * 盖住，所以它必须自画一条 244px 导航 + 「返回应用」。知识库原本是设置页
  * 那一族，2026-07-17 改造成面之后，它自带的左导航收成顶栏 tabs、「返回应用」
  * 直接删除——rail 常驻，退出路径就是 rail 本身，不需要面内再放一个出口。
+ * 设置页 2026-07-31 没有跟着改造成面（原因见 `useSettingsOverlayStore` 头
+ * 注释），但把「关闭」的语义从「URL 回退」改成了同款「纯状态开关」。
  *
  * ## 为什么是 query 而不是 pathname 路由
  *
@@ -27,15 +31,16 @@
  *   1. rail 的 surface tab 判「点的是不是当前面」时必须知道「有没有面盖着」
  *      ——只判 market 的话，知识库面开着时点「智能助手」会被判成 no-op，人困在
  *      面里出不去（见 AppRail 的 goSurface）；
- *   2. canvas 的 navigate() 故意保留整个 query（保 ?host=desktop / ?settings=1），
- *      面开关参数必须在那个唯一出口剥掉——只剥 market 的话，知识库面开着点
+ *   2. canvas 的 navigate() 故意保留整个 query（保 ?host=desktop），面开关
+ *      参数必须在那个唯一出口剥掉——只剥 market 的话，知识库面开着点
  *      「工作画布」，kb=1 跟着到目标路径，面继续盖着 = 死路。
  * 两个坑都是「漏掉一个面就复现」，所以真相源必须只有一个：加面只改 PARAM_BY_KIND
  * 一处，上面那些判定自动覆盖新面。
  *
  * 放 src/stores 的理由同 canvasNav.ts / rail.ts：AppRail（根层）、SurfaceHost
- * （根层）、FusionRuntimeProvider（chat 树的 `/plugins` 斜杠命令）、canvas/router
- * 四个跨面调用方共享，塞进任一面的私有模块会造成跨面 import。
+ * （根层）、FusionRuntimeProvider（chat 树的 `/plugins` 斜杠命令）、canvas/router、
+ * chat/App.tsx（菜单栏「设置」IPC，2026-07-31 起统一落这里）五个跨面调用方
+ * 共享，塞进任一面的私有模块会造成跨面 import。
  */
 
 import { create } from 'zustand'
@@ -48,9 +53,9 @@ export type SurfaceOverlayKind = 'market' | 'kb'
  * closeSurfaceOverlay / stripSurfaceOverlayParams 都从它派生，所以新面天然
  * 被「切面剥参」「navigate 剥参」两条纪律覆盖，不用逐处补。
  *
- * ⚠️ 不含 `settings` —— 设置页是 canvas App 内部的全屏 overlay、跟着画布面走
- * （navigate 必须保住它，见 router.ts 注释），语义与这里的「盖在面之上的独立
- * 面」相反。别图省事把它并进来。
+ * ⚠️ 不含 `settings` —— 设置页 2026-07-31 起已经不挂 query 了（见下方
+ * `useSettingsOverlayStore`），跟这里的「盖在面之上的独立面」完全是两套
+ * 机制，不存在「该不该并进来」的问题。
  */
 const PARAM_BY_KIND: Record<SurfaceOverlayKind, string> = {
   market: 'market',
@@ -76,6 +81,82 @@ const ALL_KINDS = Object.keys(PARAM_BY_KIND) as SurfaceOverlayKind[]
 export const useSurfaceOverlayStore = create<{ open: SurfaceOverlayKind | null }>(
   () => ({ open: null })
 )
+
+/**
+ * 设置页开着没有 —— **2026-07-31 起是真相源，不再是 URL 镜像**。
+ *
+ * ## 三套设置入口现状地图（重构前先看这个，别猜）
+ *
+ * 应用里有三条互不相通的「打开设置」路径，本 store 只管第一条：
+ *   1. **本 store**（rail 齿轮 `AppRail.openSettings` / 菜单栏「设置」IPC /
+ *      Cmd+,）→ canvas App 的全屏 overlay（`SettingsDialogV2`）。
+ *   2. canvas App 内部的 `settingsOpen` state（`MemoryToast`「打开记忆」等
+ *      需要带 section 定位的入口）→ 同一个 `SettingsDialogV2` 组件，但走
+ *      内嵌 dialog 分支，不经本 store，本次重构未动它。
+ *   3. chat 树遗留的 `chat/stores/settings.ts`（`SettingsView` 组件）——
+ *      2026-07-31 起菜单栏「设置」已改接第 1 条，这条只剩
+ *      `ProposalPaper.tsx` 一个「去设置」直达入口，标记待退役。
+ *
+ * ## 为什么从「URL 镜像」改成「纯内存真相源」（2026-07-31）
+ *
+ * 旧机制：`?settings=1` 挂在当前 pathname 上，SurfaceHost 读 `useSearchParams`
+ * 得出 `settingsOverlay`、镜像进本 store 供 RailShell 订阅；关闭 =
+ * `history.back()`。这套机制有一个结构性漏洞：canvas 是 keep-alive 常驻的
+ * （SurfaceHost 用 `content-visibility` 隐藏而非卸载），隐藏树里的程序化
+ * `navigate()`（比如项目被删后的兜底跳转）照样会往 history 栈里塞条目——
+ * 「返回应用」的落点因此**依赖一个用户看不见、随时可能被悄悄改写的历史栈
+ * 形状**。真实症状：自动化页点「打开对话」后返回按钮彻底失效（防重入锁被
+ * 永久闩死）；智能助手⇄工作画布来回切换后开设置，「返回应用」落到了错的面。
+ * 每多一个「从设置页跳出去」的 handler 忘记剥 `?settings=1`，就再复现一次
+ * ——已经出过三次。
+ *
+ * 新机制：改仿照 `stores/upgrade.ts`（本项目里「overlay 用内存 store 而非
+ * URL query」的既有先例，其头注释原话：「query 驱动还要处理导航保留 query
+ * 关不掉的剥参问题，store 一个布尔最稳」）。关闭 = `setState({open:false})`，
+ * 一次 React commit 内完成，**不依赖、也不可能被任何历史栈状态干扰**——
+ * 上面两个真实症状按构造不可能再发生，不需要防重入锁、不需要超时兜底。
+ *
+ * 代价（用户已确认可接受）：开着设置页时 reload/重启应用，会回到底下的
+ * 页面而不是停在设置页——这本来就是 `AppearanceBridge.tsx` 头注释点名的
+ * 一个隐患复发入口（chat 面从未挂载导致主题同步监听器缺席），关掉它是
+ * 额外收益，不只是妥协。
+ *
+ * 浏览器 back/前进：Electron 壳内没有任何用户可达的触发器（已核实无
+ * swipe/app-command/菜单 back 接线），设置不进历史因此无感。`bun dev:next`
+ * 用真浏览器开发时，浏览器自带的 back 按钮/手势会在设置页底下静默切走
+ * pathname（store 不受影响，UI 仍显示设置页）——这是 dev-only 的已知限制，
+ * 不要用浏览器 back 驱动设置相关的 CDP 回归脚本。
+ *
+ * 为什么单独一个 store 而不是并进 useSurfaceOverlayStore：设置页不是面开关
+ * （理由见 PARAM_BY_KIND 注释），把它塞进 `open` 那个联合类型会让「当前放映
+ * 哪个面」凭空多出一个不是面的取值，rail 里所有 `open === 'market'` 式的判定
+ * 都得跟着改。两个 store 并列、各自语义干净。
+ *
+ * 为什么需要它：RailShell 的常驻按钮组是 portal 到 body 末尾的 fixed 元素
+ * （z-[140]），而设置页是 canvas 树内部的全屏 overlay、层级压不过它——设置页
+ * 揭开时那组按钮会浮在设置页导航栏上（2026-07-30 用户反馈）。它们指向的东西
+ * （rail 折叠态、会话搜索、新建会话）此刻全被设置页盖着，显示出来纯属干扰，
+ * 故整组按 settings 隐藏。判定不能在 RailShell 里自己 useSearchParams——它不
+ * 在 Suspense 内，理由同上一个 store。
+ */
+export const useSettingsOverlayStore = create<{ open: boolean }>(() => ({ open: false }))
+
+/**
+ * 打开设置页。**先关掉市场/知识库面**（`closeSurfaceOverlay`）再开：市场/
+ * 知识库面开着时点设置，若不剥掉，设置页会被那个面盖住、RailShell 的常驻
+ * 按钮组又已经因 settingsShowing 隐藏——用户看到的是「按钮消失了、设置没
+ * 出来」（旧 URL 机制下的既有缺口，两个 store 从未真正互斥过，这次一并
+ * 收口）。
+ */
+export function openSettingsOverlay(): void {
+  closeSurfaceOverlay()
+  useSettingsOverlayStore.setState({ open: true })
+}
+
+/** 关闭设置页。幂等——连点/连按 Esc 无需防重入。 */
+export function closeSettingsOverlay(): void {
+  useSettingsOverlayStore.setState({ open: false })
+}
 
 /** 打开一个面（rail 的「插件」「知识库」按钮 + `/plugins` 斜杠命令共用）。 */
 export function openSurfaceOverlay(kind: SurfaceOverlayKind): void {
@@ -106,9 +187,9 @@ export function hasSurfaceOverlay(): boolean {
  * pushState 导航到别处，这里再 push 一条只会让 back() 多按一次。
  *
  * 为什么需要显式剥而不是靠导航自然覆盖：canvas 的 navigate()
- * （src/canvas/router.ts）**故意保留整个 query string**（保住 ?host=desktop
- * 与 ?settings=1，见其注释），面开关会被一起带到目标路径上——「切到工作画布，
- * 插件市场跟着过去了」。goChatShallow 那边是 pushState('/chat') 写死路径、
+ * （src/canvas/router.ts）**故意保留整个 query string**（保住 ?host=desktop，
+ * 见其注释），面开关会被一起带到目标路径上——「切到工作画布，插件市场跟着
+ * 过去了」。canvasNav.ts 的 goChat() 那边是 pushState('/chat') 写死路径、
  * 不带 query，天然剥掉，不需要这个。
  */
 export function closeSurfaceOverlay(): void {

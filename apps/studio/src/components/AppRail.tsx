@@ -53,6 +53,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle
 } from '@/src/components/ui/alert-dialog'
+import { GLASS_DIALOG_SURFACE } from '@/src/components/ui/glassDialogSurface'
 import { Button } from '@/src/components/ui/button'
 import { RailProjectList } from '@/src/components/RailProjectList'
 import { RailSessionList } from '@/src/components/RailSessionList'
@@ -70,10 +71,11 @@ import {
 } from '@/src/components/ui/dropdown-menu'
 import { useAppearanceStore } from '@/src/chat/stores/appearance'
 import { useUpgradeStore } from '@/src/stores/upgrade'
-import { getLastCanvasPath, rememberCanvasPath } from '@/src/stores/canvasNav'
+import { getLastCanvasPath, goChat } from '@/src/stores/canvasNav'
 import {
   closeSurfaceOverlay,
   hasSurfaceOverlay,
+  openSettingsOverlay,
   openSurfaceOverlay,
   useSurfaceOverlayStore
 } from '@/src/stores/surfaceOverlay'
@@ -96,30 +98,6 @@ const SURFACE_TABS: { value: 'chat' | 'canvas'; label: string; icon: ReactNode }
 ]
 
 /**
- * 记住离开工作画布时的 canvas 路径（模块级，跨 rail 重挂载存活）。
- * 背景（2026-07-14，删多标签工作区顶栏的连带修复）：切到聊天面时
- * goChatShallow 用 pushState('/chat') 覆盖了 canvas 的当前 URL（如
- * '/project/xxx'），canvas 之前的路径就丢了。切回工作画布若硬编码
- * navigate({home})，就回不到用户刚才打开的项目——多标签栏还在时，用户
- * 能从 tab 栏点回去，栏一删这个「回到上次画布视图」的能力就必须由这里
- * 接管：切走前记住画布路径，切回时 parseRoute 还原。'/chat*' 不记
- * （那是聊天面路径，不是画布视图）。 */
-/**
- * 切到聊天面 —— **原生 pushState（shallow）**而非 router.push：两个面都
- * 常驻在 SurfaceHost、page 全是空壳，切换其实不需要 Next 做任何导航工作
- * （dev 下 router.push 的 RSC 请求 + 内部处理实测占 ~276ms EvaluateScript）。
- * Next 16 官方支持原生 History API：usePathname/useSearchParams 照常同步
- * （SurfaceHost 因此切面），但零 RSC fetch、零 page 切换。canvas 侧的
- * navigate() 本来就是同款机制。
- * 覆盖 URL 前先 rememberCanvasPath()，供画布 tab 切回时还原上次画布视图
- * （2026-07-14 删多标签栏连带修复，见 stores/canvasNav.ts）。
- */
-function goChatShallow(): void {
-  rememberCanvasPath()
-  window.history.pushState(null, '', '/chat')
-}
-
-/**
  * rail 的两个 surface tab 的**唯一**导航入口（TabsTrigger 的 onClick，不是
  * Tabs 的 onValueChange——理由见调用处注释）。因为 onClick 无条件触发，这里
  * 必须自己判断「点的是不是当前面」，否则重复 pushState 会往历史里塞垃圾。
@@ -138,9 +116,11 @@ function goSurface(value: 'chat' | 'canvas'): void {
   if (value === 'chat') {
     // 已经在聊天面、且没有面盖着 → 真 no-op（别重复 push 同一条 URL）
     if (onChat && !overlayOpen) return
-    // goChatShallow 的 pushState('/chat') 写死路径不带 query，天然剥掉所有
-    // 面开关参数，不需要额外 closeSurfaceOverlay()。
-    goChatShallow()
+    // goChat（stores/canvasNav.ts，2026-07-31 与 RailSessionList 合并
+    // 共享）：pushState('/chat') 写死路径不带 query，天然剥掉所有面开关
+    // 参数，不需要额外 closeSurfaceOverlay()；覆盖 URL 前自带
+    // rememberCanvasPath()，供画布 tab 切回时还原上次画布视图。
+    goChat()
     return
   }
 
@@ -330,21 +310,12 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
     }
   }, [])
 
-  // 打开设置 overlay（?settings=1）——账户菜单里「设置」与「偏好设置」子项
-  // 共用这一个入口，机制见调用处注释（shallow pushState + canvas 响应式读参）。
-  //
-  // 参数挂在**当前 URL** 上而不是跳 '/?settings=1'：设置是 overlay，不是
-  // 面切换——pathname 保持不动，rail tab 高亮 / 中段列表 / data-surface
-  // 全程不变，关闭 back() 剥参回到原地。旧方案把 pathname 拽到 '/'，rail
-  // 在全屏设置页底下默默切到画布态，「返回应用」揭开的瞬间 tab 再从
-  // 工作画布翻回智能助手——一次可见的假切换（2026-07-08 用户实锤）。
-  // settings=1 时由 SurfaceHost 强制放映 canvas 面（设置页的宿主），与
-  // pathname 解耦。用 URL API 合并 query，保住 ?host=desktop 之类 boot 参数。
-  const openSettings = () => {
-    const url = new URL(window.location.href)
-    url.searchParams.set('settings', '1')
-    window.history.pushState(null, '', url.pathname + url.search)
-  }
+  // 打开设置 overlay——账户菜单「设置」入口。2026-07-31 起是纯内存 store 开关
+  // （`openSettingsOverlay`，见 stores/surfaceOverlay.ts 头注释），不再挂
+  // URL query：不动 pathname，不进历史栈，「返回应用」不再可能落错面（旧
+  // URL 机制下 back() 落点依赖历史栈形状，出过好几次事故，2026-07-08 那次
+  // 假切换是其中之一）。
+  const openSettings = openSettingsOverlay
   // 打开订阅购买页 overlay（UpgradeScreen 常驻根 layout，store 翻开关即现）。
   const setUpgradeOpen = useUpgradeStore((s) => s.setOpen)
   const openUpgrade = () => setUpgradeOpen(true)
@@ -510,8 +481,9 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
         * 早期版本插件入口 navigate 到 canvas 的 `/market` 路由：pathname 一被
         * 拽走 SurfaceHost 就翻到画布面，用户在聊天面点插件会被踢去工作画布
         *（2026-07-17 实锤，同 2026-07-08 设置页 pathname 假切换那一族）。现在
-        * 两个入口与 openSettings 同为「query 挂当前 pathname」，pathname 全程
-        * 不动。机制与形态取舍见 stores/surfaceOverlay.ts。
+        * 两个入口是「query 挂当前 pathname」，pathname 全程不动（设置页
+        * 2026-07-31 起换成纯 store 开关，连 query 都不挂，机制更彻底）。
+        * 机制与形态取舍见 stores/surfaceOverlay.ts。
         *
         * **插件例外（2026-07-20 用户要求）**：上面「不按当前面分流」的纪律
         * 对知识库依旧成立，但插件入口现在只在聊天面显示——画布面本来就是
@@ -543,6 +515,19 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
           <Icon className="size-4" /> {label}
         </Button>
       ))}
+      {/* 问题反馈——rail 主列表里的常驻直达入口（2026-07-30 用户要求），
+        * 与账户菜单里已有的「帮助与反馈」（下方 CircleHelp 那一项）打开
+        * 同一个全局弹窗（useDialogStore('feedback')），两个入口不冲突，
+        * 图标复用 CircleHelp 保持同一动作视觉一致。不区分聊天/画布面
+        * （两面都常显）：反馈不是某个 surface 专属的能力，且它只是弹一个
+        * 对话框、不产生「当前面」意义上的选中态，不需要跟着 isChat 过滤。 */}
+      <Button
+        variant="ghost"
+        className="mb-2 justify-start gap-2 px-3 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+        onClick={() => useDialogStore.getState().openDialog('feedback')}
+      >
+        <CircleHelp className="size-4" /> 问题反馈
+      </Button>
       {/* 新建项目（2026-07-04 从画布首页 EntryNavRail 迁入，那条 rail 已
         * 退役）——只在画布面显示，落位「新画布」下方。NewProjectModal 归
         * EntryShell 所有（canvas 树），跨树触达走「事件 + pending 信箱」
@@ -574,7 +559,8 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
         * usePathname 同步，选中态无需本地 state。 */}
       {/* 选中态仍按 pathname 派生：市场面（?market=1）开着时高亮**保持原面**
         * ——它是挂在当前 pathname 上的 overlay，语义上是「我在智能助手，顺手
-        * 开了插件市场」，同 settings=1/kb=1 的既定取向（见 openSettings 注释）。 */}
+        * 开了插件市场」，同 kb=1 的既定取向。设置页 2026-07-31 起不挂 pathname
+        * 也不挂 query（纯 store 开关），不参与这里的判定。 */}
       <Tabs value={activeSurface}>
         {/* 「毛玻璃浮起」segmented（2026-07-20，替换 07-18 的静态毛玻璃；先出
           * HTML 原型六选一后定稿）：选中态不再靠 radix 每段各自淡入，而是一块
@@ -800,9 +786,9 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
               </div>
               <DropdownMenuSeparator className="mx-2 bg-border/70" />
               <DropdownMenuGroup>
-                {/* 设置：走 canvas App 的 overlay 模式（?settings=1 → 全屏
-                  * 设置页）。shallow pushState：canvas 的 isSettingsOverlay
-                  * 用 useSearchParams 响应式读取，overlay 即开零刷新。 */}
+                {/* 设置：走 canvas App 的 overlay 模式（全屏设置页）。2026-07-31
+                  * 起 openSettingsOverlay() 只翻 store 布尔，零 URL、零刷新，
+                  * 见 stores/surfaceOverlay.ts 头注释。 */}
                 <DropdownMenuItem
                   onSelect={openSettings}
                   className="gap-2.5 rounded-[9px] px-2.5 py-[7px] text-[13px]"
@@ -867,9 +853,11 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
             * 主按钮跟登录页的品牌绿撞色，容易和「确认继续」这类中性操作混在
             * 一起，退出会打断当前工作状态，需要一个视觉停顿。className 直接
             * 照抄 RailSessionList 删除会话的 destructive 渐变按钮，同一套
-            * 「警告态」视觉在全 app 只有一种样子，不新开一套朴素红。 */}
+            * 「警告态」视觉在全 app 只有一种样子，不新开一套朴素红。
+            * 2026-07-31：上面「全 app 共用这一份视觉规格」此前只是注释里的
+            * 声明、代码是四份复制，现已落实为共用 GLASS_DIALOG_SURFACE 常量。 */}
           <AlertDialog open={logoutConfirmOpen} onOpenChange={setLogoutConfirmOpen}>
-            <AlertDialogContent className="rounded-2xl border border-white/15 bg-background/55 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.4),0_8px_24px_-12px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-100 dark:backdrop-brightness-125 sm:max-w-[440px]">
+            <AlertDialogContent className={GLASS_DIALOG_SURFACE}>
               <AlertDialogHeader>
                 <AlertDialogTitle className="text-[19px]">退出登录？</AlertDialogTitle>
                 <AlertDialogDescription className="text-[13px] leading-relaxed">

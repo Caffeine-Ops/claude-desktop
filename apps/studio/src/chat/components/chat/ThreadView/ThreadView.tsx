@@ -23,6 +23,7 @@ import {
   DialogHeader,
   DialogTitle
 } from '@/src/components/ui/dialog'
+import { GLASS_DIALOG_SURFACE } from '@/src/components/ui/glassDialogSurface'
 import { Input } from '@/src/components/ui/input'
 import { Label } from '@/src/components/ui/label'
 
@@ -1230,8 +1231,8 @@ function ChatHeader(): React.JSX.Element {
       ? condensedTitle
       : t('chatHeaderUntitled')
 
-  // 斜杠命令标题拆分：'/claude-desktop:ppt-master 武汉大学介绍' →
-  // chip '/ppt-master'（冒号后短名；完整命令进 hover title）+ 正文标题。
+  // 斜杠命令标题拆分：'/claude-desktop:ppt-creator 武汉大学介绍' →
+  // chip '/ppt-creator'（冒号后短名；完整命令进 hover title）+ 正文标题。
   // 纯命令无参数、或非 '/' 开头的标题不拆——chip 只在「命令 + 参数」
   // 形态下才有语义（参数才是会话主题，命令是它的来源标记）。
   const cmdMatch = /^\/(\S+)\s+(\S[\s\S]*)$/.exec(display)
@@ -1240,7 +1241,7 @@ function ChatHeader(): React.JSX.Element {
     ? '/' + (cmdMatch[1].split(':').pop() ?? cmdMatch[1])
     : null
   const restTitle = cmdMatch ? cmdMatch[2] : display
-  // 已知技能命令（ppt-master/spreadsheets/…）→ 复用消息气泡同一份注册表，
+  // 已知技能命令（ppt-creator/spreadsheets/…）→ 复用消息气泡同一份注册表，
   // 拿彩色图标 + 友好文案（「处理表格」），换掉裸 mono chip 的字面命令名。
   // 命名空间/裸名两种形态都试一遍（注册表本身双注册，见 skillChipRegistry）。
   // 未登记的命令仍走原样 mono chip 兜底，不是每个 / 开头都配得上产品化展示。
@@ -1269,7 +1270,7 @@ function ChatHeader(): React.JSX.Element {
 
   // 预填 = 顶栏此刻显示的那行文字（restTitle），不是 store 里的原始 title
   // （2026-07-17 用户要求「跟顶部文字保持一致」）。原始 title 是首条消息
-  // 原文——带 `/claude-desktop:ppt-master` 命令前缀、整条绝对路径、可能还有
+  // 原文——带 `/claude-desktop:ppt-creator` 命令前缀、整条绝对路径、可能还有
   // [[image-edit]] 协议标记；顶栏早把它剥/压/拆成人话了，弹窗却把没处理的
   // 原文摊开，用户看到的和要编辑的不是同一个东西。
   // 空标题（display 落到「未命名」兜底）预填空串让 placeholder 出场，而不是
@@ -1360,19 +1361,19 @@ function ChatHeader(): React.JSX.Element {
     //
     // 收起态左净空（2026-07-05，2026-07-08 标题左贴边后机制更直白）：rail
     // 收起后 chat 列顶到窗口左缘，左贴边的标题行会依次撞上左上角两样东西
-    // ——① 红绿灯（浮在窗口 x≈30~90）② 收起态图标排（RailShell 的 fixed
-    // 展开/搜索/新建，x≈100~184）。展开态无此问题：rail（244px）整体推开
-    // chat 列，红绿灯落 rail 顶栏、图标排不渲染。故仅收起态给外层补左
-    // padding 把整行推过两者。208px = 图标排右缘（x≈184）− 内容面左缘
-    // （平铺后为 0，2026-07-08 stage gutter 归零，见 globals.css
-    // .shell-stage；浮卡时代左缘 10px、本值 198）= 184 的净空基线，再 +24 让
-    // 标题与图标排（尤其紧挨的「+」新建钮）之间留出呼吸（2026-07-05 用户要求
-    // 「新对话钮跟标题加间距」，用户选 +24）。起点必须跟 tabRegistry 的
-    // trafficLightPosition 与 RailShell 图标排 left-[100px] 联动（红绿灯/图标
-    // 排右移则同增）。canvas 面 tab 栏的同款净空在 base.css（收起态
-    // --app-chrome-traffic-space: 190px，同一 208 基线）——改这里必同步那边，
-    // 否则两面顶栏起点分家（2026-07-13 canvas 面漏配被红绿灯压住的教训）。
-    <div className="flex h-[46px] shrink-0 select-none items-center border-b border-border/55 [body[data-rail-collapsed]_&]:pl-[208px]">
+    // ——① 红绿灯（mac 浮在窗口 x≈30~90，win32/linux 无）② 收起态图标排
+    // （RailShell 的 fixed 展开/搜索/新建）。展开态无此问题：rail（244px）
+    // 整体推开 chat 列，红绿灯落 rail 顶栏、图标排不渲染。故仅收起态给外层
+    // 补左 padding 把整行推过两者。
+    //
+    // 2026-08 收敛：净空值改引 globals.css 的 `--shell-collapsed-top-inset`
+    // token（单一事实源，mac 208px / win32-linux 120px，随
+    // `html[data-platform]` 自动切换），不再是散在四个文件里各自维护、靠
+    // 注释互相「改一处同步另几处」的字面量。token 定义与换算依据（图标排
+    // 右缘 + 8px 呼吸）见 globals.css `.window-drag-strip` 之后的注释块；
+    // canvas 面同款净空在 base.css 的 `--app-chrome-traffic-space`，同样跟随
+    // 这枚 token（calc 派生），骨架屏 ChatLoadingSkeleton.tsx 也引用它。
+    <div className="flex h-[46px] shrink-0 select-none items-center border-b border-border/55 [body[data-rail-collapsed]_&]:pl-[var(--shell-collapsed-top-inset)]">
       {/* 内层容器：标题左贴边（2026-07-08 用户定稿，参考 Claude.ai 顶栏
           「图标 + 标题 + ···」左对齐形态）。此前是 mx-auto max-w-4xl 与
           消息列同参居中——宽窗口时标题漂在中间偏左、与左缘脱节，用户
@@ -1581,14 +1582,17 @@ function ChatHeader(): React.JSX.Element {
           上面这套 brightness-125 提亮只在暗档验证过——亮档 --background
           本身接近纯白，同样提亮会把身后内容乘溢出到 255、反而漂白，改成
           brightness-100（不调整）+ dark:brightness-125，理由见 dropdown-
-          menu.tsx 头注释第四条，全项目 ~15 处同配方一起改。 */}
+          menu.tsx 头注释第四条，全项目 ~15 处同配方一起改。
+          2026-07-31：整套 className 抽进 GLASS_DIALOG_SURFACE 常量（四处同规格
+          弹窗共用一个字符串），同时修掉亮档糊成灰板的问题——成因是黑幕而非
+          brightness，完整推导见该常量的头注释。 */}
       <Dialog
         open={renameOpen}
         onOpenChange={(open) => {
           if (!open) setRenameOpen(false)
         }}
       >
-        <DialogContent className="rounded-2xl border border-white/15 bg-background/55 shadow-[0_24px_70px_-18px_rgba(0,0,0,0.4),0_8px_24px_-12px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.15)] backdrop-blur-xl backdrop-saturate-150 backdrop-brightness-100 dark:backdrop-brightness-125 sm:max-w-[440px]">
+        <DialogContent className={GLASS_DIALOG_SURFACE}>
           <form
             onSubmit={(e) => {
               e.preventDefault()

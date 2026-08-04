@@ -1,6 +1,6 @@
 /**
  * 「预览幻灯片」tab 在源 PPT / template-fill 成品场景下的内容体：用户首条消息带了
- * 一个已有的 .pptx 路径（改/美化一份既有 deck），在 ppt-master 还没产出任何
+ * 一个已有的 .pptx 路径（改/美化一份既有 deck），在 ppt-creator 还没产出任何
  * svg_output/ 页面之前，先把这份源文件本身转成可视预览摆出来——PPT_SOURCE_PREVIEW
  * IPC 离线跑技能自带的 pptx_to_svg.py（不起任何常驻服务，一次性转换，结果按
  * (路径, mtime) 缓存在磁盘），返回每页原始 SVG 文本；这里做 href 改写（相对
@@ -11,7 +11,7 @@
  * 会切走这个组件——两者互斥，从不同时挂载（见该文件的 tab 内容分支）。
  *
  * 双职组件：`variant` 决定文案。'source'（默认）= 用户带来的原稿，改动前的参考图。
- * 'exported' = ppt-master template-fill 工作流 apply 成功后落盘的成品 .pptx
+ * 'exported' = ppt-creator template-fill 工作流 apply 成功后落盘的成品 .pptx
  * （见 stores/chat.ts 的 useExportedPptx）——数据链路完全同一条 PPT_SOURCE_PREVIEW，
  * 只是这次喂给它的是导出文件而不是源文件。
  *

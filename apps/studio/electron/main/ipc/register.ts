@@ -112,6 +112,7 @@ import {
   type AuthLoginResult,
   type AuthSendSmsCodeResult,
   type AuthState,
+  type ScenarioCatalogResult,
   type UsageQueryFilters,
   type UsageListQuery,
   type UsageExportCsvPayload,
@@ -123,7 +124,6 @@ import {
   type UsageListResult
 } from '../../shared/ipc-channels'
 import { getAppSettings, updateAppSettings } from '../core/appSettings'
-import { resolveBundledSkillsPluginDir } from '../core/skillsDir'
 import {
   PROPOSAL_IMAGE_API_KEY_MASK,
   type ProposalExportPayload,
@@ -243,6 +243,20 @@ import {
   sendSmsCode,
   updateAccountProfile
 } from '../services/authService'
+import { getScenarioCatalog } from '../services/scenarioCatalogService'
+import {
+  ensurePptSkill,
+  getPptSkillStatus,
+  resolvePptSkillRoot
+} from '../services/pptSkillInstaller'
+import type { PptSkillStatus } from '../../shared/pptSkillStatus'
+import {
+  ensureRuntimeComponents,
+  ensureRuntimeComponentsInBackground,
+  getRuntimeComponentsState,
+  requiredComponentsReady
+} from '../services/componentInstaller'
+import type { RuntimeComponentsState } from '../../shared/runtimeComponents'
 import { DAEMON_PORT } from '../services/openDesignServices'
 import {
   getUsageFilterOptions,
@@ -395,7 +409,7 @@ function formatLocalTimestamp(d: Date): string {
 }
 
 /**
- * Validate a ppt-master slide filename and resolve it under
+ * Validate a ppt-creator slide filename and resolve it under
  * `<projectDir>/svg_output/`, or return null if invalid. Two layers, mirror
  * of the old svg_editor Flask server's `_safe_svg_path`: the string checks
  * reject obvious bad input up front, and the resolve()+relative() check is
@@ -572,6 +586,11 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.AUTH_LOGOUT)
   ipcMain.removeHandler(IPC_CHANNELS.ACCOUNT_GET_PROFILE)
   ipcMain.removeHandler(IPC_CHANNELS.ACCOUNT_UPDATE_PROFILE)
+  ipcMain.removeHandler(IPC_CHANNELS.SCENARIO_CATALOG_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.PPT_SKILL_GET_STATUS)
+  ipcMain.removeHandler(IPC_CHANNELS.PPT_SKILL_ENSURE)
+  ipcMain.removeHandler(IPC_CHANNELS.RUNTIME_COMPONENTS_GET_STATE)
+  ipcMain.removeHandler(IPC_CHANNELS.RUNTIME_COMPONENTS_ENSURE)
   ipcMain.removeHandler(IPC_CHANNELS.USAGE_FILTER_OPTIONS_GET)
   ipcMain.removeHandler(IPC_CHANNELS.USAGE_STATS_GET)
   ipcMain.removeHandler(IPC_CHANNELS.USAGE_MODELS_GET)
@@ -610,6 +629,18 @@ export function registerIpcHandlers(): void {
       validateSessionId(payload?.sessionId)
       validateText(payload?.text)
       const images = validateImages(payload?.images)
+
+      // 必需运行时组件缺失时的兜底闸门（渲染层那道门是主防线，这里是双保险：
+      // 门在 store 拿到状态前不渲染，而 IPC 可能先一步被调用）。
+      // 触发一次 ensure —— 它会广播、门随即立起来；这里 throw 只是不让用户
+      // 拿到一段看不懂的 spawn 报错。刻意不改 ChatSendResult 的形状（它是
+      // `{messageId}`，加错误通道会波及一片消费方）；ipcMain.handle 的 reject
+      // 本来就会原样传回 renderer。
+      if (!requiredComponentsReady()) {
+        ensureRuntimeComponentsInBackground()
+        throw new Error('AI 引擎尚未准备好，正在下载所需组件，请稍候')
+      }
+
       const engine = resolveEngine(event)
       // proposalMode is a plain boolean flag; coerce defensively so a
       // malformed renderer payload can't smuggle a non-bool through.
@@ -970,7 +1001,7 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  // Read a ppt-master image worklist and surface each item's status + a
+  // Read a ppt-creator image worklist and surface each item's status + a
   // thumbnail for the ones on disk. Serves BOTH acquisition runners — they
   // share the `{ items: [{ filename, status, … }] }` shape:
   //   - image_gen.py --manifest  → image_prompts.json (status: Generated)
@@ -1376,57 +1407,89 @@ export function registerIpcHandlers(): void {
           // simply won't list it either.
         }
       }
-      const skillsRoot = resolveBundledSkillsPluginDir()
+      const pptRoot = resolvePptSkillRoot()
       return {
         ok: true,
         slides,
-        iconsRoot: skillsRoot ? join(skillsRoot, 'ppt-master', 'templates', 'icons') : null
+        iconsRoot: pptRoot ? join(pptRoot, 'templates', 'icons') : null
       }
     }
   )
 
-  // List the ppt-master skill's built-in template library (brands/layouts/
+  // List the ppt-creator skill's built-in template library (brands/layouts/
   // decks) for the composer's template-picker popover. Static skill data —
   // no payload, no project context. Each `*_index.json` is read independently
   // so one kind's missing/corrupt index doesn't blank out the other two.
   ipcMain.handle(
     IPC_CHANNELS.PPT_LIST_BUILTIN_TEMPLATES,
     async (): Promise<PptListBuiltinTemplatesResult> => {
-      const skillsRoot = resolveBundledSkillsPluginDir()
-      if (!skillsRoot) return { ok: false, templates: [], error: 'ppt-master skill not found.' }
-      const templatesRoot = join(skillsRoot, 'ppt-master', 'templates')
+      const pptRoot = resolvePptSkillRoot()
+      if (!pptRoot) return { ok: false, templates: [], error: 'PPT 组件尚未安装。' }
+      const templatesRoot = join(pptRoot, 'templates')
       const KIND_DIRS: [BuiltinTemplateKind, string][] = [
         ['brand', 'brands'],
         ['layout', 'layouts'],
         ['deck', 'decks']
       ]
-      const templates: BuiltinTemplateEntry[] = []
-      for (const [kind, dirName] of KIND_DIRS) {
-        const indexPath = join(templatesRoot, dirName, `${dirName}_index.json`)
-        try {
-          const index = JSON.parse(readFileSync(indexPath, 'utf-8')) as Record<
-            string,
-            { summary: string; primary_color?: string }
-          >
-          for (const [id, meta] of Object.entries(index)) {
-            const dirAbsPath = join(templatesRoot, dirName, id)
-            const coverPath = join(dirAbsPath, '01_cover.svg')
-            templates.push({
-              kind,
-              id,
-              label: id,
-              summary: meta.summary,
-              primaryColor: meta.primary_color,
-              previewAbsPath: existsSync(coverPath) ? coverPath : null,
-              dirAbsPath
-            })
+      // 一个根目录（内置 skill 的 templates/，或 ~/.cowork/ppt-templates/
+      // 下某个已装的模板包）→ 它携带的全部模板条目。远端包**刻意沿用与内置
+      // 完全相同的布局**（<root>/{brands,layouts,decks}/<id>/ + *_index.json），
+      // 于是这一段扫描逻辑对两边通用，不必为远端另写一套解析。
+      const collectFromRoot = (root: string): BuiltinTemplateEntry[] => {
+        const found: BuiltinTemplateEntry[] = []
+        for (const [kind, dirName] of KIND_DIRS) {
+          const indexPath = join(root, dirName, `${dirName}_index.json`)
+          try {
+            const index = JSON.parse(readFileSync(indexPath, 'utf-8')) as Record<
+              string,
+              { summary: string; primary_color?: string }
+            >
+            for (const [id, meta] of Object.entries(index)) {
+              const dirAbsPath = join(root, dirName, id)
+              const coverPath = join(dirAbsPath, '01_cover.svg')
+              found.push({
+                kind,
+                id,
+                label: id,
+                summary: meta.summary,
+                primaryColor: meta.primary_color,
+                previewAbsPath: existsSync(coverPath) ? coverPath : null,
+                dirAbsPath
+              })
+            }
+          } catch {
+            // This kind's index is missing/corrupt — skip it rather than
+            // failing the whole list; the other two kinds still show.
           }
-        } catch {
-          // This kind's index is missing/corrupt — skip it rather than
-          // failing the whole list; the other two kinds still show.
         }
+        return found
       }
-      return { ok: true, templates }
+
+      // 合并顺序＝优先级：先铺内置，再让已安装的远端模板包覆盖同名条目。
+      // key 带 kind——同名的 deck 与 layout 是两个东西（内置库里就有这种
+      // 情况），只按 id 去重会互相吃掉。
+      const byKey = new Map<string, BuiltinTemplateEntry>()
+      for (const entry of collectFromRoot(templatesRoot)) {
+        byKey.set(`${entry.kind}:${entry.id}`, entry)
+      }
+      // 已安装的远端模板包：~/.cowork/ppt-templates/<包 id>/，由技能市场那套
+      // 下载器装进来（kind='template'，见 packages/contracts 的 MarketEntryKind
+      // 注释）。目录不存在＝一个都没装过，不是错误——这条路径必须始终能降级
+      // 回纯内置模板，否则离线用户连模版选择器都打不开。
+      const installedRoot = join(homedir(), '.cowork', 'ppt-templates')
+      try {
+        for (const ent of readdirSync(installedRoot, { withFileTypes: true })) {
+          // 点目录是安装器的中间态（.staging-* / .trash-*），不是模板包。
+          if (!ent.isDirectory() || ent.name.startsWith('.')) continue
+          for (const entry of collectFromRoot(join(installedRoot, ent.name))) {
+            byKey.set(`${entry.kind}:${entry.id}`, entry)
+          }
+        }
+      } catch {
+        // 目录不存在/不可读 → 只剩内置模板，功能不塌。
+      }
+
+      return { ok: true, templates: [...byKey.values()] }
     }
   )
 
@@ -1550,7 +1613,7 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  // Convert a SOURCE .pptx (handed to the session, not a ppt-master project)
+  // Convert a SOURCE .pptx (handed to the session, not a ppt-creator project)
   // — or, since template-fill's exported deck is also just a .pptx on disk,
   // its FINISHED output too (see stores/chat.ts useExportedPptx / renderer's
   // SourceDeckViewer variant="exported") — to per-slide SVG via the skill's
@@ -1576,12 +1639,12 @@ export function registerIpcHandlers(): void {
         const msg = err instanceof Error ? err.message : String(err)
         return { ok: false, error: `Source file not found: ${msg}` }
       }
-      const skillsRoot = resolveBundledSkillsPluginDir()
-      if (!skillsRoot) {
-        return { ok: false, error: 'ppt-master skill not found.' }
+      const pptRoot = resolvePptSkillRoot()
+      if (!pptRoot) {
+        return { ok: false, error: 'PPT 组件尚未安装。' }
       }
-      const scriptPath = join(skillsRoot, 'ppt-master', 'scripts', 'pptx_to_svg.py')
-      // Same venv ensure-python.sh bootstraps (skills/ppt-master/bin/ensure-
+      const scriptPath = join(pptRoot, 'scripts', 'pptx_to_svg.py')
+      // Same venv ensure-python.sh bootstraps (skills/ppt-creator/bin/ensure-
       // python.sh) — resolved directly rather than sourcing that shell
       // script, since this runs from the main process, not a Bash tool call.
       const venvPython =
@@ -1592,7 +1655,7 @@ export function registerIpcHandlers(): void {
         return {
           ok: false,
           error:
-            'ppt-master Python environment is not set up yet — run any ppt-master command in chat first.'
+            'ppt-creator Python environment is not set up yet — run any ppt-creator command in chat first.'
         }
       }
 
@@ -2131,8 +2194,8 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  // 问题反馈提交。main 补 appVersion/platform/osVersion + 签名后转发给
-  // apps/feedback-worker，渲染层和 IPC payload 都不碰 GitHub Token。
+  // 问题反馈提交。main 补 appVersion/platform/osVersion，走 authedPost
+  // 提交给 sub2api 的 /api/v1/feedback（JWT 鉴权，admin 面板可查看）。
   ipcMain.handle(
     IPC_CHANNELS.FEEDBACK_SUBMIT,
     async (
@@ -2342,8 +2405,12 @@ export function registerIpcHandlers(): void {
     return checkForUpdates()
   })
 
+  // 刻意不 await installUpdate：它内部要先广播 'installing' 再停一小会儿
+  // 才 quitAndInstall（见 appUpdater 的 INSTALL_ACK_DELAY_MS），await 会把
+  // renderer 的 invoke 一起吊在那，而调用方只想要「已收到」。让它自己跑完，
+  // 结论照常走 UPDATER_STATE_CHANGED 广播。
   ipcMain.handle(IPC_CHANNELS.UPDATER_INSTALL, async (): Promise<void> => {
-    installUpdate()
+    void installUpdate()
   })
 
   // ── 登录/账号（状态机在 services/authService.ts）──
@@ -2398,6 +2465,47 @@ export function registerIpcHandlers(): void {
         return { ok: false, error: '请求参数有误' }
       }
       return updateAccountProfile(payload)
+    }
+  )
+
+  // 空态场景导航的远端配置。**只读 main 内存里那份磁盘缓存**，绝不在这里
+  // 发网络请求——空态首帧就要拿到它（见 scenarioCatalogService 的注释）。
+  // 网络刷新由 authService 在 login / 冷启动时后台做，经
+  // SCENARIO_CATALOG_CHANGED 广播。
+  ipcMain.handle(
+    IPC_CHANNELS.SCENARIO_CATALOG_GET,
+    async (): Promise<ScenarioCatalogResult> => {
+      return { catalog: getScenarioCatalog() }
+    }
+  )
+
+  // ppt-creator skill 的按需安装（不再随安装包发布，见 pptSkillInstaller）。
+  // GET 只读内存态；ENSURE 触发下载/解压/建 venv，并发调用共享同一次安装。
+  ipcMain.handle(IPC_CHANNELS.PPT_SKILL_GET_STATUS, async (): Promise<PptSkillStatus> => {
+    return getPptSkillStatus()
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.PPT_SKILL_ENSURE,
+    async (_event, force: unknown): Promise<PptSkillStatus> => {
+      return ensurePptSkill({ force: force === true })
+    }
+  )
+
+  // 运行时组件（AI 引擎 / Python 环境）的按需安装，见 componentInstaller。
+  // GET 只读内存态（首次调用会同步照一眼磁盘，保证第一次 resolve 就准确）；
+  // ENSURE 触发下载安装，并发调用共享同一次执行。
+  ipcMain.handle(
+    IPC_CHANNELS.RUNTIME_COMPONENTS_GET_STATE,
+    async (): Promise<RuntimeComponentsState> => {
+      return getRuntimeComponentsState()
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.RUNTIME_COMPONENTS_ENSURE,
+    async (_event, force: unknown): Promise<RuntimeComponentsState> => {
+      return ensureRuntimeComponents({ force: force === true })
     }
   )
 

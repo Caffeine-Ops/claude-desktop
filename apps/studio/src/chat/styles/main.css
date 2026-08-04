@@ -254,45 +254,6 @@ html[data-surface='chat'] .chat-app {
   --rail-accent-ink: #57d98a;
 }
 
-/* macOS traffic-light gutter — the three window controls live top-left,
- * directly over where the first nav item would paint. Reserve vertical
- * space at the TOP of the rail (≈44px) so the first item clears them.
- * data-platform is set in main.tsx before React mounts (first paint
- * already correct). (Was padding-LEFT:82px when the rail was a top
- * strip and the lights sat to the left of the first pill.) */
-html[data-platform='darwin'] .shell-chrome {
-  padding-top: 44px;
-}
-
-/* Fullscreen: traffic lights slide out, reclaim the top gutter. Same
- * data-fullscreen mechanism as .header. */
-html[data-platform='darwin'][data-fullscreen='true'] .shell-chrome {
-  padding-top: 8px;
-}
-
-/* macOS traffic-light gutter. The three window-control circles
- * span ~68px from the left edge (offset ~8px, three 12px dots
- * with 8px gaps), so 82px leaves a ~14px breathing gap before
- * the first tab pill. Windows / Linux keep the default 14px
- * inset since their controls live on the right. `data-platform`
- * is set in main.tsx before React mounts, so the first paint
- * is already correct — no post-mount reflow. */
-html[data-platform='darwin'] .header {
-  padding-left: 82px;
-}
-
-/* In macOS native fullscreen the traffic-light buttons slide out
- * of the window chrome entirely — reserving 82px for them would
- * leave an awkward dead zone on the left. The `data-fullscreen`
- * attribute is maintained by main.tsx's bootFullscreen() block,
- * which subscribes to the shell window's enter/leave-full-screen
- * broadcasts. (Chromium's `display-mode: fullscreen` media query
- * is unreliable for Electron's BrowserWindow.setFullScreen — it
- * only reports display-mode for `element.requestFullscreen`.) */
-html[data-platform='darwin'][data-fullscreen='true'] .header {
-  padding-left: 14px;
-}
-
 .badge {
   font-size: 11px;
   font-weight: 500;

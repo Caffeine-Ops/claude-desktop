@@ -1,8 +1,3 @@
-/* 外部字体必须是整条 import 链里的第一条规则（CSS 规范：@import 前不得有
- * 其它规则）。原本在 canvas/index.css 首行，但那个文件被嵌套 import 进本文件
- * 后展开位置在 chat 链规则之后，Turbopack 直接拒绝解析——所以提升到这里。 */
-@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700&display=swap');
-
 /* studio 全局样式入口。
  *
  * Tailwind entry 不在这里——src/chat/styles/index.css（从 desktop renderer
@@ -119,6 +114,30 @@
   pointer-events: none;
   -webkit-app-region: drag;
   app-region: drag;
+}
+
+/* ── 顶部图标排几何：单一事实源（2026-08 收敛）─────────────────────────
+ * mac 上红绿灯（tabRegistry trafficLightPosition x=30）占住左上角，
+ * RailShell 收起态图标排必须从它右缘（x=100）起步，chat/canvas 收起态
+ * 顶栏、骨架屏顶栏也要各自让出同一段净空，历史上这四个数字（100 / 208 /
+ * 208 / 190）散在 RailShell.tsx / ThreadView.tsx / EntryShell.tsx /
+ * ChatLoadingSkeleton.tsx / canvas/styles/base.css 五个文件里，靠注释互相
+ * 「改一处必须同步另几处」——这两枚变量把「同步纪律」收给 CSS 级联本身：
+ * 改这里，四处消费方（引用 var()）与下面的 win32/linux 覆盖自动跟着变。
+ *
+ * win32/linux 没有红绿灯（tabRegistry 的 hiddenInset 是 mac-only 值，见
+ * createShellWindow 注释），图标排贴边即可；净空按 Δ=88（100→12）整体
+ * 平移，呼吸间距（图标排右缘到内容标题的距离）与 mac 保持恒等 8px，不是
+ * 重新拍的数字。data-platform 属性由 layout.tsx 的 PLATFORM_BOOT_SCRIPT
+ * 在首帧前写好，见该脚本注释。 */
+:root {
+  --shell-top-icons-left: 100px; /* 图标排 x：红绿灯（x=30）右缘 */
+  --shell-collapsed-top-inset: 208px; /* 收起态顶栏左净空：图标排右缘(200)+8 */
+}
+html[data-platform='win32'],
+html[data-platform='linux'] {
+  --shell-top-icons-left: 12px;
+  --shell-collapsed-top-inset: 120px;
 }
 
 /* ── 外壳形态：分界线（2026-07-08 二次定稿，原型
@@ -614,5 +633,41 @@ body[data-rail-collapsed] .shell-content-card {
     animation: none;
     transition: none;
   }
+}
+
+/* ── win32/linux：全局中和 app-region（2026-08，源码级根因见
+ *    PLATFORM_BOOT_SCRIPT 注释）─────────────────────────────────────────
+ * `titleBarStyle:'hiddenInset'` 在 Electron 源码里是 mac-gated，win32/linux
+ * 上窗口落回原生标题栏（有原生的最小化/最大化/关闭钮，拖窗天然由它负责）。
+ * 但 studio 的 WebContentsView 是 detach 状态 loadURL、splash settle 后才
+ * addChildView（tabRegistry.ts），而 framed 窗口的 draggable region 更新在
+ * attach 后被引擎丢弃、但**不清空 attach 前已存的旧值**——于是 `.window-
+ * drag-strip` 首帧上报的全宽 46px drag 矩形会被永久冻结在原生层，此后任何
+ * no-drag 挖洞（RailShell 顶部图标排 portal 到 body 末尾的那套排序纪律，只
+ * 在 macOS 的「持续生效」模型下验证过）都打不进这份冻结快照，顶部 46px 恒
+ * 被当 HTCAPTION 截走鼠标事件——「点不到」的真因，不是挖洞时序或 DPI 换算。
+ *
+ * 修法是釜底抽薪：win32/linux 上让 renderer **从来不上报任何** app-region
+ * 矩形，Blink 侧的 provider 恒返回 HTNOWHERE，事件正常下发给 DOM，button
+ * onClick 照常触发——对冻结快照/挖洞排序/125%|150% DPI 换算这整类问题免疫。
+ * 拖窗损失仅限「内容区顶部 46px」，原生标题栏本身仍可拖、可双击最大化、
+ * 可用 Snap Layouts，不受影响。
+ *
+ * **全局中和而不是点名 `.window-drag-strip` + AppRail 的 h-12 drag 条**：
+ * drag 写手实际有 5 处（strip / AppRail.tsx 展开态顶部条 / LoginScreen /
+ * UpgradeScreen / ComponentGate 三面全屏墙各自的 drag 条），未登录首启时
+ * 登录墙在首帧就已经挂载——它的 drag 同样会被计入上面说的冻结快照。点名
+ * 清单必然漏、且会随将来新写手腐化，全局通配零遗漏。
+ *
+ * 值必须是 `initial`，不能写 `none`——`app-region` 合法值只有 `drag` 和
+ * `no-drag` 两个，`none` 不是可赋关键字、写了会被引擎当无效值静默忽略（同
+ * 上面 `.surface-inactive` 那段 2026-07-14 CDP 实测踩过的坑）。`!important`
+ * 压过页面顶栏各种 Tailwind arbitrary 类与条件 className。`:not(.desktop-
+ * pet-shell)` 给未来可能落地的 frameless 独立宠物窗（那类窗口没有原生
+ * 标题栏，必须自带真实 drag）留一个豁免口子——当前没有任何写入方，纯预留。 */
+html[data-platform='win32'] body:not(.desktop-pet-shell) *,
+html[data-platform='linux'] body:not(.desktop-pet-shell) * {
+  -webkit-app-region: initial !important;
+  app-region: initial !important;
 }
 

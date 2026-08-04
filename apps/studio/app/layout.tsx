@@ -4,6 +4,7 @@ import { AuthGate } from '@/src/components/AuthGate'
 import { RailShell } from '@/src/components/RailShell'
 import { SurfaceHost } from '@/src/components/SurfaceHost'
 import { UpgradeScreen } from '@/src/components/UpgradeScreen'
+import { ComponentGate } from '@/src/components/ComponentGate'
 import { TooltipProvider } from '@/src/components/ui/tooltip'
 import './globals.css'
 // canvas（迁移自 apps/web）的两个样式入口，沿用 web 原版 layout.tsx 的
@@ -20,6 +21,36 @@ export const metadata: Metadata = {
   title: 'Claude Studio',
   description: '统一前端：聊天 + 设计工具'
 }
+
+/**
+ * Pre-hydration 平台探测脚本——**必须是 body 第一个子元素**，比 THEME_BOOT_SCRIPT
+ * 和 `.window-drag-strip`（下面 :130）都早。
+ *
+ * 为什么：Electron 上 win32 的窗口实际是原生标题栏（`titleBarStyle:'hiddenInset'`
+ * 在 Electron 源码里包在 `#if BUILDFLAG(IS_MAC)` 内，Windows 上解析失败落回
+ * `kNormal`——见 tabRegistry.ts createShellWindow 注释）。而 studio 的
+ * WebContentsView 是 detach 状态 loadURL、splash settle 后才 addChildView；
+ * framed 窗口的 draggable region 更新在 attach 后被丢弃但**不清空 attach 前
+ * 已存的旧值**——于是 `.window-drag-strip` 首帧上报的全宽 46px drag 矩形会被
+ * 永久冻结，后续 no-drag 挖洞（RailShell 顶部图标排）再也打不进去，顶部 46px
+ * 恒被原生层当 HTCAPTION 截走鼠标事件（2026-08「Windows 侧栏图标点不动」的
+ * 源码级根因）。globals.css 里 `html[data-platform='win32']` 的中和规则要在
+ * Blink **第一次 layout 之前**生效，才能让这份冻结快照根本没有素材可冻——
+ * 这就是本脚本必须是 body 第一个子元素、且早于 strip 挂载的唯一原因。
+ *
+ * 优先读 `window.electron.process.platform`（preload 保证在页面任何脚本执行
+ * 前跑完，@electron-toolkit/preload 暴露，见 preload/index.ts）；UA 只兜底
+ * 浏览器直开的 dev 场景（没有 preload）。纯 DOM 属性、不进任何 React 状态——
+ * 守住「useState 初始化器分支 window 致 hydration-mismatch」的教训；html 已有
+ * suppressHydrationWarning，与下面的主题脚本同一豁免。
+ */
+const PLATFORM_BOOT_SCRIPT = `(function(){try{
+var e=window.electron;
+var p=(e&&e.process&&e.process.platform)||
+(navigator.userAgent.indexOf('Win')>=0?'win32':
+navigator.userAgent.indexOf('Mac')>=0?'darwin':'linux');
+document.documentElement.setAttribute('data-platform',p);
+}catch(err){}})();`
 
 /**
  * Pre-hydration 主题脚本（2026-07-08 修「刷新先蓝后主题色」闪变）——
@@ -104,10 +135,14 @@ export default function RootLayout({ children }: { children: ReactNode }) {
        * 右侧内容面平铺其上、靠左缘 hairline 分隔（2026-07-08 平铺化，
        * 见 globals.css .shell-content-card 注释）。 */}
       <body className="flex h-screen overflow-hidden bg-sidebar">
-        {/* 主题 boot 脚本：必须是 body 第一个子元素——HTML 流式解析到这里
-         * 同步执行，此时 rail/内容面还没绘制，首帧即用户主题色（脚本体
-         * 与原理见 THEME_BOOT_SCRIPT 注释）。html 已有
-         * suppressHydrationWarning，脚本改 documentElement 不打架。 */}
+        {/* 平台探测 boot 脚本：body 真正的第一个子元素，早于主题脚本——
+         * 原理见 PLATFORM_BOOT_SCRIPT 注释（win32 app-region 冻结快照问题
+         * 要求它比 .window-drag-strip 更早生效）。 */}
+        <script dangerouslySetInnerHTML={{ __html: PLATFORM_BOOT_SCRIPT }} />
+        {/* 主题 boot 脚本：HTML 流式解析到这里同步执行，此时 rail/内容面
+         * 还没绘制，首帧即用户主题色（脚本体与原理见 THEME_BOOT_SCRIPT
+         * 注释）。html 已有 suppressHydrationWarning，脚本改
+         * documentElement 不打架。 */}
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
         {/* 背景图（壁纸）boot 脚本：独立缓存/独立 IIFE（理由见
          * BG_ART_BOOT_SCRIPT 注释），但同样必须先于 rail/内容面渲染同步执行，
@@ -152,6 +187,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
            * 开关在 src/stores/upgrade.ts。挂在 AuthGate 之前——登出时
            * 登录墙（z-9999 + DOM 更靠后）必须盖得住它。 */}
           <UpgradeScreen />
+          {/* 运行时组件门（z-9990）：AI 引擎不随安装包发布，缺失时全屏挡住并
+           * 下载。挂在 UpgradeScreen 之后（买不了一个还用不了的东西）、AuthGate
+           * 之前——未登录该先看到登录页，且组件源地址的远端下发要登录后才拉得到。 */}
+          <ComponentGate />
           {/* 登录墙：body 最后一个子元素——未登录时全屏盖住 rail + 舞台
            * （两棵树照常挂载，墙只是视觉+交互门禁，见 AuthGate 头注释）。 */}
           <AuthGate />

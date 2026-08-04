@@ -1,12 +1,17 @@
 import { useRef, useState } from 'react'
 import { AnimatePresence, motion, type Variants } from 'motion/react'
 import { useAuiState } from '@assistant-ui/react'
+import type { ScenarioCatalogCategory } from '@desktop-shared/ipc-channels'
 
-import { useT, useTFormat } from '../../../i18n'
+import { useT, useTFormat, type StringKey } from '../../../i18n'
 import {
   findSkillChipSpec,
   findSkillChipSpecInText
 } from '../../../composer/skillChipRegistry'
+import {
+  scenarioPromptsFor,
+  useScenarioCatalogStore
+} from '../../../stores/scenarioCatalog'
 import { SkillChipIcon } from '../SkillChipIcon'
 
 /**
@@ -25,12 +30,20 @@ import { SkillChipIcon } from '../SkillChipIcon'
  *     chip（× 或 Backspace）或清空正文，行同样随 text 派生自动翻转。
  *
  * 技能的 label / 彩色图标一律从 skillChipRegistry 取（那是「哪些技能是
- * 产品表面」的唯一事实源）；这里只维护【分类归属】和【推荐 prompt 文案】。
- * 插入 value 用 bundled fusion-code 的 plugin 命名空间形态（registry 首选
- * 注册项）——与 SkillPickerPopover 动态源回传的命令名一致。
+ * 产品表面」的唯一事实源）。插入 value 用 bundled fusion-code 的 plugin
+ * 命名空间形态（registry 首选注册项）——与 SkillPickerPopover 动态源回传
+ * 的命令名一致。
  *
- * 推荐 prompt 是中文内容配置（同 EmptyState 的 promo banner），不进 i18n
- * 翻译表；分类 tab 标签是 chrome 文案，走 t()。
+ * **分类归属与推荐 prompt 已不在本文件（2026-07-29）**：它们来自
+ * `stores/scenarioCatalog`——后台（sub2api 管理端）下发的一份 JSON，拉不到
+ * 时回落 `lib/scenarioCatalogDefaults.ts` 的内置默认表（内容就是原先写在
+ * 这里的那两张常量表，原样搬过去的）。本组件退化成纯渲染：拿到什么画什么。
+ *
+ * 分类 tab 标签：远端给了 `label` 用远端的，没给则按 id 回落 i18n
+ * （`scenarioCat*`，只覆盖内置三个分类）——后台自定义的新分类必须自带
+ * label，否则退化成显示 id 本身（刻意不静默隐藏：一个配了却看不见的分类
+ * 比一个显示成 `xxx` 的分类更难查）。推荐 prompt 是中文内容配置（同
+ * EmptyState 的 promo banner），不进 i18n 翻译表。
  *
  * 视觉体系（2026-07-16 方案 B「同族渐进 + 技能锚点」，六方案对比稿见
  * docs/ui-prototype-scenario-rail-styles.html）：一个家族两档权重表层级——
@@ -43,289 +56,16 @@ import { SkillChipIcon } from '../SkillChipIcon'
  * 锚，是本次重做的两个动因。
  */
 
-/* ───────────────────────── 数据 ───────────────────────── */
-
-interface ScenarioPrompt {
-  /** chip 上的短标签。 */
-  label: string
-  /** 点击后填入 composer 正文的完整 prompt 模板（单行）。 */
-  text: string
-}
-
-/** 首层 chip：真实技能（插 slash chip）或直达示例 prompt（直接填正文）。 */
-type ScenarioItem =
-  | { kind: 'skill'; value: string }
-  | { kind: 'prompt'; label: string; text: string }
-
-type CategoryId = 'daily' | 'code' | 'design'
-
-interface ScenarioCategory {
-  id: CategoryId
-  labelKey: 'scenarioCatDaily' | 'scenarioCatCode' | 'scenarioCatDesign'
-  icon: React.ReactNode
-  items: readonly ScenarioItem[]
-}
-
-/**
- * 技能 → 推荐 prompt。key 是【裸名】（去掉 `/` 与 plugin 命名空间），这样
- * 无论 chip 是命名空间形态还是裸名形态插入的都能命中同一份配置。
+/* ───────────────────────── 数据 ─────────────────────────
+ * 2026-07-29 起分类归属与推荐 prompt 已不在本文件，见文件头注释——来自
+ * stores/scenarioCatalog，拉不到时回落 lib/scenarioCatalogDefaults.ts。
+ *
+ * main 上并行的 writing 推荐区改造（合并「改写/体检优化」为「优化 / 改写」+
+ * 新增「职场文档」「去 AI 味」+「文章」改名「干货 / 观点长文」）与本次远端化
+ * 重构在这个文件里冲突——两边都改了同一批硬编码常量，一边删掉整块搬去
+ * scenarioCatalogDefaults.ts，一边在原地新增条目。已把 main 的新增内容原样
+ * 移植进 scenarioCatalogDefaults.ts 的 WRITING_PROMPTS，这里维持删除。
  */
-const PROMPTS_BY_SKILL: Record<string, readonly ScenarioPrompt[]> = {
-  'proposal-writer': [
-    {
-      label: '项目投标方案',
-      text: '给【客户名称】写一份项目投标方案，包含需求理解、技术方案、实施计划、报价构成四部分。'
-    },
-    {
-      label: '产品需求文档',
-      text: '把【功能想法】整理成一份 PRD，包含背景、目标用户、功能清单、验收标准。'
-    },
-    {
-      label: '活动策划案',
-      text: '帮我写一份【活动主题】的策划方案，覆盖目标、流程安排、物料清单和预算。'
-    }
-  ],
-  'ppt-master': [
-    {
-      label: 'AI 发展历程 PPT',
-      text: '请生成一个 AI 人工智能发展历程的 PPT，从图灵测试讲到大语言模型，每页一个里程碑，配时间轴。'
-    },
-    {
-      // 修改现有文件：【PPT 文件】是 filePlaceholderPlugin 的文件槽（点击
-      // 选文件换成 mention chip）；直接拖 pptx 进输入框同样以 @"path" chip
-      // 混排进正文。文案刻意不带「拖入/点击」动作词（用户拍板 2026-07-16）
-      // ——槽自己的虚线 pill 形态已表达「这里放文件」。
-      label: '修改PPT文件',
-      text: '帮我修改【PPT 文件】：【说明要改什么，例如换主题色、更新第 3 页数据、统一字体】，其余保持原样。'
-    },
-    {
-      label: '季度业务汇报',
-      text: '帮我生成一套季度业务汇报 PPT，包含业绩回顾、关键项目、问题与风险、下季度规划四个章节。'
-    },
-    {
-      label: '产品介绍页',
-      text: '为【产品名称】做一份 10 页以内的产品介绍 PPT，突出核心卖点和客户案例。'
-    },
-    {
-      label: '选用现成模版',
-      text: '帮我用【选择模版】做【PPT主题】的PPT。'
-    },
-    {
-      label: '用我的PPT模版',
-      text: '帮我用【PPT 模版文件】的版式做一份新PPT，内容是【说明主题和要点】，设计风格保持不变。'
-    }
-  ],
-  spreadsheets: [
-    {
-      // 「【…文件】」结尾 = filePlaceholderPlugin 的文件槽（点击选文件）。
-      label: 'Excel 数据清洗',
-      text: '帮我清洗【Excel 文件】：去重、补全缺失值、统一日期与金额格式，输出干净的新表并说明改动。'
-    },
-    {
-      label: '销售数据透视',
-      text: '基于【Excel 文件】生成透视汇总：按月份和区域统计销售额，标出环比变化最大的三项。'
-    },
-    {
-      label: '发票台账整理',
-      text: '把【发票信息】批量整理成 Excel 台账，包含日期、金额、税率、销售方，最后输出汇总合计。'
-    },
-    {
-      label: '可视化表格',
-      text: '把【Excel 文件】里的数据做成图表：自动挑选合适的图表类型（柱状/折线/饼图），配好标题、图例和数据标签。'
-    },
-    {
-      label: '智能分析',
-      text: '帮我分析【Excel 文件】：找出关键趋势、异常波动和相关性，用一页摘要给出结论和建议。'
-    },
-    {
-      label: '表格生成PPT',
-      text: '把【Excel 文件】里的数据整理成一套汇报 PPT：关键指标做成图表页，最后一页给出结论与建议。'
-    },
-    {
-      label: '表格美化',
-      text: '帮我美化【Excel 文件】的排版：统一字体、配色、边框和列宽，重点数据用条件格式高亮，不改动数据本身。'
-    },
-    {
-      label: '会计统计',
-      text: '基于【记账明细文件】做会计统计：按科目汇总收支，生成月度损益表和往来账龄分析。'
-    },
-    {
-      label: '财务预算表',
-      text: '帮我做一份【部门/项目】年度预算表：按科目列支出计划，自动汇总总额与分月分布。'
-    },
-    {
-      label: '库存统计',
-      text: '基于【库存明细文件】统计出入库：按商品汇总期初、入库、出库、期末结存，标出库存预警项。'
-    },
-    {
-      label: '考勤统计',
-      text: '基于【考勤记录文件】统计出勤：按人员汇总出勤、迟到、请假天数，生成月度考勤汇总表。'
-    },
-    {
-      label: '进度跟踪表',
-      text: '帮我做一份【项目名称】进度跟踪表：任务、负责人、起止时间、完成率，用条件格式标出延期项。'
-    },
-    {
-      label: '数据对比分析',
-      text: '基于【Excel 文件】做多期对比：把本期和上期数据放在一起，算出差值和增长率，标出变动最大的项。'
-    },
-    {
-      label: '排班表',
-      text: '帮我做一份【团队/门店】排班表：覆盖一整月，自动避开同一人连续排班冲突，统计每人总班次。'
-    }
-  ],
-  imagegen: [
-    {
-      // 【图片文件】是 filePlaceholderPlugin 的文件槽（「图片」关键词 →
-      // 选择器限定 image/*）；选完/拖入后点 chip 还能开右栏图片编辑面板。
-      label: '编辑修改图片',
-      text: '帮我修改【图片文件】：【说明要改什么，例如去掉背景、调整色调、加一行文字】，其余保持原样。'
-    },
-    {
-      // 融合＝多图合一，所以放两个文件槽（都含「图片」关键词 → 都限定
-      // image/*，见 filePlaceholderPlugin 的 ACCEPT_BY_KEYWORD）；用户也可
-      // 以直接拖多张图进输入框，两条路都汇进同一次生成。
-      label: '融合图片',
-      text: '把【图片文件】和【另一张图片文件】融合成一张：【说明想要的效果，例如把人物放进这个背景、两张图的元素合成一幅、统一整体光影风格】，输出一张自然协调的合成图。'
-    },
-    {
-      label: '活动海报',
-      text: '为【活动主题】生成一张竖版活动海报，主视觉醒目，留出时间地点文字区域。'
-    },
-    {
-      label: '公众号头图',
-      text: '生成一张公众号头图，主题是【文章主题】，简洁大气，宽幅横版构图。'
-    },
-    {
-      label: '产品示意图',
-      text: '为【产品/功能】生成一张干净的概念示意图，白底，适合放进 PPT。'
-    }
-  ],
-  remotion: [
-    {
-      label: '产品宣传短片',
-      text: '根据【产品介绍】生成一支 30 秒左右的产品宣传短视频，节奏明快，结尾带行动号召。'
-    },
-    {
-      label: '数据动画',
-      text: '把【这组数据】做成一段动态图表短视频，逐项展示增长趋势。'
-    }
-  ],
-  writing: [
-    {
-      label: '公众号文案',
-      text: '帮我写一篇公众号文案，主题是【主题】，目标读者是【读者画像】，希望读者读完【去做什么】。'
-    },
-    {
-      label: '短篇小说',
-      text: '帮我写一篇短篇小说，题材是【悬疑/言情/科幻/脑洞/治愈/搞笑】，核心设定是【一句话设定】，我希望读者读完的感觉是【意难平/反转震撼/爽感/治愈/细思极恐】。'
-    },
-    {
-      label: '干货 / 观点长文',
-      text: '帮我写一篇文章，主题是【主题】，我的核心观点是【一句话观点】，发在【平台】给【读者】看。'
-    },
-    {
-      // 职场实用写作走 workflows/workplace-writing.md：轻量快道，从零写周报 /
-      // 邮件 / 道歉 / 发言稿等。与三体裁创作同为「从零写」，故紧邻创作类之后、
-      // 处理已有文字类（优化改写 / 去 AI 味 / 学文风）之前。细分文体不露按钮，
-      // 由工作流追问。
-      label: '职场文档',
-      text: '帮我写一份职场文档，类型是【周报/述职/邮件/道歉信/通知/发言稿】，写给【谁·什么关系】，要达成【一句话目的】，关键信息是【必须写进去的事实】。'
-    },
-    {
-      // 「优化 / 改写」是「处理我已有的文字」簇的合并主入口（2026-07-29 用户
-      // 要求：改写 + 体检优化本质同类，合成一个，点进去再分方向）。【文稿文件】
-      // 是 filePlaceholderPlugin 的文件槽（「文稿」关键词 → picker 限定
-      // txt/md/markdown/docx/pdf，见 acceptForPlaceholder 的文稿组合映射）。
-      // prompt 收进原两条的行为：没给方向 → 走 optimize-existing.md 先五维体检、
-      // 分档、确认修改强度（末句「确认前不改正文」是其 ⛔ BLOCKING 硬门在 UI 侧
-      // 的对齐）；给了方向 → 走 rewrite.md 直接按方向改。底层两个工作流不动，
-      // 仅合并 UI 入口。
-      label: '优化 / 改写',
-      text: '帮我优化或改写【文稿文件】。如果我没说方向，先检查内容、结构、表达、文风和 AI 痕迹，告诉我主要问题，并推荐轻度润色、标准优化或深度改写，在我确认修改强度前不要改正文；如果我明确说了方向（比如更口语、压到 800 字、换成小红书风格），就直接按方向改写。'
-    },
-    {
-      // 去AI化走 workflows/de-ai.md：轻量快道，只擦 AI 痕迹、保留原意与结构
-      // （不提质、不改结构，那是「优化 / 改写」的活）。贴文字即走，属处理已有
-      // 文字类，紧邻其后。
-      label: '去 AI 味',
-      text: '帮我把下面这段文字去AI化，只擦掉 AI 痕迹、保留原意和结构：\n\n【粘贴原文】'
-    },
-    {
-      label: '学我的文风',
-      text: '读一下【我的往期文章文件或目录】，分析我的写作风格，生成一份文风档案，以后写东西都按这个风格来。'
-    }
-  ],
-  // ── 代码开发场景（伪命令，见 lib/scenarioSlash.ts）────────────────
-  'daily-dev': [
-    {
-      label: '新增功能开发',
-      text: '在【项目/模块】里新增【功能描述】：先说明改动方案，确认后实现并跑通类型检查。'
-    },
-    {
-      label: '代码重构优化',
-      text: '重构【目标文件/模块】：按职责拆分、消除重复，保持对外接口不变，改完列出改动清单。'
-    },
-    {
-      label: '修复Bug',
-      text: '这个 bug 的表现是：【现象描述】。帮我定位根因并修复，附上验证方式。'
-    },
-    {
-      label: '性能优化',
-      text: '分析【页面/接口】的性能瓶颈，量化每个热点的开销，按收益排序逐个优化。'
-    },
-    {
-      label: '补充单元测试',
-      text: '为【模块/函数】补充单元测试，覆盖正常路径、边界条件和报错分支。'
-    },
-    {
-      label: '排查报错修复',
-      text: '这是报错信息：【粘贴报错】。帮我定位到源码位置，解释原因并修复。'
-    }
-  ],
-  'web-dev': [
-    {
-      label: '企业官网开发',
-      text: '帮我搭一个企业官网：首页 + 产品介绍 + 关于我们 + 联系方式，响应式布局，先出首页。'
-    },
-    {
-      label: '后台管理系统',
-      text: '初始化一个后台管理系统：登录、侧边导航、数据表格增删改查，用【技术栈】。'
-    },
-    {
-      label: '个人博客网站',
-      text: '帮我做一个个人博客网站：文章列表、详情页、标签分类，支持 Markdown 写作。'
-    },
-    {
-      label: '电商首页开发',
-      text: '开发一个电商首页：轮播 banner、商品分类栅格、推荐位，移动端优先。'
-    }
-  ],
-  'agent-app': [
-    {
-      label: 'Agent应用开发',
-      text: '帮我开发一个 Agent 应用来解决【要处理的任务】，包含工具调用和多轮对话能力。'
-    },
-    {
-      label: '聊天应用初始化',
-      text: '初始化一个 AI 聊天应用：流式回复、会话历史、Markdown 渲染，用【技术栈】。'
-    },
-    {
-      label: '客户端Agent应用',
-      text: '做一个桌面端 Agent 应用骨架：本地运行、系统托盘、可调用本地文件与命令。'
-    },
-    {
-      label: '智能客服Agent',
-      text: '搭建一个智能客服 Agent：接入【知识库/FAQ】，支持转人工和多轮追问。'
-    }
-  ]
-}
-
-/** value（可能带命名空间）→ PROMPTS_BY_SKILL 的裸名 key。 */
-function bareSkillName(value: string): string {
-  return value.replace(/^\//, '').replace(/^[\w-]+:/, '')
-}
-
 const STROKE_ICON_PROPS = {
   width: 15,
   height: 15,
@@ -338,61 +78,72 @@ const STROKE_ICON_PROPS = {
   'aria-hidden': true
 } as const
 
-const CATEGORIES: readonly ScenarioCategory[] = [
-  {
-    id: 'daily',
-    labelKey: 'scenarioCatDaily',
-    // 咖啡杯
-    icon: (
-      <svg {...STROKE_ICON_PROPS}>
-        <path d="M4 6h9v5.5A3.5 3.5 0 0 1 9.5 15h-2A3.5 3.5 0 0 1 4 11.5V6Z" />
-        <path d="M13 7.5h1.2a1.8 1.8 0 0 1 0 3.6H13M6.5 3.5v1M9 3v1.5M11.5 3.5v1" />
-      </svg>
-    ),
-    items: [
-      { kind: 'skill', value: '/claude-desktop:ppt-master' },
-      { kind: 'skill', value: '/claude-desktop:spreadsheets' },
-      { kind: 'skill', value: '/claude-desktop:proposal-writer' }
-    ]
-  },
-  {
-    id: 'code',
-    labelKey: 'scenarioCatCode',
-    // </> 尖括号
-    icon: (
-      <svg {...STROKE_ICON_PROPS}>
-        <path d="m6 5.5-3.5 3.5L6 12.5M12 5.5l3.5 3.5L12 12.5" />
-      </svg>
-    ),
-    // 代码开发的首层是三个【场景伪命令】（日常开发/网站开发/Agent 应用，
-    // 见 lib/scenarioSlash.ts）：点击同技能 chip 一样插黑标签、进二级推荐
-    // prompt；发送时 onNew 剥掉伪命令只发正文。
-    items: [
-      { kind: 'skill', value: '/daily-dev' },
-      { kind: 'skill', value: '/web-dev' },
-      { kind: 'skill', value: '/agent-app' }
-    ]
-  },
-  {
-    id: 'design',
-    labelKey: 'scenarioCatDesign',
-    // 调色板
-    icon: (
-      <svg {...STROKE_ICON_PROPS}>
-        <path d="M9 2.5a6.5 6.5 0 1 0 0 13c1 0 1.4-.6 1.4-1.3 0-1.1-1-1.5-.4-2.5.5-.9 3-.2 4.3-1.5.9-.9.2-7.7-5.3-7.7Z" />
-        <circle cx="5.8" cy="7" r=".9" />
-        <circle cx="9" cy="5.3" r=".9" />
-        <circle cx="12.2" cy="7" r=".9" />
-      </svg>
-    ),
-    items: [
-      { kind: 'skill', value: '/claude-desktop:writing' },
-      { kind: 'skill', value: '/claude-desktop:imagegen' },
-      { kind: 'skill', value: '/claude-desktop:remotion' },
-      { kind: 'skill', value: '/claude-desktop:ppt-master' }
-    ]
-  }
-]
+/**
+ * 分类 tab 图标：目录里只下发**图标名**（`'coffee'`），不下发 SVG。远端配置
+ * 决定一段 markup 等于把 XSS 面交给后台，且这三个图标本就属于产品 chrome、
+ * 不该随内容配置漂移。未知名字回落到通用点阵——后台配了个没有的图标名时
+ * tab 仍然画得出来。
+ */
+const CATEGORY_ICONS: Record<string, React.ReactNode> = {
+  // 咖啡杯
+  coffee: (
+    <svg {...STROKE_ICON_PROPS}>
+      <path d="M4 6h9v5.5A3.5 3.5 0 0 1 9.5 15h-2A3.5 3.5 0 0 1 4 11.5V6Z" />
+      <path d="M13 7.5h1.2a1.8 1.8 0 0 1 0 3.6H13M6.5 3.5v1M9 3v1.5M11.5 3.5v1" />
+    </svg>
+  ),
+  // </> 尖括号
+  code: (
+    <svg {...STROKE_ICON_PROPS}>
+      <path d="m6 5.5-3.5 3.5L6 12.5M12 5.5l3.5 3.5L12 12.5" />
+    </svg>
+  ),
+  // 调色板
+  palette: (
+    <svg {...STROKE_ICON_PROPS}>
+      <path d="M9 2.5a6.5 6.5 0 1 0 0 13c1 0 1.4-.6 1.4-1.3 0-1.1-1-1.5-.4-2.5.5-.9 3-.2 4.3-1.5.9-.9.2-7.7-5.3-7.7Z" />
+      <circle cx="5.8" cy="7" r=".9" />
+      <circle cx="9" cy="5.3" r=".9" />
+      <circle cx="12.2" cy="7" r=".9" />
+    </svg>
+  )
+}
+
+/** 未知/缺省图标名的兜底：三个点，中性、不暗示任何语义。 */
+const FALLBACK_CATEGORY_ICON = (
+  <svg {...STROKE_ICON_PROPS}>
+    <circle cx="4.5" cy="9" r="1.1" />
+    <circle cx="9" cy="9" r="1.1" />
+    <circle cx="13.5" cy="9" r="1.1" />
+  </svg>
+)
+
+/**
+ * 内置三个分类的 i18n key。远端自定义分类不在此表内，必须自带 `label`。
+ * 注意这里只认 id，不认远端 label——远端给了 label 就直接用它（见
+ * categoryLabel），i18n 只是内置分类的默认文案来源。
+ */
+const BUILTIN_CATEGORY_LABEL_KEYS: Record<string, StringKey> = {
+  daily: 'scenarioCatDaily',
+  code: 'scenarioCatCode',
+  design: 'scenarioCatDesign'
+}
+
+/**
+ * tab 文案的三级回落：远端 label → 内置分类的 i18n → id 原文。
+ * 最后那级是刻意的（而不是隐藏该 tab）：后台配了个没写 label 的自定义
+ * 分类时，屏幕上出现一个写着 id 的 tab，一眼就知道漏了什么；静默隐藏则
+ * 会变成「我明明配了怎么没有」的无头案子。
+ */
+function categoryLabel(
+  cat: ScenarioCatalogCategory,
+  t: (key: StringKey) => string
+): string {
+  if (cat.label) return cat.label
+  const key = BUILTIN_CATEGORY_LABEL_KEYS[cat.id]
+  return key ? t(key) : cat.id
+}
+
 
 /* ───────────────────────── 组件 ───────────────────────── */
 
@@ -522,19 +273,23 @@ export function ScenarioRail({
 }: ScenarioRailProps): React.JSX.Element {
   const t = useT()
   const tFormat = useTFormat()
-  const [catId, setCatId] = useState<CategoryId>('daily')
+  const catalog = useScenarioCatalogStore((s) => s.catalog)
+  const categories = catalog.categories
+  // 选中分类存 id 而不是下标：远端刷新可能增删/重排分类，下标会指到别的
+  // 分类上去。id 找不到时（该分类被后台删了）回落第一个，见下面的 category。
+  const [catId, setCatId] = useState<string>(() => categories[0]?.id ?? 'daily')
   // 展开态存的是「哪个技能被展开过」而不是一个裸 boolean：与 activeSpec.match
   // 比较自动实现按技能重置——切到另一个技能推荐行默认回到折叠态，不用额外
   // 布线；同一技能内退出再进入则记得上次的展开选择（同会话内的临时偏好）。
   const [expandedPromptSkill, setExpandedPromptSkill] = useState<string | null>(null)
 
   // 每个分类 tab 一份独立草稿（PM doc 快照）：切走时 stash 当前输入、切到的
-  // tab 有存货就原样恢复、没有就清空——三个 tab 各自是一张独立的「工作台」。
+  // tab 有存货就原样恢复、没有就清空——每个 tab 各自是一张独立的「工作台」。
   // chip 行的双态不用额外处理：restoreDraft 走正常事务派发 → composer.text
   // writeback → 本组件订阅的 text 变化自动翻态。ref 不进渲染；EmptyState 卸载
   // （发送/切会话）后草稿随之丢弃，这是会话内的临时台面，不做持久化。
-  const draftsRef = useRef<Partial<Record<CategoryId, unknown>>>({})
-  const switchCategory = (next: CategoryId): void => {
+  const draftsRef = useRef<Record<string, unknown>>({})
+  const switchCategory = (next: string): void => {
     if (next === catId) return
     draftsRef.current[catId] = snapshotDraft()
     setCatId(next)
@@ -550,7 +305,7 @@ export function ScenarioRail({
     (s) => ((s as { composer?: { text?: string } }).composer?.text as string | undefined) ?? ''
   )
   const activeSpec = findSkillChipSpecInText(composerText)
-  const activePrompts = activeSpec ? PROMPTS_BY_SKILL[bareSkillName(activeSpec.match)] : undefined
+  const activePrompts = activeSpec ? scenarioPromptsFor(catalog, activeSpec.match) : undefined
   const bodyAfterChip = activeSpec ? composerText.slice(activeSpec.match.length).trim() : ''
 
   // 折叠态派生：数量不超阈值时 visiblePrompts === activePrompts（toggle 不
@@ -562,7 +317,8 @@ export function ScenarioRail({
       ? activePrompts.slice(0, COLLAPSED_PROMPT_COUNT)
       : activePrompts
 
-  const category = CATEGORIES.find((c) => c.id === catId) ?? CATEGORIES[0]!
+  // 远端刷新可能删掉当前选中的分类——回落第一个而不是渲染空行。
+  const category = categories.find((c) => c.id === catId) ?? categories[0]
   // 命中了技能但没配推荐 prompt（用户手敲了别的命令）→ 同样维持技能行。
   const showPrompts =
     activeSpec != null &&
@@ -576,8 +332,8 @@ export function ScenarioRail({
           tab 间滑动（bg-foreground 暗色下自动反转为白底黑字——原型 Tweaks
           里验证过的 ink 选中态）。 */}
       <div className="inline-flex gap-1 rounded-[14px] bg-foreground/[0.045] p-1">
-        {CATEGORIES.map((cat) => {
-          const active = cat.id === catId
+        {categories.map((cat) => {
+          const active = cat.id === (category?.id ?? catId)
           return (
             <motion.button
               key={cat.id}
@@ -599,8 +355,8 @@ export function ScenarioRail({
                 />
               )}
               <span className="relative z-10 flex items-center gap-1.5">
-                {cat.icon}
-                {t(cat.labelKey)}
+                {(cat.icon ? CATEGORY_ICONS[cat.icon] : undefined) ?? FALLBACK_CATEGORY_ICON}
+                {categoryLabel(cat, t)}
               </span>
             </motion.button>
           )
@@ -697,7 +453,7 @@ export function ScenarioRail({
               )}
             </>
           ) : (
-            category.items.map((item) => {
+            (category?.items ?? []).map((item) => {
               if (item.kind === 'skill') {
                 const spec = findSkillChipSpec(item.value)
                 if (!spec) return null // registry 里被移除的技能静默跳过

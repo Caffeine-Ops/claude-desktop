@@ -7,7 +7,7 @@
  * in the renderer, using the REAL SVG DOM instead of Python's
  * xml.etree.ElementTree. `assignTempIds` is the one function that must stay
  * byte-for-byte equivalent to its Python twin
- * (skills/ppt-master/scripts/svg_editor/annotations.py) — that file's own
+ * (skills/ppt-creator/scripts/svg_editor/annotations.py) — that file's own
  * docstring says as much, and the two are meant to be diffed against each
  * other's output (`python3 -c '...'` one-liner vs this function) whenever
  * either changes.

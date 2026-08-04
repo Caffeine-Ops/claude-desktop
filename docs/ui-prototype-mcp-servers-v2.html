@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MCP 服务器 · 内容区重设计原型 v2</title>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     v2 与 v1 的根本区别：不再手写 CSS 复刻 shadcn，而是直接跑 Tailwind v4
+     + 项目真实 token，每个组件的 class 串**逐字抄自** src/components/ui/*.tsx。
+     v1 是凭 token 猜尺寸写的，处处对不上真实基件：
+
+       Button   30px 高 / 12.5px 字   →  实际 h-8(32px) / text-sm(14px) / px-3.5 / gap-2 / svg size-4
+       Input    30px 高 / bg-background →  实际 h-9(36px) / bg-transparent / text-sm / rounded-md(6px)
+       Switch   34×20 / bg-brand 绿   →  实际 w-8 h-[1.15rem] / bg-primary（跟用户主题色跑）
+       Badge    5px 方角 chip         →  实际 rounded-full 胶囊 / px-2 py-0.5 / text-xs
+       focus    outline 2px           →  实际 border-ring + ring-[3px] ring-ring/50
+
+     现在原型里的 class 串可以直接粘进 tsx。
+     ════════════════════════════════════════════════════════════════════ -->
+<script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+
+<style>
+/* ── 设计 token：1:1 抄自 packages/design-tokens/tokens.css ────────────
+   原型不新造任何色相。唯一的例外是 --warning（见页底说明）。 */
+:root {
+  color-scheme: light;
+  --background: 240 7% 97%;
+  --foreground: 240 3% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 3% 12%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 3% 12%;
+  --primary: 211 100% 45%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 6% 94%;
+  --secondary-foreground: 240 3% 18%;
+  --muted: 0 0% 95.3%;
+  --muted-foreground: 240 4% 40%;
+  --hover: 240 6% 90%;
+  --accent: 211 100% 45%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 72% 50%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 240 6% 84%;
+  --input: 240 6% 86%;
+  --ring: 211 100% 45%;
+  --sidebar: 240 7% 96%;
+  --brand: 142 76% 36%;
+  --brand-foreground: 0 0% 100%;
+
+  /* tokens.css 里没有这个语义位 —— 原型自派生，落地前需拍板（见页底）。 */
+  --warning: 35 92% 42%;
+
+  --ui-font-size: 13px;
+  --code-font-size: 12px;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+    'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
+}
+
+.dark {
+  color-scheme: dark;
+  --background: 40 6% 10%;
+  --foreground: 40 21% 89%;
+  --card: 30 3% 13%;
+  --card-foreground: 39 35% 92%;
+  --popover: 36 6% 15%;
+  --popover-foreground: 39 35% 92%;
+  --primary: 210 100% 58%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 30 5% 15%;
+  --secondary-foreground: 40 21% 89%;
+  --muted: 36 6% 17%;
+  --muted-foreground: 36 5% 58%;
+  --hover: 36 6% 17%;
+  --accent: 210 100% 58%;
+  --destructive: 0 72% 55%;
+  --border: 49 12% 18%;
+  --input: 42 8% 25%;
+  --ring: 210 100% 58%;
+  --sidebar: 40 6% 10%;
+  --brand: 142 76% 36%;
+  --warning: 35 85% 52%;
+}
+
+/* Tailwind browser build 是运行时编译的，不遮一下会先闪一帧裸 HTML。 */
+html { visibility: hidden; }
+html.tw-ready { visibility: visible; }
+
+/* body 基准 13px —— chat 面 index.css @layer base 里就是 var(--ui-font-size)。
+   注意控件（button/input/select）走 text-sm=14px，正文与控件字号刻意分家。 */
+body { font-size: var(--ui-font-size); }
+code, kbd, pre, .mono { font-family: var(--font-mono); }
+</style>
+
+<style type="text/tailwindcss">
+/* ── 与 src/chat/styles/index.css 同款配置 ─────────────────────────────
+   dark variant 必须显式声明：项目用 .dark 类而不是 media query。
+   （CLAUDE.md 记过一次事故：漏声明会让 media 版 dark utility 后注入打穿好链。） */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* @theme inline 是 load-bearing 的：内联后每个 utility 直接 emit var(--x)，
+   .dark 覆盖和 appearance applier 的 live 改写才生效。抄自 index.css。 */
+@theme inline {
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-hover: hsl(var(--hover));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-sidebar: hsl(var(--sidebar));
+  --color-brand: hsl(var(--brand));
+  --color-brand-foreground: hsl(var(--brand-foreground));
+  --color-warning: hsl(var(--warning));
+}
+
+@layer base {
+  /* v4 preflight 把默认 border-color 改成了 currentColor，裸 `border` 会
+     渲染成文字色黑框。这是 shadcn v4 官方模板的标准兼容层，index.css 同款。 */
+  *, ::after, ::before, ::backdrop, ::file-selector-button {
+    border-color: hsl(var(--border));
+  }
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: var(--font-sans);
+    text-wrap: pretty;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+</style>
+</head>
+
+<body class="min-h-screen">
+
+<div class="px-12 pt-10 pb-24">
+  <div class="mx-auto max-w-[760px]">
+
+    <h1 class="mb-7 text-[22px] font-[650] tracking-[-0.01em]">MCP 服务器</h1>
+
+    <!-- ══ Section header ═══════════════════════════════════════════════ -->
+    <div class="mb-4 flex items-start justify-between gap-6">
+      <div>
+        <h3 class="text-[15px] font-[650] tracking-[-0.005em]">外部 MCP 服务器</h3>
+        <p class="mt-0.5 text-muted-foreground">供编码智能体使用的第三方工具。</p>
+      </div>
+      <!-- Button variant=default size=default —— 逐字抄自 button.tsx -->
+      <button id="btn-add" data-slot="button"
+        class="inline-flex h-8 shrink-0 items-center justify-center gap-2 rounded-lg px-3.5 py-2 has-[>svg]:px-3 bg-primary text-primary-foreground text-sm font-medium whitespace-nowrap transition-all outline-none hover:bg-primary/90 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+        添加服务器
+      </button>
+    </div>
+
+    <!-- ══ 模板选择面板 ════════════════════════════════════════════════ -->
+    <div id="picker" hidden class="mb-3.5 overflow-hidden rounded-xl border bg-card shadow-sm">
+      <div class="border-b p-3.5">
+        <div class="mb-1 flex items-center justify-between">
+          <strong class="text-sm font-[650]">选择模板</strong>
+          <button data-slot="button" id="picker-close" aria-label="关闭"
+            class="inline-flex size-6 shrink-0 items-center justify-center rounded-md transition-all outline-none hover:bg-hover hover:text-foreground dark:hover:bg-hover/60 text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 [&_svg:not([class*='size-'])]:size-3">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+        <p class="mb-2.5 text-muted-foreground">会预填表单，之后每个字段仍可修改。</p>
+        <!-- Input —— 逐字抄自 input.tsx -->
+        <input data-slot="input" type="search" name="tpl-q" placeholder="按名称、传输方式、能力筛选…"
+          class="h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 text-base md:text-sm shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/15 dark:bg-input/30">
+      </div>
+
+      <div class="max-h-[340px] overflow-y-auto">
+        <details open>
+          <summary class="flex cursor-pointer list-none select-none items-center gap-2 border-b bg-muted/55 px-3.5 py-2.5 hover:bg-hover [&::-webkit-details-marker]:hidden">
+            <span class="font-medium">图像生成</span>
+            <span data-slot="badge" class="inline-flex w-fit shrink-0 items-center justify-center rounded-full border border-border px-2 py-0.5 font-mono text-[10px] text-muted-foreground">4</span>
+            <span class="ml-auto text-muted-foreground">文生图 / 图生图</span>
+          </summary>
+          <div class="grid grid-cols-2 gap-2 border-b p-3.5">
+            <button class="flex cursor-pointer flex-col gap-1 rounded-lg border bg-background p-2.5 text-left transition-colors hover:border-primary/55 hover:bg-card">
+              <span class="flex items-center gap-1.5">
+                <svg class="size-3.5 shrink-0 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                <strong class="font-medium">Higgsfield</strong>
+                <span data-slot="badge" class="inline-flex w-fit shrink-0 items-center justify-center rounded-full border border-transparent bg-secondary px-2 py-0.5 font-mono text-[10px] uppercase text-secondary-foreground">http</span>
+              </span>
+              <span class="text-muted-foreground">托管的图像与视频生成，走 OAuth 授权。</span>
+            </button>
+            <button class="flex cursor-pointer flex-col gap-1 rounded-lg border bg-background p-2.5 text-left transition-colors hover:border-primary/55 hover:bg-card">
+              <span class="flex items-center gap-1.5">
+                <svg class="size-3.5 shrink-0 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                <strong class="font-medium">Pollinations</strong>
+                <span data-slot="badge" class="inline-flex w-fit shrink-0 items-center justify-center rounded-full border border-transparent bg-secondary px-2 py-0.5 font-mono text-[10px] uppercase text-secondary-foreground">stdio</span>
+              </span>
+              <span class="text-muted-foreground">免密钥的开放图像生成，本地进程启动。</span>
+            </button>
+          </div>
+        </details>
+        <details>
+          <summary class="flex cursor-pointer list-none select-none items-center gap-2 border-b bg-muted/55 px-3.5 py-2.5 hover:bg-hover [&::-webkit-details-marker]:hidden">
+            <span class="font-medium">数据与存储</span>
+            <span data-slot="badge" class="inline-flex w-fit shrink-0 items-center justify-center rounded-full border border-border px-2 py-0.5 font-mono text-[10px] text-muted-foreground">6</span>
+            <span class="ml-auto text-muted-foreground">数据库 / 文件系统</span>
+          </summary>
+          <div class="grid grid-cols-2 gap-2 border-b p-3.5">
+            <button class="flex cursor-pointer flex-col gap-1 rounded-lg border bg-background p-2.5 text-left transition-colors hover:border-primary/55 hover:bg-card">
+              <span class="flex items-center gap-1.5">
+                <svg class="size-3.5 shrink-0 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+                <strong class="font-medium">MySQL</strong>
+                <span data-slot="badge" class="inline-flex w-fit shrink-0 items-center justify-center rounded-full border border-transparent bg-secondary px-2 py-0.5 font-mono text-[10px] uppercase text-secondary-foreground">stdio</span>
+              </span>
+              <span class="text-muted-foreground">只读查询本地或远程 MySQL 实例。</span>
+            </button>
+            <button class="flex cursor-pointer flex-col gap-1 rounded-lg border bg-background p-2.5 text-left transition-colors hover:border-primary/55 hover:bg-card">
+              <span class="flex items-center gap-1.5">
+                <svg class="size-3.5 shrink-0 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+                <strong class="font-medium">Filesystem</strong>
+                <span data-slot="badge" class="inline-flex w-fit shrink-0 items-center justify-center rounded-full border border-transparent bg-secondary px-2 py-0.5 font-mono text-[10px] uppercase text-secondary-foreground">stdio</span>
+              </span>
+              <span class="text-muted-foreground">把指定目录暴露成可读写的工具。</span>
+            </button>
+          </div>
+        </details>
+      </div>
+
+      <div class="p-3.5">
+        <button class="flex w-full cursor-pointer flex-col gap-0.5 rounded-lg border border-dashed bg-transparent p-2.5 text-left transition-colors hover:border-primary/50 hover:bg-muted/50">
+          <strong class="font-medium">自定义服务器</strong>
+          <span class="text-muted-foreground">空白表单。自己选 stdio 或 SSE / HTTP 并填写字段。</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ══ 转发说明 ═════════════════════════════════════════════════════
+         原设计是一整块密集英文灰底段落。改成两行 Badge：一眼看清谁收得到、
+         谁收不到，长解释收进折叠，只在用户主动想读时展开。 -->
+    <div id="forward-card" class="mb-3.5 overflow-hidden rounded-xl border bg-card shadow-xs">
+      <div class="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 px-3.5 py-2.5">
+        <span class="flex w-[74px] shrink-0 items-center gap-1.5 font-medium text-muted-foreground">
+          <span class="size-1.5 shrink-0 rounded-full bg-brand"></span>已转发给
+        </span>
+        <span data-slot="badge" class="inline-flex w-fit shrink-0 items-center rounded-full border border-transparent bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground">Claude Code</span>
+        <span data-slot="badge" class="inline-flex w-fit shrink-0 items-center rounded-full border border-transparent bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground">OpenCode</span>
+        <span data-slot="badge" class="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full border border-transparent bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground">
+          Hermes <span class="border-l border-border pl-1.5 font-mono text-[10px] text-muted-foreground">仅 stdio</span>
+        </span>
+      </div>
+      <div class="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 border-t px-3.5 py-2.5">
+        <span class="flex w-[74px] shrink-0 items-center gap-1.5 font-medium text-muted-foreground">
+          <span class="size-1.5 shrink-0 rounded-full bg-warning"></span>未转发给
+        </span>
+        <span data-slot="badge" class="inline-flex w-fit shrink-0 items-center rounded-full border border-transparent bg-secondary px-2 py-0.5 text-xs font-medium text-muted-foreground">Codex CLI</span>
+        <span data-slot="badge" class="inline-flex w-fit shrink-0 items-center rounded-full border border-transparent bg-secondary px-2 py-0.5 text-xs font-medium text-muted-foreground">Cursor Agent</span>
+        <span data-slot="badge" class="inline-flex w-fit shrink-0 items-center rounded-full border border-transparent bg-secondary px-2 py-0.5 text-xs font-medium text-muted-foreground">DeepSeek TUI</span>
+        <span data-slot="badge" class="inline-flex w-fit shrink-0 items-center rounded-full border border-transparent bg-secondary px-2 py-0.5 text-xs font-medium text-muted-foreground">Gemini CLI</span>
+        <span data-slot="badge" class="inline-flex w-fit shrink-0 items-center rounded-full border border-transparent bg-secondary px-2 py-0.5 text-xs font-medium text-muted-foreground">Pi</span>
+      </div>
+      <details class="group border-t bg-muted/50">
+        <summary class="flex cursor-pointer list-none select-none items-center gap-1.5 px-3.5 py-2 text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+          <svg class="size-3.5 transition-transform group-open:rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+          这些智能体要怎么配置？
+        </summary>
+        <div class="max-w-[62ch] pb-3 pl-8 pr-3.5 text-muted-foreground">
+          未转发的智能体需要在它们自己的配置文件里单独配置 MCP 服务器，例如
+          <code class="rounded bg-muted px-1.5 py-px text-[12px] text-foreground">~/.codex/config.toml</code>、<code class="rounded bg-muted px-1.5 py-px text-[12px] text-foreground">~/.gemini/settings.json</code>。
+          下面列出的服务器在那些智能体里不会生效，也不会报错。
+          <br><br>
+          标注「仅 stdio」的 ACP 适配器只接收 <code class="rounded bg-muted px-1.5 py-px text-[12px] text-foreground">stdio</code> 类型的服务器，HTTP 与 SSE 条目会在启动时被丢弃。
+        </div>
+      </details>
+    </div>
+
+    <!-- ══ 错误条 ═══════════════════════════════════════════════════════ -->
+    <div id="error-bar" hidden class="mb-3 flex items-start gap-2.5 rounded-xl border border-destructive/35 bg-destructive/[0.07] px-3.5 py-3 text-destructive">
+      <svg class="mt-px size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+      <span>无法连接本地 daemon。请确认应用正在运行，然后重新打开此面板。</span>
+    </div>
+
+    <!-- ══ 空态 ═════════════════════════════════════════════════════════ -->
+    <div id="empty" hidden class="rounded-xl border border-dashed bg-card/50 px-8 py-10 text-center">
+      <div class="mx-auto mb-3.5 flex size-10 items-center justify-center rounded-xl bg-muted text-muted-foreground">
+        <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+      </div>
+      <strong class="mb-1.5 block text-sm font-medium">尚未配置 MCP 服务器</strong>
+      <p class="mx-auto mb-4 max-w-[46ch] text-muted-foreground">从模板开始最快 —— 数据库、文件系统、图像生成都有现成配置；也可以手动填写自定义的 stdio 或 HTTP 服务器。</p>
+      <button data-slot="button"
+        class="mx-auto inline-flex h-8 shrink-0 items-center justify-center gap-2 rounded-lg px-3 py-2 bg-primary text-primary-foreground text-sm font-medium transition-all outline-none hover:bg-primary/90 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 [&_svg:not([class*='size-'])]:size-4">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+        添加服务器
+      </button>
+    </div>
+
+    <!-- ══ 服务器列表 ═══════════════════════════════════════════════════ -->
+    <div id="rows" class="flex flex-col gap-2">
+
+      <!-- ── 行 1：stdio，启用 ───────────────────────────────────────── -->
+      <div data-row="1" data-tools="12" class="group/row rounded-xl border bg-card shadow-xs transition-all hover:border-input data-[expanded]:border-input data-[expanded]:shadow-sm data-[off]:opacity-60">
+        <div class="flex items-center gap-2.5 py-2.5 pl-1.5 pr-2.5">
+          <span class="flex h-7 w-[18px] shrink-0 cursor-grab items-center justify-center text-muted-foreground/30 transition-colors group-hover/row:text-muted-foreground/75" title="拖动排序">
+            <svg class="size-3.5" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>
+          </span>
+
+          <!-- Switch —— 逐字抄自 switch.tsx（size=default）。注意是 bg-primary
+               不是 brand 绿：它跟用户主题色走，线上截图之所以是绿的，是因为
+               那台机器把主题色设成了绿。 -->
+          <button data-slot="switch" role="switch" aria-checked="true" aria-label="启用此服务器"
+            class="peer group/switch inline-flex h-[1.15rem] w-8 shrink-0 cursor-pointer items-center rounded-full border border-transparent shadow-xs transition-all outline-none aria-checked:bg-primary aria-[checked=false]:bg-input focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:aria-[checked=false]:bg-input/80">
+            <span data-slot="switch-thumb"
+              class="pointer-events-none block size-4 rounded-full bg-background ring-0 transition-transform group-aria-checked/switch:translate-x-[calc(100%-2px)] group-aria-[checked=false]/switch:translate-x-0 dark:group-aria-checked/switch:bg-primary-foreground dark:group-aria-[checked=false]/switch:bg-foreground"></span>
+          </button>
+
+          <button data-toggle="1" class="flex min-w-0 flex-1 cursor-pointer flex-col gap-px text-left">
+            <span class="flex min-w-0 items-center gap-2">
+              <span class="truncate text-sm font-medium">本地 MySQL（hospital_his）</span>
+              <span data-slot="badge" class="inline-flex w-fit shrink-0 items-center rounded-full border border-transparent bg-secondary px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-secondary-foreground">stdio</span>
+            </span>
+            <span class="truncate font-mono text-[11.5px] text-muted-foreground">npx -y @modelcontextprotocol/server-mysql</span>
+          </button>
+
+          <span data-status class="flex shrink-0 items-center gap-1.5 text-muted-foreground">
+            <span class="size-1.5 shrink-0 rounded-full bg-brand"></span>12 个工具
+          </span>
+
+          <span class="flex shrink-0 items-center gap-0.5">
+            <button data-slot="button" title="更多"
+              class="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all outline-none hover:bg-hover hover:text-foreground focus-visible:opacity-100 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 group-hover/row:opacity-100 dark:hover:bg-hover/60 [&_svg:not([class*='size-'])]:size-4">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+            </button>
+            <button data-slot="button" data-toggle="1" data-chev title="展开"
+              class="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-all outline-none hover:bg-hover hover:text-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:hover:bg-hover/60 [&_svg:not([class*='size-'])]:size-4">
+              <svg class="transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+          </span>
+        </div>
+
+        <div data-body hidden class="flex flex-col gap-3 border-t p-3.5">
+          <div class="flex items-start gap-2 rounded-lg bg-muted px-3 py-2.5 text-muted-foreground">
+            <svg class="mt-0.5 size-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+            <span>基于 <strong class="font-medium text-foreground">MySQL</strong> 模板创建。只读查询本地或远程 MySQL 实例。
+              <a href="#" class="text-primary underline-offset-4 hover:underline">模板主页</a></span>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <label class="flex flex-col gap-1.5">
+              <span class="font-medium text-muted-foreground">显示名称</span>
+              <input data-slot="input" name="r1-label" value="本地 MySQL（hospital_his）"
+                class="h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 text-base md:text-sm shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/15 dark:bg-input/30">
+            </label>
+            <label class="flex flex-col gap-1.5">
+              <span class="font-medium text-muted-foreground">ID</span>
+              <input data-slot="input" name="r1-id" value="local-mysql" spellcheck="false"
+                class="h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 font-mono text-base md:text-sm shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/15 dark:bg-input/30">
+            </label>
+          </div>
+
+          <label class="flex flex-col gap-1.5">
+            <span class="font-medium text-muted-foreground">传输方式</span>
+            <!-- SelectTrigger 的形态（原生 select 代打；落地用 ui/select.tsx） -->
+            <div class="relative"><select data-slot="select-trigger" name="r1-transport"
+              class="flex h-9 w-full appearance-none items-center justify-between rounded-md border border-input bg-transparent px-3 py-2 pr-9 text-sm shadow-xs transition-[color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30 dark:hover:bg-input/50">
+              <option selected>stdio</option><option>SSE</option><option>streamable HTTP</option>
+            </select><svg class="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg></div>
+          </label>
+
+          <label class="flex flex-col gap-1.5">
+            <span class="font-medium text-muted-foreground">命令</span>
+            <input data-slot="input" name="r1-cmd" value="npx" placeholder="例如 npx、node、/path/to/binary" spellcheck="false"
+              class="h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 font-mono text-base md:text-sm shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/15 dark:bg-input/30">
+          </label>
+          <label class="flex flex-col gap-1.5">
+            <span class="font-medium text-muted-foreground">参数</span>
+            <input data-slot="input" name="r1-args" value="-y @modelcontextprotocol/server-mysql" placeholder="空格分隔" spellcheck="false"
+              class="h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 font-mono text-base md:text-sm shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/15 dark:bg-input/30">
+          </label>
+          <label class="flex flex-col gap-1.5">
+            <span class="font-medium text-muted-foreground">环境变量（KEY=VALUE）</span>
+            <!-- Textarea —— 逐字抄自 textarea.tsx -->
+            <textarea data-slot="textarea" name="r1-env" rows="2" spellcheck="false" placeholder="MYSQL_DSN=…"
+              class="flex field-sizing-content min-h-16 w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-base md:text-sm shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30">MYSQL_HOST=127.0.0.1
+MYSQL_DATABASE=hospital_his</textarea>
+          </label>
+
+          <details class="group overflow-hidden rounded-md border">
+            <summary class="flex cursor-pointer list-none select-none items-center gap-2 px-3 py-2.5 text-muted-foreground hover:bg-hover hover:text-foreground [&::-webkit-details-marker]:hidden">
+              <svg class="size-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"/><circle cx="12" cy="12" r="3"/></svg>
+              不知道怎么填？对照下面的 MCP JSON 示例
+              <svg class="ml-auto size-3.5 shrink-0 transition-transform group-open:rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+            </summary>
+            <div class="px-3 pb-3">
+<pre class="mb-2.5 overflow-x-auto rounded-md bg-muted p-3 font-mono text-[11.5px] leading-relaxed"><code><span class="text-muted-foreground">{</span>
+  <span class="text-primary">"mcpServers"</span><span class="text-muted-foreground">: {</span>
+    <span class="text-primary">"tdesign"</span><span class="text-muted-foreground">: {</span>
+      <span class="text-primary">"command"</span><span class="text-muted-foreground">:</span> <span class="text-brand">"npx"</span><span class="text-muted-foreground">,</span>
+      <span class="text-primary">"args"</span><span class="text-muted-foreground">: [</span><span class="text-brand">"-y"</span><span class="text-muted-foreground">, </span><span class="text-brand">"tdesign-mcp-server@latest"</span><span class="text-muted-foreground">],</span>
+      <span class="text-primary">"env"</span><span class="text-muted-foreground">: {</span> <span class="text-primary">"API_KEY"</span><span class="text-muted-foreground">:</span> <span class="text-brand">"your-key-here"</span> <span class="text-muted-foreground">}</span>
+    <span class="text-muted-foreground">}</span>
+  <span class="text-muted-foreground">}</span>
+<span class="text-muted-foreground">}</span></code></pre>
+              <div class="grid grid-cols-[84px_1fr] items-center gap-x-3 gap-y-1.5">
+                <strong class="font-medium text-muted-foreground">命令</strong><code class="w-fit rounded bg-muted px-1.5 py-0.5 font-mono text-[11.5px]">npx</code>
+                <strong class="font-medium text-muted-foreground">参数</strong><code class="w-fit rounded bg-muted px-1.5 py-0.5 font-mono text-[11.5px]">-y tdesign-mcp-server@latest</code>
+                <strong class="font-medium text-muted-foreground">环境变量</strong><code class="w-fit rounded bg-muted px-1.5 py-0.5 font-mono text-[11.5px]">API_KEY = your-key-here</code>
+                <strong class="font-medium text-muted-foreground">HTTP / SSE</strong><code class="w-fit rounded bg-muted px-1.5 py-0.5 font-mono text-[11.5px]">改填 url + headers</code>
+              </div>
+            </div>
+          </details>
+        </div>
+      </div>
+
+      <!-- ── 行 2：HTTP + OAuth ──────────────────────────────────────── -->
+      <div data-row="2" data-tools="6" class="group/row rounded-xl border bg-card shadow-xs transition-all hover:border-input data-[expanded]:border-input data-[expanded]:shadow-sm data-[off]:opacity-60">
+        <div class="flex items-center gap-2.5 py-2.5 pl-1.5 pr-2.5">
+          <span class="flex h-7 w-[18px] shrink-0 cursor-grab items-center justify-center text-muted-foreground/30 transition-colors group-hover/row:text-muted-foreground/75" title="拖动排序">
+            <svg class="size-3.5" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>
+          </span>
+          <button data-slot="switch" role="switch" aria-checked="true" aria-label="启用此服务器"
+            class="peer group/switch inline-flex h-[1.15rem] w-8 shrink-0 cursor-pointer items-center rounded-full border border-transparent shadow-xs transition-all outline-none aria-checked:bg-primary aria-[checked=false]:bg-input focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:aria-[checked=false]:bg-input/80">
+            <span data-slot="switch-thumb" class="pointer-events-none block size-4 rounded-full bg-background ring-0 transition-transform group-aria-checked/switch:translate-x-[calc(100%-2px)] group-aria-[checked=false]/switch:translate-x-0 dark:group-aria-checked/switch:bg-primary-foreground dark:group-aria-[checked=false]/switch:bg-foreground"></span>
+          </button>
+          <button data-toggle="2" class="flex min-w-0 flex-1 cursor-pointer flex-col gap-px text-left">
+            <span class="flex min-w-0 items-center gap-2">
+              <span class="truncate text-sm font-medium">Higgsfield</span>
+              <span data-slot="badge" class="inline-flex w-fit shrink-0 items-center rounded-full border border-transparent bg-secondary px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-secondary-foreground">http</span>
+            </span>
+            <span class="truncate font-mono text-[11.5px] text-muted-foreground">https://mcp.higgsfield.ai/mcp</span>
+          </button>
+          <span data-status class="flex shrink-0 items-center gap-1.5 text-muted-foreground">
+            <span class="size-1.5 shrink-0 rounded-full bg-brand"></span>6 个工具
+          </span>
+          <span class="flex shrink-0 items-center gap-0.5">
+            <button data-slot="button" title="更多"
+              class="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all outline-none hover:bg-hover hover:text-foreground focus-visible:opacity-100 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 group-hover/row:opacity-100 dark:hover:bg-hover/60 [&_svg:not([class*='size-'])]:size-4">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+            </button>
+            <button data-slot="button" data-toggle="2" data-chev title="展开"
+              class="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-all outline-none hover:bg-hover hover:text-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:hover:bg-hover/60 [&_svg:not([class*='size-'])]:size-4">
+              <svg class="transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+          </span>
+        </div>
+
+        <div data-body hidden class="flex flex-col gap-3 border-t p-3.5">
+          <div class="flex items-center justify-between gap-3 rounded-md border bg-background px-3 py-2.5 dark:bg-input/30">
+            <span class="flex items-center gap-2">
+              <span class="size-1.5 shrink-0 rounded-full bg-brand"></span>
+              已通过 OAuth 授权 · <span class="text-muted-foreground">2026-07-20 连接</span>
+            </span>
+            <!-- Button variant=outline size=sm -->
+            <button data-slot="button"
+              class="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg border bg-background px-3 text-sm font-medium shadow-xs transition-all outline-none hover:bg-hover hover:text-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:border-input dark:bg-input/30 dark:hover:bg-input/50">断开连接</button>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <label class="flex flex-col gap-1.5">
+              <span class="font-medium text-muted-foreground">显示名称</span>
+              <input data-slot="input" name="r2-label" value="Higgsfield"
+                class="h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 text-base md:text-sm shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/15 dark:bg-input/30">
+            </label>
+            <label class="flex flex-col gap-1.5">
+              <span class="font-medium text-muted-foreground">ID</span>
+              <input data-slot="input" name="r2-id" value="higgsfield" spellcheck="false"
+                class="h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 font-mono text-base md:text-sm shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/15 dark:bg-input/30">
+            </label>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <label class="flex flex-col gap-1.5">
+              <span class="font-medium text-muted-foreground">传输方式</span>
+              <div class="relative"><select data-slot="select-trigger" name="r2-transport"
+                class="flex h-9 w-full appearance-none items-center justify-between rounded-md border border-input bg-transparent px-3 py-2 pr-9 text-sm shadow-xs transition-[color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30 dark:hover:bg-input/50">
+                <option>stdio</option><option>SSE</option><option selected>streamable HTTP</option>
+              </select><svg class="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg></div>
+            </label>
+            <label class="flex flex-col gap-1.5">
+              <span class="font-medium text-muted-foreground">授权方式</span>
+              <div class="relative"><select data-slot="select-trigger" name="r2-auth"
+                class="flex h-9 w-full appearance-none items-center justify-between rounded-md border border-input bg-transparent px-3 py-2 pr-9 text-sm shadow-xs transition-[color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30 dark:hover:bg-input/50">
+                <option>不使用托管 OAuth</option><option selected>托管 OAuth</option>
+              </select><svg class="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg></div>
+            </label>
+          </div>
+
+          <label class="flex flex-col gap-1.5">
+            <span class="font-medium text-muted-foreground">URL</span>
+            <input data-slot="input" name="r2-url" value="https://mcp.higgsfield.ai/mcp" spellcheck="false"
+              class="h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 font-mono text-base md:text-sm shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/15 dark:bg-input/30">
+          </label>
+          <label class="flex flex-col gap-1.5">
+            <span class="font-medium text-muted-foreground">请求头（KEY=VALUE）</span>
+            <textarea data-slot="textarea" name="r2-headers" rows="2" spellcheck="false" placeholder="Authorization=Bearer …"
+              class="flex field-sizing-content min-h-16 w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-base md:text-sm shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30"></textarea>
+          </label>
+        </div>
+      </div>
+
+      <!-- ── 行 3：已停用 ────────────────────────────────────────────── -->
+      <div data-row="3" data-off class="group/row rounded-xl border bg-card shadow-xs transition-all hover:border-input data-[expanded]:border-input data-[expanded]:shadow-sm data-[off]:opacity-60">
+        <div class="flex items-center gap-2.5 py-2.5 pl-1.5 pr-2.5">
+          <span class="flex h-7 w-[18px] shrink-0 cursor-grab items-center justify-center text-muted-foreground/30 transition-colors group-hover/row:text-muted-foreground/75" title="拖动排序">
+            <svg class="size-3.5" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>
+          </span>
+          <button data-slot="switch" role="switch" aria-checked="false" aria-label="启用此服务器"
+            class="peer group/switch inline-flex h-[1.15rem] w-8 shrink-0 cursor-pointer items-center rounded-full border border-transparent shadow-xs transition-all outline-none aria-checked:bg-primary aria-[checked=false]:bg-input focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:aria-[checked=false]:bg-input/80">
+            <span data-slot="switch-thumb" class="pointer-events-none block size-4 rounded-full bg-background ring-0 transition-transform group-aria-checked/switch:translate-x-[calc(100%-2px)] group-aria-[checked=false]/switch:translate-x-0 dark:group-aria-checked/switch:bg-primary-foreground dark:group-aria-[checked=false]/switch:bg-foreground"></span>
+          </button>
+          <button data-toggle="3" class="flex min-w-0 flex-1 cursor-pointer flex-col gap-px text-left">
+            <span class="flex min-w-0 items-center gap-2">
+              <span class="truncate text-sm font-medium text-muted-foreground">Filesystem</span>
+              <span data-slot="badge" class="inline-flex w-fit shrink-0 items-center rounded-full border border-transparent bg-secondary px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-secondary-foreground">stdio</span>
+            </span>
+            <span class="truncate font-mono text-[11.5px] text-muted-foreground">npx -y @modelcontextprotocol/server-filesystem ~/Documents</span>
+          </button>
+          <span data-status class="flex shrink-0 items-center gap-1.5 text-muted-foreground">已停用</span>
+          <span class="flex shrink-0 items-center gap-0.5">
+            <button data-slot="button" title="更多"
+              class="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all outline-none hover:bg-hover hover:text-foreground focus-visible:opacity-100 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 group-hover/row:opacity-100 dark:hover:bg-hover/60 [&_svg:not([class*='size-'])]:size-4">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+            </button>
+            <button data-slot="button" data-toggle="3" data-chev title="展开"
+              class="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-all outline-none hover:bg-hover hover:text-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:hover:bg-hover/60 [&_svg:not([class*='size-'])]:size-4">
+              <svg class="transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+          </span>
+        </div>
+        <div data-body hidden class="flex flex-col gap-3 border-t p-3.5">
+          <div class="grid grid-cols-2 gap-3">
+            <label class="flex flex-col gap-1.5">
+              <span class="font-medium text-muted-foreground">显示名称</span>
+              <input data-slot="input" name="r3-label" value="Filesystem"
+                class="h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 text-base md:text-sm shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/15 dark:bg-input/30">
+            </label>
+            <label class="flex flex-col gap-1.5">
+              <span class="font-medium text-muted-foreground">ID</span>
+              <input data-slot="input" name="r3-id" value="filesystem" spellcheck="false"
+                class="h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 font-mono text-base md:text-sm shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/15 dark:bg-input/30">
+            </label>
+          </div>
+          <label class="flex flex-col gap-1.5">
+            <span class="font-medium text-muted-foreground">参数</span>
+            <input data-slot="input" name="r3-args" value="-y @modelcontextprotocol/server-filesystem ~/Documents" spellcheck="false"
+              class="h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 font-mono text-base md:text-sm shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/15 dark:bg-input/30">
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ 保存条 ═══════════════════════════════════════════════════════
+         原设计把"所有更改已保存"做成禁用按钮 —— 状态被误读成可点的动作。
+         这里拆开：状态是文字，按钮只在真有待存改动时才存在。 -->
+    <div class="mt-5 flex items-center gap-3 border-t pt-3.5">
+      <span id="save-state" class="inline-flex items-center gap-1.5 text-muted-foreground"></span>
+      <button id="btn-save" hidden data-slot="button"
+        class="inline-flex h-8 shrink-0 items-center justify-center gap-2 rounded-lg px-3.5 py-2 bg-primary text-primary-foreground text-sm font-medium transition-all outline-none hover:bg-primary/90 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50">保存更改</button>
+      <span class="flex-1"></span>
+      <span class="text-muted-foreground">存储于 <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-[12px] text-foreground">.od/mcp-config.json</code></span>
+    </div>
+
+    <!-- ══ 设计说明（原型专用，落地时不存在）═══════════════════════════ -->
+    <div class="mt-10 rounded-xl border border-dashed bg-muted/45 p-4 text-muted-foreground">
+      <h4 class="mb-2 font-[650] text-foreground">落地前需要确认的两件事</h4>
+      <ul class="list-disc space-y-1 pl-5">
+        <li><strong class="font-medium">「12 个工具」需要新数据源。</strong>现有 <code class="rounded bg-card px-1.5 py-0.5 font-mono text-[11.5px]">McpServerConfig</code> 里没有工具数，daemon 也未在 <code class="rounded bg-card px-1.5 py-0.5 font-mono text-[11.5px]">/api/mcp/servers</code> 返回连接状态。这是设计上最有价值的新增信息（用户当前完全看不出服务器是否活着），但需要 daemon 侧补一个探活接口。不做的话降级方案是只显示传输方式，不显示状态点 —— Tweaks 里可以关掉看效果。</li>
+        <li><strong class="font-medium">琥珀色 <code class="rounded bg-card px-1.5 py-0.5 font-mono text-[11.5px]">--warning</code> 在 tokens.css 里不存在。</strong>「未转发给」和「未保存」两处用到。要么在共享 token 里补一个语义位（会同时影响 chat 面），要么降级用 <code class="rounded bg-card px-1.5 py-0.5 font-mono text-[11.5px]">--muted-foreground</code>（代价是「未保存」的提醒力度归零）。</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══ Tweaks ═════════════════════════════════════════════════════════ -->
+<button id="tweaks-fab" aria-label="打开调节面板"
+  class="fixed bottom-5 right-5 z-60 flex size-10 items-center justify-center rounded-full border bg-popover text-foreground shadow-lg transition-transform hover:scale-105">
+  <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>
+</button>
+
+<div id="tweaks" hidden class="fixed bottom-5 right-5 z-61 w-[252px] overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-lg">
+  <div class="flex items-center justify-between border-b px-3.5 py-2.5 font-[650]">
+    Tweaks
+    <button id="tweaks-close" aria-label="关闭" data-slot="button"
+      class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-all hover:bg-hover hover:text-foreground [&_svg:not([class*='size-'])]:size-3">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+    </button>
+  </div>
+  <div class="flex flex-col gap-3 px-3.5 pb-3.5 pt-3">
+    <label class="flex flex-col gap-1.5">
+      <span class="text-[11px] text-muted-foreground">页面状态</span>
+      <div class="relative"><select id="tw-state" name="tw-state" data-slot="select-trigger"
+        class="flex h-8 w-full appearance-none rounded-md border border-input bg-transparent px-2.5 pr-8 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30">
+        <option value="default">默认（3 个服务器）</option>
+        <option value="dirty">有未保存更改</option>
+        <option value="saving">保存中</option>
+        <option value="empty">空态</option>
+        <option value="error">daemon 连不上</option>
+        <option value="picker">模板选择面板展开</option>
+      </select><svg class="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg></div>
+    </label>
+    <label class="flex flex-col gap-1.5">
+      <span class="text-[11px] text-muted-foreground">主题</span>
+      <div class="relative"><select id="tw-theme" name="tw-theme" data-slot="select-trigger"
+        class="flex h-8 w-full appearance-none rounded-md border border-input bg-transparent px-2.5 pr-8 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30">
+        <option value="light">浅色</option>
+        <option value="dark">深色</option>
+      </select><svg class="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg></div>
+    </label>
+    <label class="flex flex-col gap-1.5">
+      <span class="text-[11px] text-muted-foreground">用户主题色（--primary）</span>
+      <div class="relative"><select id="tw-accent" name="tw-accent" data-slot="select-trigger"
+        class="flex h-8 w-full appearance-none rounded-md border border-input bg-transparent px-2.5 pr-8 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30">
+        <option value="211 100% 45%">Apple 蓝（token 默认）</option>
+        <option value="142 76% 36%">绿（线上截图那台机器）</option>
+        <option value="262 65% 55%">紫</option>
+        <option value="24 92% 50%">橙</option>
+      </select><svg class="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg></div>
+    </label>
+    <div class="flex items-center justify-between gap-2.5">
+      <span>显示运行状态</span>
+      <button id="tw-tools" data-slot="switch" role="switch" aria-checked="true"
+        class="group/switch inline-flex h-[1.15rem] w-8 shrink-0 cursor-pointer items-center rounded-full border border-transparent shadow-xs transition-all outline-none aria-checked:bg-primary aria-[checked=false]:bg-input">
+        <span class="pointer-events-none block size-4 rounded-full bg-background transition-transform group-aria-checked/switch:translate-x-[calc(100%-2px)] group-aria-[checked=false]/switch:translate-x-0 dark:group-aria-checked/switch:bg-primary-foreground dark:group-aria-[checked=false]/switch:bg-foreground"></span>
+      </button>
+    </div>
+    <div class="flex items-center justify-between gap-2.5">
+      <span>紧凑行高</span>
+      <button id="tw-density" data-slot="switch" role="switch" aria-checked="false"
+        class="group/switch inline-flex h-[1.15rem] w-8 shrink-0 cursor-pointer items-center rounded-full border border-transparent shadow-xs transition-all outline-none aria-checked:bg-primary aria-[checked=false]:bg-input">
+        <span class="pointer-events-none block size-4 rounded-full bg-background transition-transform group-aria-checked/switch:translate-x-[calc(100%-2px)] group-aria-[checked=false]/switch:translate-x-0 dark:group-aria-checked/switch:bg-primary-foreground dark:group-aria-[checked=false]/switch:bg-foreground"></span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const $ = (s, r) => (r || document).querySelector(s);
+  const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+
+  /* Tailwind browser build 是运行时编译的 —— 编译完成前先遮住，
+     否则会闪一帧完全没样式的裸 HTML。 */
+  const reveal = () => document.documentElement.classList.add('tw-ready');
+  window.addEventListener('load', () => setTimeout(reveal, 60));
+  setTimeout(reveal, 2500);   // CDN 挂掉时的兜底：至少让内容可见
+
+  /* ── 行展开 ─────────────────────────────────────────────────────── */
+  $$('[data-toggle]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const row = $('[data-row="' + el.dataset.toggle + '"]');
+      const body = $('[data-body]', row);
+      const open = !row.hasAttribute('data-expanded');
+      row.toggleAttribute('data-expanded', open);
+      body.hidden = !open;
+      const chev = $('[data-chev] svg', row);
+      chev.classList.toggle('rotate-180', open);
+      $('[data-chev]', row).title = open ? '收起' : '展开';
+    });
+  });
+
+  /* ── Switch（行内 + Tweaks 共用委托）───────────────────────────── */
+  document.addEventListener('click', (e) => {
+    const sw = e.target.closest('[data-slot="switch"]');
+    if (!sw) return;
+    const next = sw.getAttribute('aria-checked') !== 'true';
+    sw.setAttribute('aria-checked', String(next));
+
+    const row = sw.closest('[data-row]');
+    if (!row) return;
+    row.toggleAttribute('data-off', !next);
+    const status = $('[data-status]', row);
+    const name = $('[data-toggle] .truncate', row);
+    name.classList.toggle('text-muted-foreground', !next);
+    // 没有已知工具数时不编造数字 —— 只说"已启用"，等 daemon 探活回来再填
+    status.innerHTML = next
+      ? '<span class="size-1.5 shrink-0 rounded-full bg-brand"></span>' +
+        (row.dataset.tools ? row.dataset.tools + ' 个工具' : '已启用')
+      : '已停用';
+    setState('dirty');
+  });
+
+  /* ── 页面状态机 ─────────────────────────────────────────────────── */
+  const saveBtn = $('#btn-save');
+  const saveState = $('#save-state');
+  const ico = (d, cls) =>
+    '<svg class="size-3.5 shrink-0 ' + (cls || '') + '" viewBox="0 0 24 24" fill="none" ' +
+    'stroke="currentColor" stroke-width="2" stroke-linecap="round">' + d + '</svg>';
+  const CHECK = ico('<path d="M20 6 9 17l-5-5"/>');
+  const WARN = ico('<circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/>');
+  const SPIN = ico('<path d="M21 12a9 9 0 1 1-6.219-8.56"/>', 'animate-spin');
+
+  function setState(name) {
+    const rows = $('#rows'), empty = $('#empty'), err = $('#error-bar'),
+          picker = $('#picker'), fwd = $('#forward-card');
+    rows.hidden = false; empty.hidden = true; err.hidden = true;
+    picker.hidden = true; fwd.hidden = false;
+    saveState.className = 'inline-flex items-center gap-1.5 text-muted-foreground';
+
+    if (name === 'dirty') {
+      saveState.className = 'inline-flex items-center gap-1.5 text-warning';
+      saveState.innerHTML = WARN + '有 1 处更改尚未保存';
+      saveBtn.hidden = false; saveBtn.disabled = false;
+    } else if (name === 'saving') {
+      saveState.innerHTML = SPIN + '正在保存…';
+      saveBtn.hidden = false; saveBtn.disabled = true;
+    } else {
+      saveState.innerHTML = name === 'error' ? '' : CHECK + '所有更改已保存';
+      saveBtn.hidden = true; saveBtn.disabled = true;
+      if (name === 'empty') { rows.hidden = true; empty.hidden = false; }
+      if (name === 'error') { err.hidden = false; fwd.hidden = true; rows.hidden = true; }
+      if (name === 'picker') { picker.hidden = false; }
+    }
+
+    const sel = $('#tw-state');
+    if (sel.value !== name) sel.value = name;
+  }
+
+  $('#tw-state').addEventListener('change', (e) => setState(e.target.value));
+  $('#btn-add').addEventListener('click', () => setState($('#picker').hidden ? 'picker' : 'default'));
+  $('#picker-close').addEventListener('click', () => setState('default'));
+  saveBtn.addEventListener('click', () => {
+    setState('saving');
+    setTimeout(() => setState('default'), 900);
+  });
+
+  /* ── 主题 / 主题色 ──────────────────────────────────────────────── */
+  $('#tw-theme').addEventListener('change', (e) =>
+    document.documentElement.classList.toggle('dark', e.target.value === 'dark'));
+  $('#tw-accent').addEventListener('change', (e) => {
+    // 模拟 appearance applier：直接写 documentElement.style（最高优先级）
+    document.documentElement.style.setProperty('--primary', e.target.value);
+    document.documentElement.style.setProperty('--ring', e.target.value);
+    document.documentElement.style.setProperty('--accent', e.target.value);
+  });
+
+  /* ── 运行状态 / 紧凑行高 ────────────────────────────────────────
+     注意：上面的 switch 委托挂在 document 上、冒泡阶段才跑，元素自身的
+     handler 先于它执行 —— 这里读到的 aria-checked 还是翻转前的值。 */
+  $('#tw-tools').addEventListener('click', () => {
+    const willBeOn = $('#tw-tools').getAttribute('aria-checked') !== 'true';
+    $$('[data-status]').forEach((s) => s.classList.toggle('hidden', !willBeOn));
+  });
+  $('#tw-density').addEventListener('click', () => {
+    const compact = $('#tw-density').getAttribute('aria-checked') !== 'true';
+    $$('[data-row] > div:first-child').forEach((h) => {
+      h.classList.toggle('py-2.5', !compact);
+      h.classList.toggle('py-1', compact);
+    });
+    $$('[data-toggle] .font-mono').forEach((s) => s.classList.toggle('hidden', compact));
+  });
+
+  /* ── Tweaks 开合 ────────────────────────────────────────────────── */
+  const fab = $('#tweaks-fab'), panel = $('#tweaks');
+  fab.addEventListener('click', () => { panel.hidden = false; fab.hidden = true; });
+  $('#tweaks-close').addEventListener('click', () => { panel.hidden = true; fab.hidden = false; });
+
+  setState('default');
+})();
+</script>
+
+</body>
+</html>

@@ -29,8 +29,12 @@ import { useApplyBackgroundArt } from './stores/backgroundArt.applier'
  * 可见后永久保活），而冷启动必定先落 /chat（不带 query）把 chat 面挂上，
  * 监听器此后一直在岗。也就是说**这两条链的存活是「碰巧」依赖了别处的
  * keep-alive 策略**——改动 keep-alive、或新增一个「chat 面从未可见」的入口
- * （启动直达设置页、reload 时 ?settings=1 停在设置页，后者实测可复现）就会
- * 让它复发，且症状隐蔽（只有 chat 面颜色停在旧主题）。
+ * 就会让它复发，且症状隐蔽（只有 chat 面颜色停在旧主题）。「reload 时停在
+ * 设置页」曾是这类入口之一（`?settings=1` 挂 URL 时 reload 会原地停留，
+ * chat 面因此从未挂载过）——设置页 2026-07-31 起改成纯内存 store，reload
+ * 必回底下的面（见 stores/surfaceOverlay.ts），这个入口已结构性关闭，但
+ * 「新增一个面从未可见的入口」这类风险本身没有消失，改 keep-alive 前仍要
+ * 想到这里。
  *
  * 挂到 SurfaceHost（由根 layout 渲染、跨路由保活）后，存活不再依赖任何面的
  * 可见性策略：与 UpdateReadyToast 并列在两个面的包装 div 之外，谁被

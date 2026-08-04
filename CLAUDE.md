@@ -56,6 +56,8 @@ bun run build:mac    # 只打 Electron 壳：verify:fusion + build:icons + prebu
 
 **发版必须走 `dist:*` 不是 `build:*`**：`build:mac` 的 prebundle 只是拷贝 daemon dist 与 studio out/ 的现成产物，不重新构建它们——改了前端/daemon/契约包后直接 `build:mac`，打进安装包的是陈旧代码且零报错。
 
+**改「按名保留一批文件、其余删掉」的打包配置（`electronLanguages`、arch slice…），必须打一次目标平台的 `--dir` 包并 `ls` 那个目录**：这类裁剪永远静默——列错了跟「你就是想删光」长得一模一样。`electron-builder --win --dir` 在 macOS 上能跑（wine 只有 nsis/签名才要），成本一次下载，比发一版坏包便宜太多。踩过的实锤：`electronLanguages` 写 mac 的下划线拼法（`zh_CN`）放顶层通吃三平台，Windows 的 pak 是连字符（`zh-CN`）且**没有裸 `en.pak`**，精确匹配 0 命中 → `locales/` 55 个 pak 全删 → Chromium 渲染 `<input type=file>` 时渲染进程必崩（exitCode=-36861），v0.0.43~0.0.45 三个 Windows 版本装完打不开而 mac 全好。现在 `scripts/afterPack.cjs` 的 `assertLocalesSurvived` 会硬失败拦住它，**断言本身也做过负向测试**（故意写坏拼法确认构建 exit=1）——只跑正向的断言等于没有断言。
+
 包内脚本约定（apps/studio）：`dev` = 整个桌面应用；`dev:next`/`build:next` = Next 前端独立入口（main 的 spawnStudioDev 调 `dev:next`，root 的 `prebuild:resources` 调 `build:next`）；刻意没有裸 `build`。改完代码以 `bun run typecheck` 为准——**没有 ESLint**，类型检查是唯一的全局防线；另有 `bun test`（在 apps/studio 下跑）覆盖 `electron/`、`src/chat/lib`、`src/chat/composer` 三个目录的纯函数，新写的纯逻辑放进这三处才会被测到。
 
 ## 内置写作技能
@@ -72,6 +74,7 @@ bun run build:mac    # 只打 Electron 壳：verify:fusion + build:icons + prebu
 
 - 注释密度很高，且专门解释「为什么这样而不是那样」。沿用这个风格——改不变量时把理由写进注释，别只写做了什么。
 - **组件文件超 ~1500 行就拆同名目录 + index 重导出**（对外 import 路径不变，moduleResolution: bundler 解析目录 index）；canvas/components 按 feature 子目录分组（home/ plugins/ settings/ files/ project/ chat/ …），新组件放进对应组。canvas 样式按节拆在 `src/canvas/styles/`，`index.css` 是纯 @import 清单——**顺序即级联，别乱动**。
-- CI（`.github/workflows/build.yml`）在 `v*` tag（或手动 workflow_dispatch）触发：下载 fusion-code CLI → typecheck → 打包 → 发 GitHub Release。fusion-code 版本钉在 workflow 的 `FUSION_CODE_VERSION`。
+- CI（`.github/workflows/build.yml`）在 `v*` tag（或手动 workflow_dispatch）触发：typecheck → 打包 → 发 GitHub Release。**它只打壳**——CLI 二进制与 python-runtime 已于 2026-07-29 搬出安装包，改由客户端首次启动时按需下载。
+- **运行时组件（CLI 二进制 / python-runtime）不随包发布**：客户端首启检测缺失则从自建源下载（`electron/main/services/componentInstaller.ts` + `workers/componentWorker.ts`，全屏门在 `src/components/ComponentGate.tsx`）。发布走独立的 `.github/workflows/publish-components.yml` + `scripts/publish-components.ts`，**与 app 发版彻底解耦**——换 CLI 版本不用发 app 版本。`CLI_SOURCE`（fusion / official，当前 repo variable 是 official）现在决定的是「发布哪个到服务器」而不是「打包进哪个」。清单契约在 `electron/shared/runtimeComponents.ts`，**平台相关字段（binName / readyProbe）必须挂在 artifact 而不是 entry 上**（放 entry 层会在合并三平台时互相覆盖，Windows 会拿到 mac 的文件名）。完整运维流程与踩坑见 `docs/runtime-components-deploy.md`。
 - 项目已索引进 codebase-memory-mcp（图检索协议由 SessionStart hook 注入，不在此重复）；大规模移动/重命名文件后索引会陈旧，重跑 `index_repository` 再查。
 - 修了 bug 或踩了坑，按全局 CLAUDE.md 规范写进 Obsidian vault 的 errors/ 和 sessions/，并互相加双链。

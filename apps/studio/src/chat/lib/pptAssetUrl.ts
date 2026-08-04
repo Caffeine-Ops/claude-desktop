@@ -1,5 +1,5 @@
 /**
- * 把「ppt-master 项目产物的绝对路径」转成 `pptasset://` URL 供 <img>/<use href>/
+ * 把「ppt-creator 项目产物的绝对路径」转成 `pptasset://` URL 供 <img>/<use href>/
  * fetch 加载（main 侧 handler 见 electron/main/services/pptAssetProtocol.ts，
  * 授权判定是扩展名+目录片段白名单，不是单根守卫——项目根随会话变化）。
  *

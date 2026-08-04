@@ -97,8 +97,8 @@ const TAG_LABEL: Record<string, string> = {
 /**
  * LivePreviewEditor
  * -----------------
- * Native React replication of the ppt-master svg_editor live-preview editor
- * (originally skills/ppt-master/scripts/svg_editor/static/app.js, now deleted
+ * Native React replication of the ppt-creator svg_editor live-preview editor
+ * (originally skills/ppt-creator/scripts/svg_editor/static/app.js, now deleted
  * along with the Flask server it ran on), rendered inside the 「预览幻灯片」
  * canvas tab. There is no HTTP server on this path anymore: slide bytes come
  * from `<projectDir>/svg_output/*.svg` on disk via PPT_PREVIEW_LIST_SLIDES /
@@ -127,7 +127,7 @@ const TAG_LABEL: Record<string, string> = {
  * 记录) that replaced the old right-hand panel, on-canvas FloatingInstruction for
  * editing an element's note, annotation list + delete, and 应用标注到我的 PPT
  * (save-all — the sole dock action; 撤销/退出预览 were removed). These cover the
- * flow the ppt-master pipeline actually uses (annotations are read by the AI to
+ * flow the ppt-creator pipeline actually uses (annotations are read by the AI to
  * redo a page).
  *
  * LATER MODULES (not here yet — marked `MODULE N:`): direct attribute editing
@@ -235,7 +235,7 @@ export function LivePreviewEditor({
   projectDir,
   onProjectGoneChange
 }: {
-  /** ppt-master project's absolute directory — the key every PPT_PREVIEW_*
+  /** ppt-creator project's absolute directory — the key every PPT_PREVIEW_*
    *  IPC reads/writes `svg_output/` and `live_preview/` under. */
   projectDir: string
   // Reported up whenever the project's existence flips. The parent
@@ -262,7 +262,7 @@ export function LivePreviewEditor({
   )
   /**
    * 本次 apply turn 的生命周期（存在 useApplyPhaseStore，按 sid 取当前会话
-   * 那格——为什么不是组件 state 见 store 声明处注释）。ppt-master 侧的
+   * 那格——为什么不是组件 state 见 store 声明处注释）。ppt-creator 侧的
    * 「修改完成」定义是 AI 重写页面时清掉 data-edit-* 标记
    * （check_annotations.py 扫不到即完成），但 /api/slides 的
    * annotation_count 把磁盘标记和内存里未保存的新标注混在一个数里——AI 修
@@ -452,7 +452,7 @@ export function LivePreviewEditor({
   // this the ref stays {} forever and prefill always reads empty ("看不到之前标注").
   annotationsRef.current = annotations
   // Server image URLs that failed to load (canonical URL → probe attempts so
-  // far). ppt-master writes SVG pages that reference images STILL BEING
+  // far). ppt-creator writes SVG pages that reference images STILL BEING
   // generated in the background — those `<image>`s 404 and would stay blank
   // forever, because nothing re-requests them when the file finally lands
   // (the SVG's mtime doesn't change when a sibling PNG appears). The retry

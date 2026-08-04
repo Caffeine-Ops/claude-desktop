@@ -18,7 +18,16 @@ patchProcessEvents()
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { app, dialog, Menu, protocol, session, webContents, type MenuItemConstructorOptions } from 'electron'
+import {
+  app,
+  dialog,
+  Menu,
+  protocol,
+  session,
+  webContents,
+  type BrowserWindow,
+  type MenuItemConstructorOptions
+} from 'electron'
 import { electronApp, is } from '@electron-toolkit/utils'
 
 // TEMP-DEBUG: dev 下开远程调试端口，便于用 Chrome DevTools 连进 web tab 的
@@ -36,6 +45,8 @@ import {
   getActiveTabWebContents,
   getQuitting,
   getShellWindow,
+  handleRenderProcessGone,
+  handleTabLoadFailure,
   hasActiveRuntimes,
   newStudioTab,
   setQuitting,
@@ -50,6 +61,8 @@ import {
 import { APP_SCHEME, registerAppProtocol } from './services/appProtocol'
 import { checkForUpdatesInteractive, initAppUpdater } from './services/appUpdater'
 import { cleanReplayCache } from './replay/replayPackage'
+import { warmPptSkillInBackground } from './services/pptSkillInstaller'
+import { ensureRuntimeComponentsInBackground } from './services/componentInstaller'
 import { KB_ASSET_SCHEME, registerKbAssetProtocol } from './services/kbAssetProtocol'
 import {
   PROPOSAL_ASSET_SCHEME,
@@ -119,7 +132,7 @@ protocol.registerSchemesAsPrivileged([
       stream: true
     }
   },
-  // pptasset:// = ppt-master 项目产物（svg_output/ 引用的图片、图标库源文件），
+  // pptasset:// = ppt-creator 项目产物（svg_output/ 引用的图片、图标库源文件），
   // 供原生 LivePreviewEditor/SourceDeckViewer 直接 <img src>/<use href> 加载，
   // 不必逐个搬字节过 IPC。同上：privileged 声明必须在 ready 前、只能一次。
   {
@@ -263,7 +276,58 @@ function buildMenu(): Menu {
   return Menu.buildFromTemplate(template)
 }
 
+/**
+ * 把工作区窗口带到用户面前：已存在就 restore + show + focus，被销毁了才重建
+ * shell + 唯一的 studio tab。
+ *
+ * 三个调用方共用它：dock / ⌘Tab（app.on('activate')，mac）、托盘的「显示」与
+ * 图标单击（Windows 关窗后窗口只是隐藏，托盘是唯一入口）、以及第二实例被拦下
+ * 时（second-instance——用户双击桌面图标其实就是想看到窗口）。
+ *
+ * 重建分支基本只在窗口异常销毁后才走到：服务早已就绪（startOpenDesignServices
+ * 只在 before-quit 才停），无需再等探活。
+ */
+function revealWorkspaceWindow(): BrowserWindow | null {
+  const existing = getShellWindow()
+  if (existing && !existing.isDestroyed()) {
+    if (existing.isMinimized()) existing.restore()
+    existing.show()
+    existing.focus()
+    return existing
+  }
+  const win = createShellWindow()
+  try {
+    newStudioTab()
+  } catch (err) {
+    console.warn('[main] newStudioTab on reveal failed:', err)
+  }
+  return win
+}
+
+/**
+ * 单实例锁。窗口关进托盘后（win32，见 tabRegistry 的 close 拦截）应用是
+ * 「看不见但活着」的——用户再双击桌面图标就会起第二个实例：两份 daemon 抢同一个
+ * 端口、两份 engine 各自 spawn CLI 子进程、appSettings 互相覆盖。拿不到锁的新实例
+ * 直接退场，并让已有实例把窗口带到前台（second-instance），这正是用户点图标真正
+ * 想要的结果。
+ *
+ * dev 下**刻意不加锁**：electron-vite 的主进程热重启是「旧进程退出」与「新进程
+ * 启动」短暂重叠的，加锁会让重启后的新实例拿不到锁当场自杀，热重载直接废掉。
+ */
+const isSecondaryInstance = !is.dev && !app.requestSingleInstanceLock()
+if (isSecondaryInstance) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    revealWorkspaceWindow()
+  })
+}
+
 app.whenReady().then(async () => {
+  // 第二实例：锁没拿到，上面已经 app.quit()。ready 与 quit 的竞态下这个回调
+  // 仍可能被调度到——直接退场，绝不能让它注册 IPC / 起服务 / 建窗口。
+  if (isSecondaryInstance) return
+
   // 与 package.json build.appId 保持一致（Windows AUMID，通知/任务栏分组
   // 按它归属）。2026-07-05 随 appId 一起从 com.anthropic.* 改名，见
   // package.json 的 //note-appId。
@@ -308,6 +372,39 @@ app.whenReady().then(async () => {
   // console to avoid feeding the panel its own render noise.
   app.on('web-contents-created', (_event, contents) => {
     attachRendererCapture(contents)
+    // 页面级加载失败此前完全静默：promote 的 10s 兜底照常把闪屏推到
+    // 「马上就好」再盖上一块空 view，看起来跟「启动慢」一模一样。
+    contents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL) => {
+      handleTabLoadFailure(contents, errorCode, errorDescription, validatedURL)
+    })
+    // preload 抛错会让 window.chatApi 整个缺失，页面随后在第一次调用时炸。
+    contents.on('preload-error', (_e, preloadPath, error) => {
+      console.error(`[main] preload 执行出错：${preloadPath}`, error)
+    })
+  })
+
+  // ── 崩溃可观测性（2026-08-03 加）──────────────────────────────
+  //
+  // 为什么是 app 级而不是挂在每个 webContents 上：渲染进程可能在 view 建好
+  // 之前就没了（launch-failed），那时还没有可挂钩子的对象。app 级事件覆盖
+  // 全生命周期，且 details 里的 reason/exitCode 正是此前完全拿不到的东西。
+  //
+  // 这不修任何崩溃的根因，它只保证崩溃**会说话**：在此之前，studio 的透明
+  // view 一旦失去渲染进程，用户看到的就是下层原样透出的闪屏，永远停在
+  // 「马上就好」，而日志里唯一的痕迹是 main 往死帧广播时抛的
+  // 「Render frame was disposed」——靠那个倒推根因极其费劲（2026-08-03
+  // Windows 排查实录）。
+  app.on('render-process-gone', (_event, contents, details) => {
+    handleRenderProcessGone(contents, details)
+  })
+
+  // GPU / utility 子进程死亡。渲染进程崩溃常常是 GPU 进程先崩带崩的，
+  // 没这一条就分不清「页面自己炸了」和「显卡那边塌了」。
+  app.on('child-process-gone', (_event, details) => {
+    console.error(
+      `[main] 子进程退出：type=${details.type} reason=${details.reason} ` +
+        `exitCode=${details.exitCode}${details.name ? ` name=${details.name}` : ''}`
+    )
   })
 
   Menu.setApplicationMenu(buildMenu())
@@ -382,11 +479,40 @@ app.whenReady().then(async () => {
     }
   })()
 
-  createTray(() => getShellWindow())
+  // 托盘的目标窗口解析器刻意用 revealWorkspaceWindow 而不是裸 getShellWindow：
+  // Windows 上关窗只是隐藏，托盘是回到应用的**唯一**入口——万一窗口真被销毁过
+  // （渲染进程连环崩溃之类），裸 getShellWindow 会返回 null，托盘「显示」就成了
+  // 点不动的死项，应用变成一个打不开的图标。这里让它有能力把窗口造回来。
+  createTray(() => revealWorkspaceWindow())
 
   // 回放录像解包缓存的后台清理（>14 天未用的目录）。失败静默、不阻塞启动；
   // 被清掉的包重开时自动重新解包，无功能损失。
   void cleanReplayCache()
+
+  // 运行时组件（AI 引擎 / Python 环境）的按需安装。**必须先于下面的 PPT
+  // 预热注册**：ensureRuntimeComponents 内部单飞，这里先起头，warmPptSkill
+  // 的 preparePython 内部会 await 同一个单飞 promise 去 join 它，而不是抢跑
+  // 在它前面拿到一个还没判定完的 pythonHome（2026-08 排查过的竞态：PPT 预热
+  // 若先跑，会在 python-runtime 下载/系统检测完成前就拿到 null，回退系统
+  // python——若用户机器是 3.13/3.14，直接踩进 python-runtime 本来要躲开的
+  // 源码编译卡死坑，表现为「正在准备运行环境」胶囊一直不消失）。
+  //
+  // AI 引擎是必需品，缺了整个应用不能聊天，所以渲染层那道门是挡住的、不可
+  // 关闭的（python-runtime 则不挡，required:false）。
+  //
+  // 这里仍然 fire-and-forget、不 await —— 挡的是门，不是 whenReady。splash
+  // 照常走完、studio 首帧照常出，门在 studio 里立起来。这样即使要下一两分钟，
+  // 用户看到的也是一个正常窗口 + 说明清楚的进度层，而不是一个卡在闪屏上的死壳
+  // （骨架屏那类「越需要越跑不动」的反模式，errors/ 里有同族记录）。
+  //
+  // 必须在 registerIpcHandlers() 之后——广播要有落点。
+  ensureRuntimeComponentsInBackground()
+
+  // ppt-creator skill 的后台预热：它不再随安装包发布（99MB / 12167 文件），
+  // 首次需要时才下载。**刻意不挡启动**——应用照常秒开，只有 PPT 入口在未
+  // 就绪时才挡（用户拍板 2026-07-29）；在这里先跑一遍，让「点进去时已经好了」
+  // 成为常态。全程在 utilityProcess 里做，不占 main 主线程。
+  warmPptSkillInBackground()
 
   // 自动更新：打包形态才真正初始化（dev 下降级为 supported:false 只读态），
   // 内部自带 15s 延迟首查，不跟冷启动抢资源。
@@ -397,35 +523,32 @@ app.whenReady().then(async () => {
     // tabRegistry 的 'close' handler），此时窗口对象、engine、正在跑的
     // fusion-code 子进程全都还在——直接 show 回来，任务和进度原样呈现，
     // 不重建 tab（重建会新起 webContents，旧的迟到 IPC 打到清空的路由表
-    // 就是那堆 `unknown tab` 噪音，还有大树重挂载闪烁）。
-    const existing = getShellWindow()
-    if (existing && !existing.isDestroyed()) {
-      existing.show()
-      existing.focus()
-      return
-    }
-    // 兜底：窗口真被销毁了（理论上只在真退出后，那时不会再触发 activate；
-    // 保留此路径防御异常销毁）。服务早已就绪（startOpenDesignServices 只在
-    // before-quit 才停），无需再等探活，重建 shell + 唯一的 studio tab。
-    createShellWindow()
-    try {
-      newStudioTab()
-    } catch (err) {
-      console.warn('[main] newStudioTab on activate failed:', err)
-    }
+    // 就是那堆 `unknown tab` 噪音，还有大树重挂载闪烁）。窗口真被销毁时的
+    // 重建兜底在 revealWorkspaceWindow 里。
+    revealWorkspaceWindow()
   })
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  // darwin：平台惯例，窗口全关不退应用（dock 图标常驻）。
+  //
+  // win32：关窗走 hide（见 tabRegistry 的 close 拦截），正常路径根本到不了
+  //   这里。能到这里只有两种情况——① 真退出，此时 quit 流程已在跑，什么都不做
+  //   即可；② 窗口异常销毁（渲染进程连环崩溃之类），这时**刻意不 quit**：托盘
+  //   还在，用户点一下就能把窗口重建回来（revealWorkspaceWindow），后台正在跑
+  //   的任务不该因为一次窗口异常被连锅端掉。
+  //
+  // linux：托盘在不少桌面环境不显示（见 tabRegistry 的 close 注释），窗口没了
+  //   就真的没有入口了——保持「关窗即退」的原语义。
+  if (process.platform === 'linux') {
     app.quit()
   }
 })
 
 app.on('before-quit', (event) => {
-  // 真退出意图（⌘Q / 菜单退出 / 托盘退出 / app.quit()）。红叉走 hide 分支
-  // 永远到不了这里（见 tabRegistry 的 'close' handler），所以这里的确认框
-  // 只在用户真想退应用时弹。
+  // 真退出意图（⌘Q / 菜单退出 / 托盘「退出」/ 更新重启 / app.quit()）。mac 红叉
+  // 与 Windows 的 X 都走 hide 分支，永远到不了这里（见 tabRegistry 的 'close'
+  // handler），所以这里的确认框只在用户真想退应用时弹。
   //
   // 有活跃任务才拦一道：退出会 dispose 每个 engine → kill 正在跑的
   // fusion-code 子进程，把用户正在生成的 PPT/长任务拦腰截断。给一个原生

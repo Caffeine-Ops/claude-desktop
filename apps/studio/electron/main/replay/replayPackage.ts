@@ -47,11 +47,11 @@ const MAX_ASSET_BYTES = 30 * 1024 * 1024
  *  跑在已 stringify 的 timeline 文本上，换行/引号在里面是 `\n`/`\"` 转义
  *  序列（字面反斜杠开头）——不排除 `\` 时一个从 `https://…` 起步的匹配
  *  会跨越几 KB 的工具日志直到某个 .png，把区间里的真实路径整段吞掉
- *  （2026-07-13 实测：ppt-master 生图进度日志被一口吞，svg 资产 0 收集）。
+ *  （2026-07-13 实测：ppt-creator 生图进度日志被一口吞，svg 资产 0 收集）。
  *  POSIX 路径不含反斜杠，排除它让匹配撞到任何转义序列立即停。
  *  （代价：Windows 形态的 `C:\...` 路径收不到——win 导出机资产收集需要
  *  另做，见 TODO。）
- *  svg 也收——PPT 会话（ppt-master）的幻灯片是 svg_output/*.svg，回放的
+ *  svg 也收——PPT 会话（ppt-creator）的幻灯片是 svg_output/*.svg，回放的
  *  静态幻灯片面板（ReplaySlidesPanel）从资产里读它们。svg 内部对外链
  *  图片的引用不做递归收集（成品图多为内嵌，边角引用缺失可接受）。 */
 const IMAGE_PATH_RE = /\/(?:[^\n"'`\\]+?)\.(?:png|jpe?g|webp|gif|bmp|svg)/gi
@@ -179,8 +179,8 @@ export function collectConfirmSnapshots(items: readonly ReplayItem[]): ReplayCon
  *
  * 1. 幻灯片目录 = 收集到的 svg 里【svg 数最多的那个目录】。启发式依据：
  *    deck 页集中在一个 svg_output/ 目录（十几张），消息里混入的其他 svg
- *    （ppt-master 模板 charts/、零星图标）分散且量少。不硬编码目录名——
- *    ppt-master 之外的 svg 工作流也适用。少于 2 张不视为 deck，返回空。
+ *    （ppt-creator 模板 charts/、零星图标）分散且量少。不硬编码目录名——
+ *    ppt-creator 之外的 svg 工作流也适用。少于 2 张不视为 deck，返回空。
  * 2. readdir 该目录取【此刻磁盘上的最终页集合】：会话中途删除/改名的
  *    中间页不在盘上，天然排除；按文件名数字序（01_cover…13_closing）。
  * 3. 盘上有但资产还没收到的页（罕见：路径从未完整出现在消息文本里）

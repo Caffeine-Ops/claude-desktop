@@ -53,6 +53,23 @@ export const SCENARIO_SLASH_SPECS: readonly ScenarioSlashSpec[] = [
 const COMMAND_NAME_CHAR = /[a-z0-9_:-]/i
 
 /**
+ * 远端场景目录里标了 `pseudo: true` 的命令名（不含前导 `/`），由
+ * `stores/scenarioCatalog.ts` 灌入。
+ *
+ * **这是接远端配置时最容易漏的一环**：后台在场景目录里加了一个新的导航
+ * 标签，chip 能正常渲染（走 skillChipRegistry 的远端覆盖），但如果它没被
+ * 登记到这里，发送时就剥不掉，`/新命令` 会原样发给 fusion-code 被当成未知
+ * 命令。上面那份 SCENARIO_SLASH_SPECS 是内置兜底（未登录/离线时仍要能用），
+ * 远端名单与它取并集——两边都可能有、都要剥。
+ */
+let remoteScenarioNames: readonly string[] = []
+
+/** 灌入远端伪命令名单（整表替换）。传空数组即只剩内置三个。 */
+export function applyRemoteScenarioSlashNames(names: readonly string[]): void {
+  remoteScenarioNames = names
+}
+
+/**
  * 剥掉 leading 场景伪命令，返回剩余正文；不是场景命令返回 null。
  * 只匹配文本最开头的命令 token——`/` 出现在正文中间不受影响。
  */
@@ -60,8 +77,9 @@ export function stripScenarioSlash(text: string): { rest: string } | null {
   const trimmed = text.trimStart()
   if (!trimmed.startsWith('/')) return null
   const lower = trimmed.toLowerCase()
-  for (const spec of SCENARIO_SLASH_SPECS) {
-    const cmd = `/${spec.name}`
+  const names = [...SCENARIO_SLASH_SPECS.map((s) => s.name), ...remoteScenarioNames]
+  for (const name of names) {
+    const cmd = `/${name.toLowerCase()}`
     if (!lower.startsWith(cmd)) continue
     const next = trimmed[cmd.length]
     if (next !== undefined && COMMAND_NAME_CHAR.test(next)) continue

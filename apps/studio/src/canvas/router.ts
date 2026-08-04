@@ -157,17 +157,18 @@ export function navigate(route: Route, opts: { replace?: boolean } = {}): void {
   // Preserve the existing query string across in-app view switches. Routes
   // only carry pathname info, but boot-time flags like `?host=desktop`
   // (set by the Electron shell so the embedded web tab can hide its
-  // duplicate settings cog) and `?settings=1` must survive navigation —
-  // otherwise pushState would drop them and the flag-gated UI would flip
-  // back on the first nav.
+  // duplicate settings cog) must survive navigation — otherwise pushState
+  // would drop them and the flag-gated UI would flip back on the first nav.
+  // （设置页 2026-07-31 起不再挂 query，不在这条保留名单里，见
+  // stores/surfaceOverlay.ts 的 useSettingsOverlayStore 头注释。）
   //
   // **面开关**（`?market=1` 插件市场 / `?kb=1` 知识库）是**例外，必须剥掉**
-  // （2026-07-17）：上面那些参数是「跟着画布面走的状态」（host flag、canvas
-  // 自己的设置 overlay），而面开关是 SurfaceHost 层**盖在画布面之上的另一个
-  // 面**——语义相反。不剥的话：rail 的项目列表点一个项目 → navigate →
-  // market=1 被带到 /projects/xxx 上 → 那个面继续盖着，用户以为「点了没反应」。
-  // 在这里剥而不是让每个调用方各自 close：canvas 导航的入口很多（rail 项目
-  // 列表、面包屑、卡片、返回按钮…），逐个打补丁必漏——「我要去画布的某个视图」
+  // （2026-07-17）：上面那个参数是「跟着画布面走的状态」（host flag），而
+  // 面开关是 SurfaceHost 层**盖在画布面之上的另一个面**——语义相反。不剥
+  // 的话：rail 的项目列表点一个项目 → navigate → market=1 被带到
+  // /projects/xxx 上 → 那个面继续盖着，用户以为「点了没反应」。在这里剥而
+  // 不是让每个调用方各自 close：canvas 导航的入口很多（rail 项目列表、
+  // 面包屑、卡片、返回按钮…），逐个打补丁必漏——「我要去画布的某个视图」
   // 这个意图本身就蕴含「面让位」，收在唯一出口最稳。剥哪些参数由
   // stores/surfaceOverlay.ts 的 PARAM_BY_KIND 单点决定，加面不用改这里。
   const search = stripSurfaceOverlayParams(window.location.search);

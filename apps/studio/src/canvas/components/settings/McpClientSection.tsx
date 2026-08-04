@@ -36,6 +36,14 @@ import { Button } from '@/src/components/ui/button';
 import { Input } from '@/src/components/ui/input';
 import { Textarea } from '@/src/components/ui/textarea';
 import { Switch } from '@/src/components/ui/switch';
+import { Badge } from '@/src/components/ui/badge';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/src/components/ui/dropdown-menu';
 import {
   Select,
   SelectContent,
@@ -317,7 +325,6 @@ export const McpClientSection = forwardRef<McpClientSectionHandle, Props>(
   const [templates, setTemplates] = useState<McpTemplate[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [savedAt, setSavedAt] = useState<number | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   // Free-text filter at the top of the picker. Empty string = show all.
   // Lives in the section (not the picker render block) so toggling the
@@ -418,7 +425,6 @@ export const McpClientSection = forwardRef<McpClientSectionHandle, Props>(
     setRows(fresh);
     setSavedSig(signature(fresh));
     setTemplates(data.templates);
-    setSavedAt(Date.now());
     onServersChanged?.(data.servers);
     return true;
   };
@@ -430,23 +436,19 @@ export const McpClientSection = forwardRef<McpClientSectionHandle, Props>(
 
   if (!loaded) {
     return (
-      <section className="settings-section">
-        <div className="section-head">
-          <div>
-            <h3>{t('mcpClient.title')}</h3>
-            <p className="hint">{t('common.loading')}</p>
-          </div>
-        </div>
+      <section>
+        <h3 className="text-[15px] font-[650] tracking-[-0.005em]">{t('mcpClient.title')}</h3>
+        <p className="mt-0.5 text-muted-foreground">{t('common.loading')}</p>
       </section>
     );
   }
 
   return (
-    <section className="settings-section">
-      <div className="section-head">
+    <section>
+      <div className="mb-4 flex items-start justify-between gap-6">
         <div>
-          <h3>{t('mcpClient.title')}</h3>
-          <p className="hint">{t('mcpClient.subtitle')}</p>
+          <h3 className="text-[15px] font-[650] tracking-[-0.005em]">{t('mcpClient.title')}</h3>
+          <p className="mt-0.5 text-muted-foreground">{t('mcpClient.subtitle')}</p>
         </div>
         <Button
           type="button"
@@ -481,18 +483,26 @@ export const McpClientSection = forwardRef<McpClientSectionHandle, Props>(
       ) : null}
 
       {error ? (
-        <div className="mcp-error">{error}</div>
+        <div className="mb-3 flex items-start gap-2.5 rounded-xl border border-destructive/35 bg-destructive/[0.07] px-3.5 py-3 text-destructive">
+          <Icon name="info" size={15} />
+          <span>{error}</span>
+        </div>
       ) : null}
 
       {rows.length === 0 ? (
-        <div className="empty-card">
-          <strong>{t('mcpClient.emptyTitle')}</strong>
-          <p className="hint">
+        <div className="rounded-xl border border-dashed bg-card/50 px-8 py-10 text-center">
+          <div className="mx-auto mb-3.5 flex size-10 items-center justify-center rounded-xl bg-muted text-muted-foreground">
+            <Icon name="link" size={19} />
+          </div>
+          <strong className="mb-1.5 block text-sm font-medium">
+            {t('mcpClient.emptyTitle')}
+          </strong>
+          <p className="mx-auto max-w-[46ch] text-muted-foreground">
             {t('mcpClient.emptyBody')}
           </p>
         </div>
       ) : (
-        <div className="mcp-rows">
+        <div className="flex flex-col gap-2">
           {rows.map((row, idx) => (
             <McpRow
               key={row._localId}
@@ -513,29 +523,55 @@ export const McpClientSection = forwardRef<McpClientSectionHandle, Props>(
         </div>
       )}
 
-      <div className="mcp-foot">
-        <Button
-          type="button"
-          variant="default"
-          size="sm"
-          onClick={() => {
-            trackIntegrationsMcpTabClick(analytics.track, {
-              page_name: 'integrations',
-              area: 'mcp_tab',
-              element: 'saved',
-            });
-            void save();
-          }}
-          disabled={saving || !dirty}
-        >
-          {saving ? t('settings.autosaveSaving') : dirty ? t('mcpClient.saveChanges') : t('settings.autosaveSaved')}
-        </Button>
-        {savedAt && !dirty ? (
-          <span className="hint mcp-saved-msg">{t('settings.connectorsSaved')}.</span>
+      {/* 保存条：状态是文字、不是按钮。旧版把「已保存」渲染成一个 disabled
+          的 Button——一个长得完全可点、实则永远点不动的控件，用户会反复去点。
+          现在保存按钮只在 dirty / saving 时存在，其余时候这里只有一行状态。 */}
+      <div className="mt-5 flex items-center gap-3 border-t pt-3.5">
+        <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+          {saving ? (
+            <>
+              <span
+                className="size-3.5 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent"
+                aria-hidden
+              />
+              {t('settings.autosaveSaving')}
+            </>
+          ) : dirty ? (
+            <>
+              <Icon name="info" size={14} />
+              {t('mcpClient.unsavedChanges')}
+            </>
+          ) : (
+            <>
+              <Icon name="check" size={14} />
+              {t('settings.autosaveSaved')}
+            </>
+          )}
+        </span>
+        {dirty || saving ? (
+          <Button
+            type="button"
+            variant="default"
+            size="sm"
+            onClick={() => {
+              trackIntegrationsMcpTabClick(analytics.track, {
+                page_name: 'integrations',
+                area: 'mcp_tab',
+                element: 'saved',
+              });
+              void save();
+            }}
+            disabled={saving}
+          >
+            {t('mcpClient.saveChanges')}
+          </Button>
         ) : null}
-        <span className="mcp-foot-spacer" />
-        <span className="hint">
-          {t('mcpClient.storedAt')} <code>.od/mcp-config.json</code>
+        <span className="flex-1" />
+        <span className="text-muted-foreground">
+          {t('mcpClient.storedAt')}{' '}
+          <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[12px] text-foreground">
+            .od/mcp-config.json
+          </code>
         </span>
       </div>
     </section>
@@ -604,19 +640,18 @@ function PickerPanel({
       cat.id === 'image-editing' ||
       cat.id === 'web-capture';
     return (
-      <details
-        key={cat.id}
-        className="mcp-picker-group"
-        open={defaultOpen}
-      >
-        <summary className="mcp-picker-group-summary">
-          <span className="mcp-picker-group-summary-title">{cat.label}</span>
-          <span className="mcp-picker-group-summary-count">
+      <details key={cat.id} className="group" open={defaultOpen}>
+        <summary
+          data-slot="mcp-picker-group"
+          className="flex cursor-pointer list-none select-none items-center gap-2 border-b bg-muted/55 px-3.5 py-2.5 hover:bg-hover [&::-webkit-details-marker]:hidden"
+        >
+          <span className="font-medium">{cat.label}</span>
+          <span className="rounded-md border px-1.5 py-px font-mono text-[10px] text-muted-foreground">
             {hasQuery ? `${matched.length}/${all.length}` : all.length}
           </span>
-          <span className="mcp-picker-group-summary-hint">{cat.hint}</span>
+          <span className="ml-auto text-muted-foreground">{cat.hint}</span>
         </summary>
-        <div className="mcp-picker-grid">
+        <div className="grid grid-cols-2 gap-2 border-b p-3.5">
           {matched.map((tpl) => (
             <PickerCard key={tpl.id} tpl={tpl} onPick={() => onPick(tpl)} />
           ))}
@@ -626,15 +661,15 @@ function PickerPanel({
   });
 
   return (
-    <div className="mcp-picker">
-      <div className="mcp-picker-head">
-        <div className="mcp-picker-head-row">
-          <strong>Pick a template</strong>
+    <div className="mb-3.5 overflow-hidden rounded-xl border border-input bg-card shadow-sm">
+      <div className="border-b p-3.5">
+        <div className="mb-1 flex items-center justify-between">
+          <strong className="text-sm font-[650]">Pick a template</strong>
           <Button
             type="button"
             variant="ghost"
-            size="icon"
-            className="size-7 text-base"
+            size="icon-xs"
+            className="text-muted-foreground"
             onClick={onClose}
             title="Close picker"
             aria-label="Close picker"
@@ -642,9 +677,9 @@ function PickerPanel({
             ×
           </Button>
         </div>
-        <span className="hint">
+        <p className="mb-2.5 text-muted-foreground">
           Pre-fills the form. You can still edit any field after.
-        </span>
+        </p>
         <Input
           type="search"
           placeholder="Filter by name, transport, capability…"
@@ -655,28 +690,28 @@ function PickerPanel({
         />
       </div>
 
-      <div className="mcp-picker-groups">
+      <div className="max-h-[340px] overflow-y-auto">
         {renderGroups}
         {hasQuery && visibleTotal === 0 ? (
-          <div className="mcp-picker-empty hint">
+          <div className="px-3.5 py-4 text-muted-foreground">
             No templates match &ldquo;{trimmed}&rdquo;. Try clearing the filter
             or use the custom server option below.
           </div>
         ) : null}
       </div>
 
-      <div className="mcp-picker-foot">
+      <div className="p-3.5">
         <button
           type="button"
           data-slot="mcp-picker-custom"
-          className="mcp-picker-item mcp-picker-item-action mcp-picker-custom"
+          className="flex w-full cursor-pointer flex-col gap-0.5 rounded-lg border border-dashed bg-transparent p-2.5 text-left transition-colors hover:border-primary/50 hover:bg-muted/50"
           onClick={onPickBlank}
         >
-          <span className="mcp-picker-item-head">
+          <span className="flex items-center gap-1.5">
             <Icon name="settings" size={13} />
-            <strong>Custom server</strong>
+            <strong className="font-medium">Custom server</strong>
           </span>
-          <span className="mcp-picker-desc">
+          <span className="text-muted-foreground">
             Empty form. Pick stdio or SSE / HTTP and fill the fields yourself.
           </span>
         </button>
@@ -693,30 +728,31 @@ function PickerCard({
   onPick: () => void;
 }) {
   return (
-    <div className="mcp-picker-item">
+    <div className="flex flex-col rounded-lg border bg-background transition-colors hover:border-primary/55">
       <button
         type="button"
         data-slot="mcp-picker-card"
-        className="mcp-picker-item-action"
+        className="flex flex-1 cursor-pointer flex-col gap-1 bg-transparent p-2.5 text-left"
         onClick={onPick}
         title={tpl.description}
       >
-        <span className="mcp-picker-item-head">
+        <span className="flex items-center gap-1.5">
           <Icon name="link" size={13} />
-          <strong>{tpl.label}</strong>
-          <span className="mcp-picker-transport">{tpl.transport}</span>
+          <strong className="font-medium">{tpl.label}</strong>
+          <Badge variant="secondary" className="font-mono text-[10px] uppercase">
+            {tpl.transport}
+          </Badge>
         </span>
-        <span className="mcp-picker-desc">{tpl.description}</span>
+        <span className="text-muted-foreground">{tpl.description}</span>
         {tpl.example ? (
-          <span className="mcp-picker-example">
-            <span className="mcp-picker-example-label">Try:</span>
-            <span className="mcp-picker-example-text">"{tpl.example}"</span>
+          <span className="text-muted-foreground">
+            <span className="font-medium">Try:</span> <span className="italic">"{tpl.example}"</span>
           </span>
         ) : null}
       </button>
       {tpl.homepage ? (
         <a
-          className="mcp-picker-homepage"
+          className="flex items-center gap-1 border-t px-2.5 py-1.5 text-muted-foreground hover:text-foreground"
           href={tpl.homepage}
           target="_blank"
           rel="noreferrer noopener"
@@ -751,24 +787,30 @@ function McpRow({ row, idx, total, template, onChange, onRemove, onMoveUp, onMov
   const summaryTitle = row.label?.trim() || row.id || 'Unnamed MCP server';
   const [showMcpExample, setShowMcpExample] = useState<boolean>(false);
   const helperId = `mcp-json-helper-panel-${row._localId}`;
+  const t = useT();
+
+  // 折叠态副行：不展开也能认出这台服务器是什么。stdio 显示实际会 spawn 的
+  // 命令行，HTTP/SSE 显示 URL —— 旧版折叠行只有一个名字，用户想确认配置
+  // 必须逐个展开。
+  const summarySubtitle =
+    row.transport === 'stdio'
+      ? [row.command, ...(row.args ?? [])].filter(Boolean).join(' ')
+      : row.url ?? '';
 
   return (
     <div
-      className={`mcp-row${row.enabled ? '' : ' mcp-row-disabled'}${
-        expanded ? ' mcp-row-expanded' : ''
-      }`}
+      data-expanded={expanded ? '' : undefined}
+      data-off={row.enabled ? undefined : ''}
+      className="group/row rounded-xl border bg-card shadow-xs transition-all hover:border-input data-[expanded]:border-input data-[expanded]:shadow-sm data-[off]:opacity-60"
     >
-      <div className="mcp-row-head">
-        <span
-          className="flex items-center"
+      <div className="flex items-center gap-2.5 py-2.5 pl-2.5 pr-2.5">
+        <Switch
+          checked={row.enabled}
+          onCheckedChange={(checked) => onChange({ enabled: checked })}
+          aria-label="Enable this MCP server"
           title={row.enabled ? 'Enabled' : 'Disabled'}
-        >
-          <Switch
-            checked={row.enabled}
-            onCheckedChange={(checked) => onChange({ enabled: checked })}
-            aria-label="Enable this MCP server"
-          />
-        </span>
+        />
+
         {expanded ? (
           <Input
             type="text"
@@ -780,148 +822,173 @@ function McpRow({ row, idx, total, template, onChange, onRemove, onMoveUp, onMov
         ) : (
           <button
             type="button"
-            data-slot="mcp-row-summary-title"
-            className="mcp-row-summary-title"
+            data-slot="mcp-row-summary"
+            className="flex min-w-0 flex-1 cursor-pointer flex-col gap-px bg-transparent p-0 text-left"
             onClick={() => setExpanded(true)}
             title="Expand to edit"
           >
-            <span className="mcp-row-summary-name">{summaryTitle}</span>
-            <span
-              className="mcp-row-summary-transport"
-              aria-label={`Transport: ${row.transport}`}
-            >
-              {row.transport}
+            <span className="flex min-w-0 items-center gap-2">
+              <span
+                className={`truncate text-sm font-medium ${row.enabled ? '' : 'text-muted-foreground'}`}
+              >
+                {summaryTitle}
+              </span>
+              <Badge
+                variant="secondary"
+                className="font-mono text-[10px] uppercase tracking-wide"
+                aria-label={`Transport: ${row.transport}`}
+              >
+                {row.transport}
+              </Badge>
             </span>
+            {summarySubtitle ? (
+              <span className="w-full truncate font-mono text-[11.5px] text-muted-foreground">
+                {summarySubtitle}
+              </span>
+            ) : null}
           </button>
         )}
-        <span className="mcp-row-counter hint">
-          {idx + 1} / {total}
+
+        {/* 启用状态。旧版这里是 `idx+1 / total` 计数器——占着视觉重心却零
+            信息量（用户不关心这是第几行）。工具数 / 连接活性才是真正有用的
+            信息，但 daemon 目前不返回，所以先只表达 enabled。 */}
+        <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground">
+          {row.enabled ? (
+            <>
+              <span className="size-1.5 shrink-0 rounded-full bg-brand" aria-hidden />
+              {t('mcpClient.rowEnabled')}
+            </>
+          ) : (
+            t('mcpClient.rowDisabled')
+          )}
         </span>
-        <div className="mcp-row-actions">
-          {onMoveUp ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-7"
-              onClick={onMoveUp}
-              title="Move up"
-            >
-              ↑
-            </Button>
-          ) : null}
-          {onMoveDown ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-7"
-              onClick={onMoveDown}
-              title="Move down"
-            >
-              ↓
-            </Button>
-          ) : null}
+
+        <div className="flex shrink-0 items-center gap-0.5">
+          {/* 旧版把上移 / 下移 / 删除三个裸符号按钮（↑ ↓ ×）常驻并排，
+              一行四个控件抢注意力，且 × 紧挨展开箭头极易误删。收进菜单后
+              行内只剩「开关 + 展开」两个高频动作。 */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              {/* 平时隐身、hover 行才浮现，避免三个次要动作长期占视觉带宽。
+                  展开态 = 用户正在编辑这一行，此时常驻显示。 */}
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="text-muted-foreground opacity-0 transition-opacity focus-visible:opacity-100 group-hover/row:opacity-100 group-data-[expanded]/row:opacity-100 data-[state=open]:opacity-100"
+                title={t('mcpClient.rowMore')}
+                aria-label={t('mcpClient.rowMore')}
+              >
+                <Icon name="more-horizontal" size={15} />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem disabled={!onMoveUp} onSelect={() => onMoveUp?.()}>
+                {t('mcpClient.rowMoveUp')}
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={!onMoveDown} onSelect={() => onMoveDown?.()}>
+                {t('mcpClient.rowMoveDown')}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onSelect={() => onRemove()}>
+                {t('mcpClient.rowRemove')}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
           <Button
             type="button"
             variant="ghost"
-            size="icon"
-            className="size-7 text-base"
-            onClick={onRemove}
-            title="Remove this MCP server"
-          >
-            ×
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-7 mcp-row-toggle-btn"
+            size="icon-sm"
+            className="text-muted-foreground"
             onClick={() => setExpanded((v) => !v)}
             aria-expanded={expanded}
             aria-label={expanded ? 'Collapse this MCP server' : 'Expand this MCP server'}
             title={expanded ? 'Collapse' : 'Expand'}
           >
-            <Icon name="chevron-down" size={13} />
+            <span className={expanded ? 'block rotate-180 transition-transform' : 'block transition-transform'}>
+              <Icon name="chevron-down" size={13} />
+            </span>
           </Button>
         </div>
       </div>
 
       {expanded ? (
-        <>
+        <div className="flex flex-col gap-3 border-t p-3.5">
           {template ? (
-            <details className="mcp-row-info">
-              <summary className="mcp-row-info-summary">
-                <span className="mcp-row-info-summary-label">
-                  About {template.label}
-                </span>
+            <div className="flex items-start gap-2 rounded-lg bg-muted px-3 py-2.5 text-muted-foreground">
+              <span className="mt-0.5 shrink-0">
+                <Icon name="info" size={14} />
+              </span>
+              <span>
+                {template.description ? (
+                  <>
+                    <strong className="font-medium text-foreground">{template.label}</strong>
+                    {' — '}
+                    {template.description}{' '}
+                  </>
+                ) : null}
                 {template.homepage ? (
                   <a
-                    className="mcp-row-info-link"
+                    className="text-primary underline-offset-4 hover:underline"
                     href={template.homepage}
                     target="_blank"
                     rel="noreferrer noopener"
                     title={template.homepage}
-                    onClick={(e) => e.stopPropagation()}
                   >
-                    <Icon name="external-link" size={11} />
-                    <span>Homepage</span>
+                    {t('mcpClient.templateHomepage')}
                   </a>
                 ) : null}
-              </summary>
-              <div className="mcp-row-info-body">
-                {template.description ? (
-                  <p className="mcp-row-info-desc hint">{template.description}</p>
-                ) : null}
                 {template.example ? (
-                  <p
-                    className="mcp-row-info-example"
+                  <span
+                    className="mt-1 block"
                     title="Paste this prompt into the chat composer to try the server end-to-end"
                   >
-                    <span className="mcp-row-info-example-label">Try:</span>{' '}
-                    <span className="mcp-row-info-example-text">"{template.example}"</span>
-                  </p>
+                    <span className="font-medium">{t('mcpClient.templateTry')}</span>{' '}
+                    <span className="italic">"{template.example}"</span>
+                  </span>
                 ) : null}
-              </div>
-            </details>
+              </span>
+            </div>
           ) : null}
 
           {isHttpLike && !row._isNew && row.id ? (
             usesManagedOAuth ? (
               <McpOAuthControl serverId={row.id} />
             ) : (
-              <div className="mcp-oauth-hint hint">
-                <strong>No managed OAuth.</strong> Open Design will use this
-                server as configured. Add headers below if the server needs a
-                token.
+              <div className="rounded-lg bg-muted px-3 py-2.5 text-muted-foreground">
+                <strong className="font-medium text-foreground">No managed OAuth.</strong>{' '}
+                Open Design will use this server as configured. Add headers below
+                if the server needs a token.
               </div>
             )
           ) : null}
           {isHttpLike && row._isNew && usesManagedOAuth ? (
-            <div className="mcp-oauth-hint hint">
-              Save first, then click <strong>Connect</strong> to grant Open Design
-              access via the provider's OAuth flow.
+            <div className="rounded-lg bg-muted px-3 py-2.5 text-muted-foreground">
+              Save first, then click <strong className="font-medium text-foreground">Connect</strong>{' '}
+              to grant Open Design access via the provider's OAuth flow.
             </div>
           ) : null}
           {isHttpLike && row._isNew && !usesManagedOAuth ? (
-            <div className="mcp-oauth-hint hint">
-              <strong>No managed OAuth.</strong> Save this server and Open Design
-              will use it directly.
+            <div className="rounded-lg bg-muted px-3 py-2.5 text-muted-foreground">
+              <strong className="font-medium text-foreground">No managed OAuth.</strong>{' '}
+              Save this server and Open Design will use it directly.
             </div>
           ) : null}
 
-          <div className="mcp-row-grid">
-            <label className="mcp-row-field">
-              <span className="mcp-row-field-label">ID</span>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="flex flex-col gap-1.5">
+              <span className="font-medium text-muted-foreground">ID</span>
               <Input
                 type="text"
+                className="font-mono"
                 value={row.id}
                 onChange={(e) => onChange({ id: e.target.value })}
                 spellCheck={false}
               />
             </label>
-            <label className="mcp-row-field">
-              <span className="mcp-row-field-label">Transport</span>
+            <label className="flex flex-col gap-1.5">
+              <span className="font-medium text-muted-foreground">Transport</span>
               <Select
                 value={row.transport}
                 onValueChange={(v) => {
@@ -948,20 +1015,22 @@ function McpRow({ row, idx, total, template, onChange, onRemove, onMoveUp, onMov
 
           {row.transport === 'stdio' ? (
             <>
-              <label className="mcp-row-field mcp-row-field-stack">
-                <span className="mcp-row-field-label">Command</span>
+              <label className="flex flex-col gap-1.5">
+                <span className="font-medium text-muted-foreground">Command</span>
                 <Input
                   type="text"
+                  className="font-mono"
                   value={row.command ?? ''}
                   placeholder="e.g. npx, node, /path/to/binary"
                   onChange={(e) => onChange({ command: e.target.value })}
                   spellCheck={false}
                 />
               </label>
-              <label className="mcp-row-field mcp-row-field-stack">
-                <span className="mcp-row-field-label">Args</span>
+              <label className="flex flex-col gap-1.5">
+                <span className="font-medium text-muted-foreground">Args</span>
                 <Input
                   type="text"
+                  className="font-mono"
                   value={(row.args ?? []).join(' ')}
                   placeholder="space-separated"
                   onChange={(e) =>
@@ -975,9 +1044,10 @@ function McpRow({ row, idx, total, template, onChange, onRemove, onMoveUp, onMov
                   spellCheck={false}
                 />
               </label>
-              <label className="mcp-row-field mcp-row-field-stack">
-                <span className="mcp-row-field-label">Env (KEY=VALUE)</span>
+              <label className="flex flex-col gap-1.5">
+                <span className="font-medium text-muted-foreground">Env (KEY=VALUE)</span>
                 <Textarea
+                  className="font-mono"
                   rows={Math.max(2, (row._envText ?? '').split('\n').length)}
                   value={row._envText ?? ''}
                   placeholder="GITHUB_TOKEN=ghp_…"
@@ -988,8 +1058,8 @@ function McpRow({ row, idx, total, template, onChange, onRemove, onMoveUp, onMov
             </>
           ) : (
             <>
-              <label className="mcp-row-field mcp-row-field-stack">
-                <span className="mcp-row-field-label">OAuth mode</span>
+              <label className="flex flex-col gap-1.5">
+                <span className="font-medium text-muted-foreground">OAuth mode</span>
                 <Select
                   value={effectiveMcpAuthMode(row)}
                   onValueChange={(v) =>
@@ -1007,10 +1077,11 @@ function McpRow({ row, idx, total, template, onChange, onRemove, onMoveUp, onMov
                   </SelectContent>
                 </Select>
               </label>
-              <label className="mcp-row-field mcp-row-field-stack">
-                <span className="mcp-row-field-label">URL</span>
+              <label className="flex flex-col gap-1.5">
+                <span className="font-medium text-muted-foreground">URL</span>
                 <Input
                   type="text"
+                  className="font-mono"
                   value={row.url ?? ''}
                   placeholder="https://mcp.higgsfield.ai/mcp"
                   onChange={(e) => {
@@ -1020,9 +1091,10 @@ function McpRow({ row, idx, total, template, onChange, onRemove, onMoveUp, onMov
                   spellCheck={false}
                 />
               </label>
-              <label className="mcp-row-field mcp-row-field-stack">
-                <span className="mcp-row-field-label">Headers (KEY=VALUE)</span>
+              <label className="flex flex-col gap-1.5">
+                <span className="font-medium text-muted-foreground">Headers (KEY=VALUE)</span>
                 <Textarea
+                  className="font-mono"
                   rows={Math.max(2, (row._headersText ?? '').split('\n').length)}
                   value={row._headersText ?? ''}
                   placeholder="Authorization=Bearer …"
@@ -1033,97 +1105,83 @@ function McpRow({ row, idx, total, template, onChange, onRemove, onMoveUp, onMov
             </>
           )}
 
-          <div className={`mcp-json-helper ${showMcpExample ? 'is-open' : ''}`}>
+          <div className="overflow-hidden rounded-md border">
             <button
               type="button"
               data-slot="mcp-json-helper-toggle"
-              className="mcp-json-helper-toggle"
+              className="flex w-full cursor-pointer select-none items-center gap-2 bg-transparent px-3 py-2.5 text-left text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
               aria-expanded={showMcpExample}
               aria-controls={helperId}
               onClick={() => setShowMcpExample((prev) => !prev)}
             >
-              <span className="mcp-json-helper-toggle-content">
-                <span className="mcp-json-helper-eye">
-                  <Icon name="eye" />
-                </span>
-                <span className="mcp-json-helper-toggle-text">
-                  Need help? Map your MCP server's JSON config using the example below.
-                </span>
+              <span className="shrink-0">
+                <Icon name="eye" size={14} />
               </span>
-              <span className="mcp-json-helper-toggle-icon">
-                {showMcpExample ? (
-                  <Icon name="arrow-up" />
-                ) : (
-                  <Icon name="chevron-down" />
-                )}
+              <span className="flex-1">
+                Need help? Map your MCP server's JSON config using the example below.
+              </span>
+              <span className={showMcpExample ? 'shrink-0 rotate-180 transition-transform' : 'shrink-0 transition-transform'}>
+                <Icon name="chevron-down" size={14} />
               </span>
             </button>
 
             {showMcpExample && (
-              <div className="mcp-json-helper-example" id={helperId}>
-                <div className="mcp-json-helper-example-head">
+              <div className="px-3 pb-3" id={helperId}>
+                <div className="mb-1.5 font-medium text-muted-foreground">
                   Example MCP JSON
                 </div>
-                <pre className="mcp-json-helper-code">
+                <pre className="mb-2.5 overflow-x-auto rounded-md bg-muted p-3 font-mono text-[11.5px] leading-relaxed">
                   <code>
-                    <span className="json-punctuation">{"{"}</span>
+                    <span className="text-muted-foreground">{"{"}</span>
                     {"\n  "}
-                    <span className="json-key">"mcpServers"</span>
-                    <span className="json-punctuation">: {"{"}</span>
+                    <span className="text-primary">"mcpServers"</span>
+                    <span className="text-muted-foreground">: {"{"}</span>
                     {"\n    "}
-                    <span className="json-key">"tdesign"</span>
-                    <span className="json-punctuation">: {"{"}</span>
+                    <span className="text-primary">"tdesign"</span>
+                    <span className="text-muted-foreground">: {"{"}</span>
                     {"\n      "}
-                    <span className="json-key">"command"</span>
-                    <span className="json-punctuation">:</span>{" "}
-                    <span className="json-string">"npx"</span>
-                    <span className="json-punctuation">,</span>
+                    <span className="text-primary">"command"</span>
+                    <span className="text-muted-foreground">:</span>{" "}
+                    <span className="text-brand">"npx"</span>
+                    <span className="text-muted-foreground">,</span>
                     {"\n      "}
-                    <span className="json-key">"args"</span>
-                    <span className="json-punctuation">: [</span>
-                    <span className="json-string">"-y"</span>
-                    <span className="json-punctuation">, </span>
-                    <span className="json-string">"tdesign-mcp-server@latest"</span>
-                    <span className="json-punctuation">],</span>
+                    <span className="text-primary">"args"</span>
+                    <span className="text-muted-foreground">: [</span>
+                    <span className="text-brand">"-y"</span>
+                    <span className="text-muted-foreground">, </span>
+                    <span className="text-brand">"tdesign-mcp-server@latest"</span>
+                    <span className="text-muted-foreground">],</span>
                     {"\n      "}
-                    <span className="json-key">"env"</span>
-                    <span className="json-punctuation">: {"{"}</span>
+                    <span className="text-primary">"env"</span>
+                    <span className="text-muted-foreground">: {"{"}</span>
                     {"\n        "}
-                    <span className="json-key">"API_KEY"</span>
-                    <span className="json-punctuation">:</span>{" "}
-                    <span className="json-string">"your-key-here"</span>
+                    <span className="text-primary">"API_KEY"</span>
+                    <span className="text-muted-foreground">:</span>{" "}
+                    <span className="text-brand">"your-key-here"</span>
                     {"\n      "}
-                    <span className="json-punctuation">{"}"}</span>
+                    <span className="text-muted-foreground">{"}"}</span>
                     {"\n    "}
-                    <span className="json-punctuation">{"}"}</span>
+                    <span className="text-muted-foreground">{"}"}</span>
                     {"\n  "}
-                    <span className="json-punctuation">{"}"}</span>
+                    <span className="text-muted-foreground">{"}"}</span>
                     {"\n"}
-                    <span className="json-punctuation">{"}"}</span>
+                    <span className="text-muted-foreground">{"}"}</span>
                   </code>
                 </pre>
-                <div className="mcp-json-helper-conversion">
-                  <div>
-                    <strong>Command</strong>
-                    <code>npx</code>
-                  </div>
-                  <div>
-                    <strong>Args</strong>
-                    <code>-y tdesign-mcp-server@latest</code>
-                  </div>
-                  <div>
-                    <strong>Env</strong>
-                    <code>API_KEY = your-key-here</code>
-                  </div>
-                  <div>
-                    <strong>HTTP / SSE</strong>
-                    <code>use url + headers instead of command / args</code>
-                  </div>
+                <div className="grid grid-cols-[84px_1fr] items-center gap-x-3 gap-y-1.5">
+                  <strong className="font-medium text-muted-foreground">Command</strong>
+                  <code className="w-fit rounded bg-muted px-1.5 py-0.5 font-mono text-[11.5px]">npx</code>
+                  <strong className="font-medium text-muted-foreground">Args</strong>
+                  <code className="w-fit rounded bg-muted px-1.5 py-0.5 font-mono text-[11.5px]">-y tdesign-mcp-server@latest</code>
+                  <strong className="font-medium text-muted-foreground">Env</strong>
+                  <code className="w-fit rounded bg-muted px-1.5 py-0.5 font-mono text-[11.5px]">API_KEY = your-key-here</code>
+                  <strong className="font-medium text-muted-foreground">HTTP / SSE</strong>
+                  <code className="w-fit rounded bg-muted px-1.5 py-0.5 font-mono text-[11.5px]">use url + headers instead of command / args</code>
                 </div>
               </div>
             )}
           </div>
-        </>
+        </div>
       ) : null}
     </div>
   );
@@ -1299,26 +1357,27 @@ function McpOAuthControl({ serverId }: { serverId: string }) {
   const isAwaiting = busy === 'awaiting' || (Boolean(pendingAuthUrl) && !connected);
 
   return (
-    <div className={`mcp-oauth-control${connected ? ' connected' : ''}`}>
-      <div className="mcp-oauth-status" aria-live="polite">
+    // 注意：legacy 的 .mcp-oauth-* CSS 仍留在 canvas 样式里——同名类被
+    // XaiOAuthControl.tsx 复用，删了会连坐打坏 xAI 授权面板。这里只是不再
+    // 引用它们，改用 utility；两者观感会暂时分叉，等 Xai 那侧一并迁移。
+    <div className="flex flex-col gap-2.5 rounded-lg border bg-background p-3 dark:bg-input/30">
+      <div className="flex items-center gap-2" aria-live="polite">
         {connected ? (
           <>
-            <span className="mcp-oauth-dot mcp-oauth-dot-ok" aria-hidden />
+            <span className="size-1.5 shrink-0 rounded-full bg-brand" aria-hidden />
             <span>
-              <strong>Connected.</strong>{' '}
-              {expiresLabel ? (
-                <span className="hint">Token expires {expiresLabel}.</span>
-              ) : (
-                <span className="hint">Non-expiring token.</span>
-              )}
+              <strong className="font-medium">Connected.</strong>{' '}
+              <span className="text-muted-foreground">
+                {expiresLabel ? `Token expires ${expiresLabel}.` : 'Non-expiring token.'}
+              </span>
             </span>
           </>
         ) : isAwaiting ? (
           <>
-            <span className="mcp-oauth-dot mcp-oauth-dot-pending" aria-hidden />
+            <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-primary" aria-hidden />
             <span>
-              <strong>Waiting for authorization…</strong>{' '}
-              <span className="hint">
+              <strong className="font-medium">Waiting for authorization…</strong>{' '}
+              <span className="text-muted-foreground">
                 Approve in the browser tab that opened. We'll catch the callback
                 automatically — or click Refresh below if you completed it
                 already.
@@ -1327,10 +1386,10 @@ function McpOAuthControl({ serverId }: { serverId: string }) {
           </>
         ) : (
           <>
-            <span className="mcp-oauth-dot" aria-hidden />
+            <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/60" aria-hidden />
             <span>
-              <strong>Not connected.</strong>{' '}
-              <span className="hint">
+              <strong className="font-medium">Not connected.</strong>{' '}
+              <span className="text-muted-foreground">
                 Click Connect to grant Open Design access via the provider's OAuth flow.
               </span>
             </span>
@@ -1338,7 +1397,7 @@ function McpOAuthControl({ serverId }: { serverId: string }) {
         )}
       </div>
 
-      <div className="mcp-oauth-actions">
+      <div className="flex flex-wrap items-center gap-2">
         {connected ? (
           <>
             <Button
@@ -1401,23 +1460,21 @@ function McpOAuthControl({ serverId }: { serverId: string }) {
       </div>
 
       {pendingAuthUrl && !connected ? (
-        <div className="mcp-oauth-fallback">
-          <span className="hint">
-            Browser didn't open?{' '}
-            <a
-              href={pendingAuthUrl}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="md-link"
-            >
-              Open authorization page
-            </a>
-            .
-          </span>
+        <div className="text-muted-foreground">
+          Browser didn't open?{' '}
+          <a
+            href={pendingAuthUrl}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="text-primary underline-offset-4 hover:underline"
+          >
+            Open authorization page
+          </a>
+          .
         </div>
       ) : null}
 
-      {error ? <div className="mcp-oauth-error">{error}</div> : null}
+      {error ? <div className="text-destructive">{error}</div> : null}
     </div>
   );
 }
@@ -1436,6 +1493,7 @@ function McpOAuthControl({ serverId }: { serverId: string }) {
  * Rendered above the picker so it is the first thing the user reads.
  */
 function McpAgentSupportBanner({ agents }: { agents: AgentInfo[] }) {
+  const t = useT();
   // Empty payload = either still loading or daemon unreachable. Either
   // way, render nothing — the error banner below already covers the
   // "daemon unreachable" path and we don't want to flash an empty hint
@@ -1462,43 +1520,82 @@ function McpAgentSupportBanner({ agents }: { agents: AgentInfo[] }) {
   // HTTP / SSE entries. Tag those runtimes inline so the banner does
   // not silently claim full forwarding for HTTP MCP servers, which
   // would re-introduce the very silent-failure UX we are removing.
-  const renderNames = (list: AgentInfo[]) =>
-    list
-      .slice()
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((a) =>
-        a.externalMcpInjection === 'acp-merge'
-          ? `${a.name} (stdio only)`
-          : a.name,
-      )
-      .join(' · ');
+  // 旧版把两组 agent 名拼成一整段密集英文散文（外加一大段 ACP / 配置文件
+  // 说明），信息密度高但一眼读不出「谁收得到、谁收不到」。改成一行一组的
+  // Badge：名字本身成为可扫视的单元，长解释收进折叠，只在用户主动想读时展开。
+  const sortNames = (list: AgentInfo[]) =>
+    list.slice().sort((a, b) => a.name.localeCompare(b.name));
   const hasAcpSupported = supported.some(
     (a) => a.externalMcpInjection === 'acp-merge',
   );
   return (
-    <div className="mcp-agent-support">
+    <div className="mb-3.5 overflow-hidden rounded-xl border bg-card shadow-xs">
       {supported.length > 0 ? (
-        <p className="hint mcp-agent-support-line">
-          <strong>Forwarded to:</strong> {renderNames(supported)}.
-          {hasAcpSupported ? (
-            <>
-              {' '}
-              ACP adapters marked <em>stdio only</em> receive
-              <code>stdio</code> MCP servers from this list; HTTP and SSE
-              entries are dropped at spawn time.
-            </>
-          ) : null}
-        </p>
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 px-3.5 py-2.5">
+          <span className="flex w-[74px] shrink-0 items-center gap-1.5 font-medium text-muted-foreground">
+            <span className="size-1.5 shrink-0 rounded-full bg-brand" aria-hidden />
+            {t('mcpClient.forwardedTo')}
+          </span>
+          {sortNames(supported).map((a) => (
+            <Badge key={a.id} variant="secondary" className="gap-1.5">
+              {a.name}
+              {a.externalMcpInjection === 'acp-merge' ? (
+                <span className="border-l border-border pl-1.5 font-mono text-[10px] text-muted-foreground">
+                  {t('mcpClient.stdioOnly')}
+                </span>
+              ) : null}
+            </Badge>
+          ))}
+        </div>
       ) : null}
+
       {unsupported.length > 0 ? (
-        <p className="hint mcp-agent-support-line mcp-agent-support-unsupported">
-          <strong>Not forwarded to:</strong> {renderNames(unsupported)}. For
-          those agents, configure MCP servers in the agent's own config file
-          (e.g.&nbsp;<code>~/.codex/config.toml</code>,&nbsp;
-          <code>~/.gemini/settings.json</code>); the servers below are
-          silently unused there.
-        </p>
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 border-t px-3.5 py-2.5">
+          <span className="flex w-[74px] shrink-0 items-center gap-1.5 font-medium text-muted-foreground">
+            {/* 没有 --warning 语义 token（见文件头注），用中性点 + 弱化文字
+                表达「不生效」，不自造色相。 */}
+            <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/60" aria-hidden />
+            {t('mcpClient.notForwardedTo')}
+          </span>
+          {sortNames(unsupported).map((a) => (
+            <Badge key={a.id} variant="secondary" className="text-muted-foreground">
+              {a.name}
+            </Badge>
+          ))}
+        </div>
       ) : null}
+
+      <details className="group border-t bg-muted/50">
+        <summary
+          data-slot="mcp-forward-more"
+          className="flex cursor-pointer list-none select-none items-center gap-1.5 px-3.5 py-2 text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden"
+        >
+          <span className="transition-transform group-open:rotate-180">
+            <Icon name="chevron-down" size={13} />
+          </span>
+          {t('mcpClient.howToConfigure')}
+        </summary>
+        <div className="max-w-[62ch] pb-3 pl-8 pr-3.5 text-muted-foreground">
+          {unsupported.length > 0 ? (
+            <p>
+              {t('mcpClient.notForwardedHelp')}{' '}
+              <code className="rounded bg-muted px-1.5 py-px text-[12px] text-foreground">
+                ~/.codex/config.toml
+              </code>
+              、
+              <code className="rounded bg-muted px-1.5 py-px text-[12px] text-foreground">
+                ~/.gemini/settings.json
+              </code>
+              。
+            </p>
+          ) : null}
+          {hasAcpSupported ? (
+            <p className={unsupported.length > 0 ? 'mt-2' : undefined}>
+              {t('mcpClient.acpStdioHelp')}
+            </p>
+          ) : null}
+        </div>
+      </details>
     </div>
   );
 }

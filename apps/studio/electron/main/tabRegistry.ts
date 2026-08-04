@@ -11,17 +11,20 @@ import { fileURLToPath } from 'url'
 import appIcon from '../../resources/icon.png?asset'
 import { ChatEngine, createChatEngine } from './core/engine'
 import { getThemeMode, resolveIsDarkTheme, setThemeMode } from './core/appSettings'
-import { clearUnread } from './tray'
-import { finishSplashThenSettle, loadSplashIntoShell } from './splash'
+import { clearUnread, notifyHiddenToTray } from './tray'
+import { finishSplashThenSettle, loadSplashIntoShell, showSplashError } from './splash'
 import { resolveStudioTabUrl } from './services/openDesignServices'
 import {
   IPC_CHANNELS,
   type AuthState,
+  type ScenarioCatalog,
   type ShellMenuAction,
   type TabDescriptor,
   type UpdaterState
 } from '../shared/ipc-channels'
 import type { KbSyncStatus } from '../shared/kbSyncStatus'
+import type { PptSkillStatus } from '../shared/pptSkillStatus'
+import type { RuntimeComponentsState } from '../shared/runtimeComponents'
 import type { KbCatalogStatusPayload } from '../shared/ipc-channels'
 import type { KbBuildStatus } from '../shared/kbBuildStatus'
 
@@ -233,21 +236,36 @@ export function createShellWindow(): BrowserWindow {
     minHeight: 778,
     show: false,
     autoHideMenuBar: true,
-    titleBarStyle: 'hiddenInset',
-    // Traffic lights sit directly over the active tab's renderer
-    // header — the renderer's `.header` reserves left padding so
-    // the buttons don't overlap any content.
-    // y=17：studio tab 的 WebContentsView 全屏 flush（setBounds x0 y0，见
-    // layoutActiveTab 的 studio 分支），所以窗口坐标 == renderer 视口坐标。
-    // 内容面 46px 标题栏（含收起态展开图标、标题、AI生成徽标）从 y=0 起
-    // （2026-07-08 平铺化去掉了 stage 的 10px 顶部 gutter，见 globals.css
-    // .shell-stage 注释），垂直中线 = 23；红绿灯按钮 ⌀12，position.y 是按钮
-    // 顶部，故 23-6=17 让三者垂直居中对齐。浮卡时代的旧值 27 对的是
-    // 「gutter 10 + header 46」的中线 33，平铺后会偏低 10px。
-    // x=30：整组（红绿灯 + 收起态图标排）离左边缘再放开一档（用户 2026-07-05
-    // 要求「整体往右移」）。旧值 14 太贴边。必须与 RailShell 收起态图标排的
-    // left-[100px] 联动同增：图标排起点 = 红绿灯净空右缘，两者错位就不成一横。
-    trafficLightPosition: { x: 30, y: 17 },
+    ...(process.platform === 'darwin'
+      ? {
+          // Traffic lights sit directly over the active tab's renderer
+          // header — the renderer's `.header` reserves left padding so
+          // the buttons don't overlap any content.
+          // y=17：studio tab 的 WebContentsView 全屏 flush（setBounds x0 y0，见
+          // layoutActiveTab 的 studio 分支），所以窗口坐标 == renderer 视口坐标。
+          // 内容面 46px 标题栏（含收起态展开图标、标题、AI生成徽标）从 y=0 起
+          // （2026-07-08 平铺化去掉了 stage 的 10px 顶部 gutter，见 globals.css
+          // .shell-stage 注释），垂直中线 = 23；红绿灯按钮 ⌀12，position.y 是按钮
+          // 顶部，故 23-6=17 让三者垂直居中对齐。浮卡时代的旧值 27 对的是
+          // 「gutter 10 + header 46」的中线 33，平铺后会偏低 10px。
+          // x=30：整组（红绿灯 + 收起态图标排）离左边缘再放开一档（用户 2026-07-05
+          // 要求「整体往右移」）。旧值 14 太贴边。必须与 RailShell 收起态图标排的
+          // `--shell-top-icons-left` token（globals.css，mac 值 100px）联动同增：
+          // 图标排起点 = 红绿灯净空右缘，两者错位就不成一横。
+          //
+          // 2026-08 显式限定 darwin（此前无条件写在两平台共用的对象里）：
+          // Electron 源码里 `titleBarStyle:'hiddenInset'` 的解析包在
+          // `#if BUILDFLAG(IS_MAC)` 内，win32/linux 上这个值本就无法识别、静默
+          // 落回默认的原生 framed 窗口（`trafficLightPosition` 同样是 mac-only
+          // 选项，非 mac 被引擎直接无视）——这里只是把该既有事实显式化，**不
+          // 改变任何平台的运行时行为**。刻意不为 win32/linux 补 titleBarOverlay
+          // 做自绘窗口控制按钮：0.0.46 的关窗收托盘改动（见下面 'close' handler
+          // 注释）依赖 win32 原生标题栏的关闭按钮，titleBarOverlay 是另一类大改、
+          // 与本次「让顶部图标排可点」的目标无关，风险不对称，留给独立评估。
+          titleBarStyle: 'hiddenInset' as const,
+          trafficLightPosition: { x: 30, y: 17 }
+        }
+      : {}),
     icon: appIcon,
     // 窗口底色 = renderer 没画出来的每一帧的最终兜底（studio 的
     // WebContentsView 是透明底，见 newStudioTab 的 setBackgroundColor）。
@@ -297,20 +315,43 @@ export function createShellWindow(): BrowserWindow {
     broadcastFullscreen(false)
   })
 
-  // macOS 红叉 = 隐藏窗口，不退应用（平台惯例）。拦下 close：非真退出时
-  // preventDefault + hide，engine / fusion-code 子进程 / 所有 SessionRuntime
-  // 原样存活，正在跑的任务继续在后台推进；dock 点一下经 app.on('activate')
-  // 直接 show 回来（见 index.ts，不重建 tab，也就没有 unknown-tab 噪音与
-  // 重挂载闪烁）。真退出（⌘Q / 菜单 / before-quit 已置 isQuitting）才放行到
-  // 下方 'closed' 走完整 dispose。
+  // 关窗口 ≠ 退应用。拦下 close：非真退出时 preventDefault + hide，engine /
+  // fusion-code 子进程 / 所有 SessionRuntime 原样存活，正在跑的任务继续在后台
+  // 推进；mac 从 dock（app.on('activate')）、Windows 从托盘（单击图标或右键
+  // 「显示」）把窗口原样带回来——不重建 tab，也就没有 unknown-tab 噪音与重挂载
+  // 闪烁。真退出（⌘Q / 菜单退出 / 托盘「退出」/ 更新重启，都会先经 before-quit
+  // 置 isQuitting）才放行到下方 'closed' 走完整 dispose。
   //
-  // 其它平台（win/linux）不拦：那里关窗即退应用是惯例，且 window-all-closed
-  // 已 app.quit()——保持原语义。
+  // - darwin：红叉 = 隐藏窗口是平台惯例，一直如此。
+  // - win32：2026-08-04 改。此前 X 直接 app.quit()（window-all-closed 分支），
+  //   一次误点就把正在生成的 PPT / 长任务连同 CLI 子进程一起 kill 掉，且没有
+  //   任何确认——这类任务动辄跑几分钟到几十分钟，损失远大于「进程还挂在托盘
+  //   里」。改为最小化到托盘，退出的唯一入口是托盘右键「退出」（before-quit
+  //   那道「有任务在跑」确认框仍然有效）。
+  // - linux：**刻意不拦**。托盘在不少桌面环境（GNOME 原生无 StatusNotifier
+  //   支持）根本不显示，隐藏了窗口等于用户既找不回窗口也没法退出——比关窗即退
+  //   糟得多。保持 window-all-closed → app.quit() 的原语义。
   win.on('close', (event) => {
-    if (process.platform === 'darwin' && !isQuitting) {
+    const hidesToTray = process.platform === 'darwin' || process.platform === 'win32'
+    if (hidesToTray && !isQuitting) {
       event.preventDefault()
       win.hide()
+      // Windows 用户对「点 X 应用还活着」没有心理预期（mac 用户有），给一次
+      // 气泡提示说明去哪儿找它、怎么真退出。每个进程生命周期只提示一次。
+      notifyHiddenToTray()
     }
+  })
+
+  // Windows 关机 / 注销 / 重启（Electron 43 起这是**窗口**事件，不是 app 事件）。
+  // 系统给的时间窗很短，而上面那道 close 拦截在系统眼里就是「这个应用拒绝退出」，
+  // 会弹「此应用阻止你关机」甚至被强杀。会话确实要结束了就立刻钉死退出意图，
+  // 让随后的 close 直接放行到 'closed' 走完整 dispose（engine / CLI 子进程清理）。
+  //
+  // 刻意只听 session-end 不听 query-session-end：后者是「系统在问能不能关机」，
+  // 用户完全可能在那之后取消关机——那时 isQuitting 已被污染成 true，下一次点 X
+  // 就会直接退出应用。
+  win.on('session-end', () => {
+    isQuitting = true
   })
 
   // Shutdown path: closing the shell is equivalent to quitting the
@@ -321,6 +362,7 @@ export function createShellWindow(): BrowserWindow {
     const all = Array.from(tabs.values())
     tabs.clear()
     tabOrder.length = 0
+    crashReloads.clear()
     activeTabId = null
     shellWindow = null
     for (const ctx of all) {
@@ -551,6 +593,8 @@ export async function closeTab(id: number): Promise<void> {
   tabs.delete(id)
   const orderIdx = tabOrder.indexOf(id)
   if (orderIdx >= 0) tabOrder.splice(orderIdx, 1)
+  // 崩溃重载计数随 tab 一起走，别在 Map 里留孤儿条目（webContents.id 会复用）。
+  crashReloads.delete(id)
 
   try {
     shellWindow.contentView.removeChildView(ctx.view)
@@ -825,6 +869,126 @@ export function listTabs(): TabDescriptor[] {
   return snapshotTabList()
 }
 
+/* ─────────────── 渲染进程崩溃恢复（2026-08-03 加）───────────────
+ *
+ * 背景（Windows 实锤）：studio 的 view 背景是 `#00000000` 全透明，它的渲染
+ * 进程一旦死掉，用户看到的是**下层原样透出的闪屏**——界面停在「马上就好」，
+ * 看着像还在加载。而 main 侧此前**没有任何** render-process-gone /
+ * did-fail-load 监听：崩溃既不记日志、不重载、也不报错，于是「渲染进程崩了」
+ * 和「启动很慢」在用户面前长得一模一样，排查只能靠「main 往死帧广播时抛的
+ * Render frame was disposed」这种间接痕迹倒推。
+ *
+ * 这套恢复**不修任何崩溃的根因**，它只做两件事：把崩溃原因写进日志、给一次
+ * 自动重载的机会；重载也救不回来就停手，把原因摆到闪屏上。
+ */
+
+/** 每个 tab 的崩溃重载次数。key = webContents.id。 */
+const crashReloads = new Map<number, number>()
+
+/**
+ * 崩溃后最多自动重载几次。
+ *
+ * 为什么是 1 而不是「一直重试」：如果崩溃是确定性的（比如某个组件一渲染就
+ * 挂），无限重载会把同一条崩溃路径反复走一遍，还会连带把首启的组件下载重新
+ * 触发一轮——用户看到的仍是「马上就好」，只是背后多了几十次崩溃。给一次
+ * 机会覆盖偶发崩溃（GPU 掉一次、内存瞬时压力），失败第二次就认命报错。
+ */
+const MAX_CRASH_RELOADS = 1
+
+/** reason → 给普通用户看的大白话。details.reason 的取值见 Electron 文档。 */
+function describeCrashReason(reason: string): string {
+  switch (reason) {
+    case 'oom':
+      return '内存不足'
+    case 'crashed':
+      return '渲染进程崩溃'
+    case 'launch-failed':
+      return '渲染进程启动失败'
+    case 'integrity-failure':
+      return '代码完整性校验失败（可能被安全软件拦截）'
+    case 'abnormal-exit':
+      return '渲染进程异常退出'
+    case 'killed':
+      return '渲染进程被系统或安全软件结束'
+    default:
+      return `渲染进程退出（${reason}）`
+  }
+}
+
+/**
+ * `app.on('render-process-gone')` 的落点。details 里的 reason / exitCode 是
+ * 这套改动真正要买的东西——没有它，崩溃在日志里是完全静默的。
+ */
+export function handleRenderProcessGone(
+  wc: WebContents,
+  details: { reason: string; exitCode: number }
+): void {
+  const id = wc.id
+  const ctx = tabs.get(id)
+  // 不是 tab 的 webContents（shell 闪屏 / 设置 overlay / DevTools）——记一笔
+  // 就够了，它们没有「重载回来」的语义。
+  if (!ctx) {
+    console.error(
+      `[tabRegistry] 非 tab 渲染进程退出：reason=${details.reason} exitCode=${details.exitCode} wc=${id}`
+    )
+    return
+  }
+
+  const used = crashReloads.get(id) ?? 0
+  console.error(
+    `[tabRegistry] tab 渲染进程退出：reason=${details.reason} ` +
+      `exitCode=${details.exitCode} kind=${ctx.kind} wc=${id} 已重载=${used}/${MAX_CRASH_RELOADS}`
+  )
+
+  if (used < MAX_CRASH_RELOADS && !wc.isDestroyed()) {
+    crashReloads.set(id, used + 1)
+    console.warn('[tabRegistry] 尝试自动重载一次…')
+    try {
+      wc.reload()
+      return
+    } catch (err) {
+      console.error('[tabRegistry] 自动重载失败：', err)
+    }
+  }
+
+  // 重载额度用尽（或重载本身失败）：把透明的空 view 摘掉，让下层闪屏重新
+  // 露出来，然后把原因写上去。不摘 view 的话写什么都被那块透明玻璃盖着。
+  if (shellWindow && !shellWindow.isDestroyed()) {
+    try {
+      shellWindow.contentView.removeChildView(ctx.view)
+    } catch (err) {
+      console.warn('[tabRegistry] 摘除崩溃 view 失败：', err)
+    }
+    if (activeTabId === id) activeTabId = null
+    showSplashError(
+      shellWindow,
+      `启动失败：${describeCrashReason(details.reason)}。请重启应用；若反复出现，请把日志发给我们。`
+    )
+  }
+}
+
+/**
+ * `did-fail-load` 的落点。页面级加载失败此前同样是静默的——promote 的 10s
+ * 兜底照常把闪屏推到「马上就好」再盖上一块空 view，症状与崩溃一模一样。
+ *
+ * 只记录、不做恢复：加载失败的原因（协议没注册、文件缺失）重载多半照样失败，
+ * 而 errorCode/errorDescription 才是要留给下一个人的线索。
+ */
+export function handleTabLoadFailure(
+  wc: WebContents,
+  errorCode: number,
+  errorDescription: string,
+  validatedURL: string
+): void {
+  // -3 = ERR_ABORTED，正常导航打断（router 跳转、快速重载）会刷屏，不是故障。
+  if (errorCode === -3) return
+  const ctx = tabs.get(wc.id)
+  console.error(
+    `[tabRegistry] 页面加载失败：code=${errorCode} ${errorDescription} ` +
+      `url=${validatedURL} kind=${ctx?.kind ?? 'non-tab'} wc=${wc.id}`
+  )
+}
+
 export function broadcastTabList(): void {
   if (!shellWindow || shellWindow.isDestroyed()) return
 
@@ -939,6 +1103,36 @@ function layoutActiveTab(): void {
  * own isHydrating guard assumes we don't do that).
  */
 /**
+ * 这个 webContents 现在还能收 IPC 吗？所有广播的统一闸门。
+ *
+ * `isDestroyed()` 单独用是不够的（2026-08-04 实锤）：渲染进程崩溃后
+ * WebContents **对象仍然活着**——上面的崩溃恢复只摘 view、不 destroy
+ * webContents——但它背后的 render frame 已经没了，再 send 会让 Electron 内部
+ * 打出 `Error sending from webFrameMain: Render frame was disposed before
+ * WebFrameMain could be accessed` 加一整段栈。
+ *
+ * 后果不是多几行日志：组件下载 worker 与 ppt skill 安装器每 ~110ms 广播一次
+ * 进度，崩溃后这两条栈就把 runtime.log 刷成了纯噪音（那份 8264 行的日志里
+ * 8000+ 行是它们），真正有用的 `渲染进程退出 reason=crashed exitCode=-36861`
+ * 反而被埋在里面——排查一个「打不开」的包时，这正是最不该丢的那一行。
+ *
+ * **为什么这不会永久闭麦一个救得回来的 tab**（Electron 43 实测，不是推演）：
+ * `isCrashed()` 在 `wc.reload()` **一调用就复位成 false**，比 did-finish-load
+ * 还早。探针跑法：crash → 崩溃回调内 true → 调完 reload() 立刻 false →
+ * did-finish-load false → 2.5s 后仍 false。所以上面那条「重载一次」的恢复路径
+ * 一旦救回来，广播立刻恢复；只有救不回来（重载额度耗尽、frame 真没了）的 tab
+ * 才被这道闸门挡住——那正是我们要挡的。
+ *
+ * 代价：reload() 到新 frame 就绪之间有个几百毫秒的窗口，isCrashed 已 false 但
+ * frame 还没建好，那期间的 send 仍可能打出一两行 disposed 日志。那是**瞬时**
+ * 噪音、且不影响功能，与崩溃后每 110ms 一条的永久刷屏不是一回事，不值得为它
+ * 再加一层 frame 级状态跟踪。
+ */
+function canSendIpc(wc: WebContents): boolean {
+  return !wc.isDestroyed() && !wc.isCrashed()
+}
+
+/**
  * Push the full updater state to every renderer that can receive IPC
  * (shell + studio tab). Unlike broadcastAppearanceChanged there is NO
  * skip-the-writer id: updater transitions originate in MAIN
@@ -947,13 +1141,60 @@ function layoutActiveTab(): void {
  * appearance sync black hole (chat/canvas share one webContents).
  */
 export function broadcastUpdaterState(state: UpdaterState): void {
-  if (shellWindow && !shellWindow.isDestroyed()) {
+  if (shellWindow && !shellWindow.isDestroyed() && canSendIpc(shellWindow.webContents)) {
     shellWindow.webContents.send(IPC_CHANNELS.UPDATER_STATE_CHANGED, state)
   }
   for (const ctx of tabs.values()) {
     const wc = ctx.view.webContents
-    if (wc.isDestroyed()) continue
+    if (!canSendIpc(wc)) continue
     wc.send(IPC_CHANNELS.UPDATER_STATE_CHANGED, state)
+  }
+}
+
+/**
+ * Push ppt-creator skill 的安装进度到每个 renderer。下载 49MB + 解压 12167
+ * 个文件 + 建 venv 期间会高频广播（worker 侧已按 100ms 节流），web tab 跳过。
+ */
+export function broadcastPptSkillStatus(payload: PptSkillStatus): void {
+  if (shellWindow && !shellWindow.isDestroyed() && canSendIpc(shellWindow.webContents)) {
+    shellWindow.webContents.send(IPC_CHANNELS.PPT_SKILL_STATUS, payload)
+  }
+  for (const ctx of tabs.values()) {
+    if (ctx.kind === 'web') continue
+    const wc = ctx.view.webContents
+    if (canSendIpc(wc)) wc.send(IPC_CHANNELS.PPT_SKILL_STATUS, payload)
+  }
+}
+
+/**
+ * 运行时组件整表状态推送。形状同 broadcastPptSkillStatus：整体替换、不拼装，
+ * web tab 跳过（它们没有 chatApi）。
+ */
+export function broadcastRuntimeComponentsState(payload: RuntimeComponentsState): void {
+  if (shellWindow && !shellWindow.isDestroyed() && canSendIpc(shellWindow.webContents)) {
+    shellWindow.webContents.send(IPC_CHANNELS.RUNTIME_COMPONENTS_STATE, payload)
+  }
+  for (const ctx of tabs.values()) {
+    if (ctx.kind === 'web') continue
+    const wc = ctx.view.webContents
+    if (canSendIpc(wc)) wc.send(IPC_CHANNELS.RUNTIME_COMPONENTS_STATE, payload)
+  }
+}
+
+/**
+ * Push the refreshed scenario catalog to every renderer. 同
+ * broadcastAuthState：整体替换、无 skip-the-writer（刷新一律源自 main 的
+ * 后台拉取，没有「发起方 renderer」这回事）。web tab 跳过——它们没有
+ * preload，也没有空态 rail 要更新。
+ */
+export function broadcastScenarioCatalog(catalog: ScenarioCatalog): void {
+  if (shellWindow && !shellWindow.isDestroyed() && canSendIpc(shellWindow.webContents)) {
+    shellWindow.webContents.send(IPC_CHANNELS.SCENARIO_CATALOG_CHANGED, catalog)
+  }
+  for (const ctx of tabs.values()) {
+    if (ctx.kind === 'web') continue
+    const wc = ctx.view.webContents
+    if (canSendIpc(wc)) wc.send(IPC_CHANNELS.SCENARIO_CATALOG_CHANGED, catalog)
   }
 }
 
@@ -965,12 +1206,12 @@ export function broadcastUpdaterState(state: UpdaterState): void {
  * 的形态下复刻 2026-07-04 的 appearance 同步黑洞。
  */
 export function broadcastAuthState(state: AuthState): void {
-  if (shellWindow && !shellWindow.isDestroyed()) {
+  if (shellWindow && !shellWindow.isDestroyed() && canSendIpc(shellWindow.webContents)) {
     shellWindow.webContents.send(IPC_CHANNELS.AUTH_STATE_CHANGED, state)
   }
   for (const ctx of tabs.values()) {
     const wc = ctx.view.webContents
-    if (wc.isDestroyed()) continue
+    if (!canSendIpc(wc)) continue
     wc.send(IPC_CHANNELS.AUTH_STATE_CHANGED, state)
   }
 }
@@ -983,13 +1224,13 @@ export function broadcastAuthState(state: AuthState): void {
  * preload AND no KB UI to update, so there's nothing to reach.
  */
 export function broadcastKbSyncStatus(payload: KbSyncStatus): void {
-  if (shellWindow && !shellWindow.isDestroyed()) {
+  if (shellWindow && !shellWindow.isDestroyed() && canSendIpc(shellWindow.webContents)) {
     shellWindow.webContents.send(IPC_CHANNELS.KB_SYNC_STATUS, payload)
   }
   for (const ctx of tabs.values()) {
     if (ctx.kind === 'web') continue
     const wc = ctx.view.webContents
-    if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.KB_SYNC_STATUS, payload)
+    if (canSendIpc(wc)) wc.send(IPC_CHANNELS.KB_SYNC_STATUS, payload)
   }
 }
 
@@ -999,13 +1240,13 @@ export function broadcastKbSyncStatus(payload: KbSyncStatus): void {
  * payload 带 domain：文档与图片两个域的任务可并行，订阅方按域路由。
  */
 export function broadcastKbCatalogStatus(payload: KbCatalogStatusPayload): void {
-  if (shellWindow && !shellWindow.isDestroyed()) {
+  if (shellWindow && !shellWindow.isDestroyed() && canSendIpc(shellWindow.webContents)) {
     shellWindow.webContents.send(IPC_CHANNELS.KB_CATALOG_STATUS, payload)
   }
   for (const ctx of tabs.values()) {
     if (ctx.kind === 'web') continue
     const wc = ctx.view.webContents
-    if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.KB_CATALOG_STATUS, payload)
+    if (canSendIpc(wc)) wc.send(IPC_CHANNELS.KB_CATALOG_STATUS, payload)
   }
 }
 
@@ -1016,13 +1257,13 @@ export function broadcastKbCatalogStatus(payload: KbCatalogStatusPayload): void 
  * is equally "other". Web tabs are skipped (no preload, no KB UI).
  */
 export function broadcastKbBuildStatus(payload: KbBuildStatus): void {
-  if (shellWindow && !shellWindow.isDestroyed()) {
+  if (shellWindow && !shellWindow.isDestroyed() && canSendIpc(shellWindow.webContents)) {
     shellWindow.webContents.send(IPC_CHANNELS.KB_BUILD_STATUS, payload)
   }
   for (const ctx of tabs.values()) {
     if (ctx.kind === 'web') continue
     const wc = ctx.view.webContents
-    if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.KB_BUILD_STATUS, payload)
+    if (canSendIpc(wc)) wc.send(IPC_CHANNELS.KB_BUILD_STATUS, payload)
   }
 }
 
@@ -1041,7 +1282,7 @@ export function broadcastAppearanceChanged(sourceWebContentsId: number): void {
   // Phase 4 物理下线。）
   for (const ctx of tabs.values()) {
     const wc = ctx.view.webContents
-    if (wc.isDestroyed() || wc.id === sourceWebContentsId) continue
+    if (!canSendIpc(wc) || wc.id === sourceWebContentsId) continue
     wc.send(IPC_CHANNELS.APPEARANCE_CHANGED)
   }
 }

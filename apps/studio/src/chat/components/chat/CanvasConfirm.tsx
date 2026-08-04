@@ -47,8 +47,8 @@ import {
 /**
  * CanvasConfirm
  * -------------
- * Native React replication of the ppt-master confirm_ui Eight-Confirmations
- * page (originally skills/ppt-master/scripts/confirm_ui/static/app.js, now
+ * Native React replication of the ppt-creator confirm_ui Eight-Confirmations
+ * page (originally skills/ppt-creator/scripts/confirm_ui/static/app.js, now
  * deleted along with the Flask server it ran on), rendered inside the
  * 「问题」canvas tab. There is no HTTP server on this path anymore: the data
  * contract is `<projectDir>/confirm_ui/{recommendations,result,catalogs}.json`
@@ -61,7 +61,7 @@ import {
  * interchangeable from confirm_wait.py's point of view. Same reasoning as
  * always: it just paints the data natively.
  *
- * `projectDir` is the ppt-master project's absolute directory, resolved by
+ * `projectDir` is the ppt-creator project's absolute directory, resolved by
  * usePreviewServer from the confirm_wait.py command's own argument — never
  * guessed at a URL/port (there is none to guess anymore).
  *
@@ -219,7 +219,7 @@ export function CanvasConfirm({
   projectDir,
   replaySnapshots
 }: {
-  /** ppt-master project's absolute directory — the key CONFIRM_UI_READ /
+  /** ppt-creator project's absolute directory — the key CONFIRM_UI_READ /
    *  CONFIRM_UI_WRITE_RESULT read/write `confirm_ui/*.json` under. */
   projectDir: string
   /**

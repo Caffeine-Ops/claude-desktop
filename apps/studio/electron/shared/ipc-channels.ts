@@ -133,7 +133,7 @@ export const IPC_CHANNELS = {
    */
   SHEET_FILE_STAT: 'sheet:file-stat',
   /**
-   * Renderer → main. Reads a ppt-master image-generation manifest
+   * Renderer → main. Reads a ppt-creator image-generation manifest
    * (`images/image_prompts.json`) by absolute path and returns each item's
    * status plus a small thumbnail data-URI for the ones already on disk.
    * The renderer polls this while `image_gen.py --manifest` runs to drive
@@ -144,12 +144,12 @@ export const IPC_CHANNELS = {
    */
   IMAGE_MANIFEST_READ: 'image-manifest:read',
   /**
-   * Renderer → main. One-shot read of a ppt-master project's
+   * Renderer → main. One-shot read of a ppt-creator project's
    * `confirm_ui/` round-trip files (recommendations.json / result.json /
    * catalogs.json — see ConfirmUiReadResult). CanvasConfirm (「问题」canvas
    * tab) calls this on boot and polls it while waiting for the AI to
    * re-derive Tier-2 recommendations. There is no confirm_ui HTTP server
-   * anymore (skills/ppt-master/scripts/confirm_ui/confirm_wait.py is a pure
+   * anymore (skills/ppt-creator/scripts/confirm_ui/confirm_wait.py is a pure
    * stdlib file-watcher, not a server) — this IS the read side of that file
    * contract, main only ferries bytes the same way IMAGE_MANIFEST_READ does.
    */
@@ -174,7 +174,7 @@ export const IPC_CHANNELS = {
    */
   PPT_PREVIEW_LIST_SLIDES: 'ppt-preview:list-slides',
   /**
-   * Renderer → main. Lists the ppt-master skill's built-in template library
+   * Renderer → main. Lists the ppt-creator skill's built-in template library
    * (templates/brands|layouts|decks, each driven by its own `*_index.json`)
    * with a resolved absolute preview path per entry (`01_cover.svg` for
    * layout/deck; brand entries have no page-level preview). Feeds the
@@ -204,14 +204,14 @@ export const IPC_CHANNELS = {
   PPT_PREVIEW_SAVE_ALL: 'ppt-preview:save-all',
   /**
    * Renderer → main. Converts a SOURCE .pptx (one the user handed the
-   * session, not a ppt-master-generated deck) to per-slide SVG via the
+   * session, not a ppt-creator-generated deck) to per-slide SVG via the
    * skill's offline `pptx_to_svg.py`, so 「预览幻灯片」can show the original
    * deck immediately — before the AI has produced any output of its own.
    * Results are cached on disk by (path, mtime) hash under
    * `<userData>/ppt-source-preview/`, so a repeat call for the same file is
    * a cache hit, not a re-conversion. Requires the skill's Python venv to
-   * already be bootstrapped (see skills/ppt-master/bin/ensure-python.sh) —
-   * `ok:false` on a first-ever ppt-master use before that's happened is
+   * already be bootstrapped (see skills/ppt-creator/bin/ensure-python.sh) —
+   * `ok:false` on a first-ever ppt-creator use before that's happened is
    * expected, not a bug; the caller shows a "预览准备中" copy instead.
    */
   PPT_SOURCE_PREVIEW: 'ppt-source:preview',
@@ -460,11 +460,10 @@ export const IPC_CHANNELS = {
    */
   TRANSCRIBE_AUDIO: 'speech:transcribe',
   /**
-   * Renderer → main. 提交问题反馈（文字描述 + 可选截图）。main 补上
-   * appVersion/platform/osVersion，用 FEEDBACK_HMAC_SECRET（env.json）
-   * 给请求体签名后转发给反馈代理 Worker——渲染层和 Worker 都不持有
-   * GitHub Token。Worker 把截图传 R2、在目标仓库建 Issue，返回
-   * issueUrl。未配置 FEEDBACK_WORKER_URL 时返回 error，UI 隐藏入口。
+   * Renderer → main. 提交问题反馈（分类 + 文字描述 + 可选截图）。main 补上
+   * appVersion/platform/osVersion，走 authedPost 提交给 sub2api 的
+   * `/api/v1/feedback`（JWT 鉴权，后端从 token 解出当前用户，admin 面板可
+   * 查看）。未登录时返回 error，UI 提示先登录。
    */
   FEEDBACK_SUBMIT: 'feedback:submit',
   /**
@@ -855,6 +854,58 @@ export const IPC_CHANNELS = {
    */
   USAGE_EXPORT_CSV: 'usage:export-csv',
   /**
+   * Renderer → main. 空态场景导航（ScenarioRail）的远端配置，一次性拉取。
+   * **同步读 main 内存里那份磁盘缓存，不发网络请求**——空态首帧就要拿到
+   * 它，等一个 HTTP 往返会让 rail 先空一拍再蹦出来（骨架屏那类「越需要
+   * 越跑不动」的反模式）。网络拉取由 authService 在 login / 冷启动刷新时
+   * 后台做，拿到新版本经 SCENARIO_CATALOG_CHANGED 广播。
+   *
+   * `catalog: null` = 从未成功拉取过（未登录 / 首次安装 / 缓存损坏），
+   * 渲染层此时用内置默认表，功能不塌。
+   */
+  /**
+   * Renderer → main. 拉 ppt-creator skill 的当前安装状态（同步读内存态，
+   * 不发网络）。UI 用它决定 PPT 入口是直接放行还是弹进度层。
+   */
+  PPT_SKILL_GET_STATUS: 'ppt-skill:get-status',
+  /**
+   * Renderer → main. 请求「确保 ppt-creator 就绪」——未装则下载+解压+建
+   * venv，已装则秒回。用户点「制作PPT」时调用；并发调用共享同一次安装
+   * （单飞），resolve 时即终态。
+   */
+  PPT_SKILL_ENSURE: 'ppt-skill:ensure',
+  /**
+   * Main → every renderer. 安装进度推送（下载字节 / 解压文件数 / venv 阶段）。
+   * worker 侧已按 100ms 节流，这里原样转发。
+   */
+  PPT_SKILL_STATUS: 'ppt-skill:status',
+  /**
+   * Renderer → main. 拉运行时组件（AI 引擎 / Python 环境）的整表状态。
+   * 同步读内存态、不发网络；全屏门用 `requiredReady` 决定挡不挡。
+   *
+   * 与 PPT_SKILL_* 三条的分工：那套管的是「可选功能的可选依赖」（缺了只挡
+   * PPT 入口）；这套管的是**必需品**（AI 引擎缺了整个应用不能聊天）。形态相似、
+   * 刻意分开，理由见 shared/runtimeComponents.ts 的文件头。
+   */
+  RUNTIME_COMPONENTS_GET_STATE: 'runtime-components:get-state',
+  /**
+   * Renderer → main. 请求「确保运行时组件就绪」——缺则下载安装，已装则秒回。
+   * 并发调用共享同一次安装（单飞）。`force:true` 用于门里的「重试」按钮。
+   */
+  RUNTIME_COMPONENTS_ENSURE: 'runtime-components:ensure',
+  /**
+   * Main → every renderer. 组件安装进度推送（下载 / 校验 / 安装三段 + 重试）。
+   * worker 侧已按 100ms 节流，这里原样转发。
+   */
+  RUNTIME_COMPONENTS_STATE: 'runtime-components:state',
+  SCENARIO_CATALOG_GET: 'scenario-catalog:get',
+  /**
+   * Main → every renderer. 远端场景目录刷新成功且**版本有变**时广播一次
+   * （版本没变不广播——避免每次冷启动都无谓地重渲染整条 rail）。同
+   * AUTH_STATE_CHANGED 的「整体替换不拼装」约定。
+   */
+  SCENARIO_CATALOG_CHANGED: 'scenario-catalog:changed',
+  /**
    * Renderer → main. Returns the current KB root path (or null when
    * not yet configured) plus the fixed output directory for index
    * artefacts (`userData/kb-index`). Called by the settings page to
@@ -1206,20 +1257,21 @@ export type TranscribeAudioResult =
 
 export interface FeedbackImagePayload {
   filename: string
-  /** 反馈代理 Worker 只收白名单类型：image/png | image/jpeg | image/webp。 */
+  /** 后端只收白名单类型：image/png | image/jpeg | image/webp（拒 svg，admin 面板会 <img> 渲染）。 */
   contentType: string
-  /** base64（不带 data URL 前缀），已在 renderer 侧压缩到 Worker 的体积上限内。 */
+  /** base64（不带 data URL 前缀），已在 renderer 侧压缩到后端的体积上限内。 */
   dataBase64: string
 }
 
+export type FeedbackKind = 'bug' | 'idea' | 'other'
+
 export interface FeedbackSubmitPayload {
+  kind: FeedbackKind
   description: string
   images?: readonly FeedbackImagePayload[]
 }
 
-export type FeedbackSubmitResult =
-  | { issueUrl: string; error?: undefined }
-  | { issueUrl?: undefined; error: string }
+export type FeedbackSubmitResult = { ok: true; error?: undefined } | { ok?: undefined; error: string }
 
 export type ChatSendPayload = {
   sessionId: string
@@ -1393,7 +1445,7 @@ export type ShellRevealPathResult = ShellOpenPathResult
 
 /**
  * Payload for IMAGE_MANIFEST_READ. `manifestPath` is the absolute path to a
- * ppt-master `image_prompts.json` (scraped from the running `image_gen.py
+ * ppt-creator `image_prompts.json` (scraped from the running `image_gen.py
  * --manifest <path>` Bash command in the transcript). `withThumbnails` asks
  * main to also decode each already-written PNG into a small data-URI; the
  * 「图片」tab always wants them, but keeping the flag lets a future
@@ -1493,9 +1545,9 @@ export type SheetFileStatResult = {
   error?: string
 }
 
-/* ───────────────────────── ppt-master confirm_ui ─────────────────────── */
+/* ───────────────────────── ppt-creator confirm_ui ─────────────────────── */
 
-/** Payload for CONFIRM_UI_READ. `projectDir` is the ppt-master project's
+/** Payload for CONFIRM_UI_READ. `projectDir` is the ppt-creator project's
  *  absolute directory (the argument confirm_wait.py was launched with). */
 export type ConfirmUiReadPayload = { projectDir: string }
 
@@ -1530,7 +1582,7 @@ export type ConfirmUiWriteResultPayload = {
 /** Result of CONFIRM_UI_WRITE_RESULT. */
 export type ConfirmUiWriteResultResult = { ok: boolean; error?: string }
 
-/* ───────────────────────── ppt-master live preview ─────────────────────── */
+/* ───────────────────────── ppt-creator live preview ─────────────────────── */
 
 /** Payload for PPT_PREVIEW_LIST_SLIDES. */
 export type PptPreviewListSlidesPayload = { projectDir: string }
@@ -1609,7 +1661,7 @@ export type PptPreviewSaveAllResult = {
   error?: string
 }
 
-/* ───────────────────────── ppt-master built-in template gallery ───────────────── */
+/* ───────────────────────── ppt-creator built-in template gallery ───────────────── */
 
 /** Which of the three template-library kinds an entry belongs to (SKILL.md Step 3). */
 export type BuiltinTemplateKind = 'brand' | 'layout' | 'deck'
@@ -1642,10 +1694,10 @@ export type PptListBuiltinTemplatesResult = {
   error?: string
 }
 
-/* ───────────────────────── ppt-master source pptx preview ─────────────────────── */
+/* ───────────────────────── ppt-creator source pptx preview ─────────────────────── */
 
 /** Payload for PPT_SOURCE_PREVIEW. `pptxPath` is the absolute path to a
- *  source .pptx the user handed the session (not a ppt-master project). */
+ *  source .pptx the user handed the session (not a ppt-creator project). */
 export type PptSourcePreviewPayload = { pptxPath: string }
 
 /** One converted slide — `content` is raw SVG text with STILL-RELATIVE
@@ -1999,13 +2051,20 @@ export type AppearanceSetResult = { appearance: AppearancePrefs | null }
  *
  *   idle ─ check ─→ checking ─→ available ─→ downloading ─→ ready
  *                        │                                    │
- *                        ├─→ none (already latest)            └─ install → quit
- *                        └─→ error
+ *                        ├─→ none (already latest)            └─ install →
+ *                        └─→ error                               installing → quit
  *
  * 'downloading' is entered implicitly (autoDownload=true): 'available' is a
  * transient phase the renderer may never observe between two pushes — treat
  * available/downloading the same visually. 'error' keeps the app usable; the
  * next manual check resets to 'checking'.
+ *
+ * 'installing' 是**点击确认**，不是安装进度（2026-08-03 随 Windows 静默安装
+ * 一起加）：installUpdate 置它、广播、故意等一小会儿让 renderer 画出来，然后
+ * 才 quitAndInstall——之后 app 立刻退出，窗口连同这个态一起消失，真正的安装
+ * 发生在没有任何本进程 UI 的时段（Windows 走 NSIS `/S` 无窗安装，装完由
+ * 安装器自己拉起新版，接手的是新进程的 splash）。所以它只需活到「用户看见
+ * 自己那一下点生效了」为止。安装失败（签名校验/包损坏）会落回 'error'。
  */
 export type UpdaterPhase =
   | 'idle'
@@ -2013,6 +2072,7 @@ export type UpdaterPhase =
   | 'available'
   | 'downloading'
   | 'ready'
+  | 'installing'
   | 'none'
   | 'error'
 
@@ -2334,6 +2394,98 @@ export interface UsageExportCsvPayload {
 /** `path: null` = 用户取消保存框。 */
 export interface UsageExportCsvResult {
   path: string | null
+}
+
+/* ───────────────────────── 场景目录（空态 ScenarioRail 远端配置） ─────────────────────── */
+
+/**
+ * 后端（sub2api `GET /api/v1/client/scenario-catalog`）下发的空态场景导航
+ * 配置：分类 tab、每个分类下的技能/直达 chip、以及每个技能的推荐 prompt。
+ * 在这之前这三份数据全硬编码在 `ScenarioRail.tsx` / `skillChipRegistry.ts`
+ * / `scenarioSlash.ts` 里，改一条文案就要发版。
+ *
+ * 设计约束（改这份 schema 前务必读完）：
+ *
+ *   - **`value` 是 wire 格式，永远由后端原样给出、前端原样发送**。它是
+ *     serialize 回 fusion-code 的那个 slash 命令（`/claude-desktop:ppt-creator`），
+ *     不是展示文本。远端可以随便改 `label`/`icon`/`prompts`，**但改 `value`
+ *     等于换了一个技能**——历史会话里已经插好的 chip 不会跟着变（chip 存的
+ *     就是 value），这是刻意的：配置是产品表面，不能追溯改写用户发过的消息。
+ *   - **`icon` 只收内置切片名**（`'ppt' | 'sheet' | …` → `/skill-icons/<name>.png`），
+ *     不收任意 URL。prod 下 studio 跑在 `app://` 协议上，外链图片要先过 CSP；
+ *     远端 URL 留到后续阶段，一并处理协议与缓存。未知名字 → 前端回落内置
+ *     registry 里该 value 的图标，再不济给通用 glyph，绝不渲染破图。
+ *   - **`pseudo: true` 的条目是纯前端导航标签**（`/daily-dev` 这类），发送前
+ *     必须被 `stripScenarioSlash` 剥掉——fusion-code 不认识它们，漏剥会被当
+ *     未知命令。后端新增伪命令而前端没同步注册，就是这个故障。
+ *   - **推荐 prompt 正文里的 `【…文件】` / `【选择模版】` 是占位 pill 的识别
+ *     约定**（filePlaceholderPlugin / templatePlaceholderPlugin），纯文本层面
+ *     生效——远端文案沿用这个写法就自动获得文件槽/模版槽能力，无需任何额外
+ *     字段。
+ */
+export interface ScenarioCatalogPrompt {
+  /** chip 上的短标签。 */
+  label: string
+  /** 点击后填入 composer 正文的完整 prompt（可含 `【…】` 占位段）。 */
+  text: string
+}
+
+/**
+ * 一个 chip。`kind: 'skill'` 插 slash chip 并进入二级推荐 prompt；
+ * `kind: 'prompt'` 是直达示例，点了直接填正文、不经过技能。
+ */
+export type ScenarioCatalogItem =
+  | {
+      kind: 'skill'
+      /** 带前导 `/` 的 wire value，可带 plugin 命名空间。 */
+      value: string
+      /** chip 文案；缺省时回落内置 registry，再缺省用 value 去掉 `/`。 */
+      label?: string
+      /** 内置切片名（不含目录与扩展名），如 `'ppt'`。只能指向已打包的图标。 */
+      icon?: string
+      /**
+       * 后台上传的图标，`data:image/webp;base64,…` 形态，**优先级高于 `icon`**。
+       *
+       * 存在的意义是让「加一个新技能」不再需要客户端发版补一张切片图。渲染路径
+       * 完全复用现有的 `<img src>`（`SkillChipIcon` 与 `chipNodeView` 都是直接
+       * 赋 src），data URI 天然可用，所以客户端侧没有额外的解码或缓存逻辑。
+       *
+       * 服务端只接受位图 mime（png/jpeg/webp/gif），**刻意不收 svg+xml**：SVG
+       * 可以携带 `<script>` 与事件属性，内联等于给后台配置开了一条通往客户端的
+       * 脚本注入路径。
+       */
+      iconData?: string
+      /** 斜杠菜单/技能选择器里的一行说明。 */
+      description?: string
+      /** true = 前端伪命令，发送前剥离（见上方 schema 注释）。 */
+      pseudo?: boolean
+      /** 该技能的二级推荐 prompt；空/缺省则点它只插 chip，不出二级行。 */
+      prompts?: readonly ScenarioCatalogPrompt[]
+    }
+  | { kind: 'prompt'; label: string; text: string }
+
+export interface ScenarioCatalogCategory {
+  /** 分类 id，稳定标识（前端用它记住「当前选中哪个 tab」）。 */
+  id: string
+  /** tab 文案；缺省时内置分类回落 i18n（`scenarioCat*`）。 */
+  label?: string
+  /** 内置 tab 图标名：`'coffee' | 'code' | 'palette'`；未知名字用通用点阵。 */
+  icon?: string
+  items: readonly ScenarioCatalogItem[]
+}
+
+/**
+ * 整份目录。`version` 单调递增，main 用它判断「这次拉到的和缓存里是不是
+ * 同一份」——相同就不广播、不落盘，冷启动刷新对渲染层完全无感。
+ */
+export interface ScenarioCatalog {
+  version: number
+  categories: readonly ScenarioCatalogCategory[]
+}
+
+/** Result of SCENARIO_CATALOG_GET. `catalog: null` = 用内置默认表。 */
+export interface ScenarioCatalogResult {
+  catalog: ScenarioCatalog | null
 }
 
 /**
@@ -3017,7 +3169,7 @@ export interface ChatApi {
   revealPath(payload: ShellRevealPathPayload): Promise<ShellRevealPathResult>
 
   /**
-   * Read a ppt-master image-generation manifest by absolute path, returning
+   * Read a ppt-creator image-generation manifest by absolute path, returning
    * each item's status and (for already-written PNGs) a small thumbnail
    * data-URI. The 「图片」canvas tab polls this while `image_gen.py --manifest`
    * runs, to show generation progress and previews.
@@ -3044,7 +3196,7 @@ export interface ChatApi {
   statSheetFile(payload: SheetFileStatPayload): Promise<SheetFileStatResult>
 
   /**
-   * Read a ppt-master project's confirm_ui round-trip files
+   * Read a ppt-creator project's confirm_ui round-trip files
    * (recommendations / result / catalogs). CanvasConfirm's boot and its
    * tier1→tier2 poll both call this. See CONFIRM_UI_READ.
    */
@@ -3059,7 +3211,7 @@ export interface ChatApi {
   ): Promise<ConfirmUiWriteResultResult>
 
   /**
-   * List a ppt-master project's svg_output/ slides. LivePreviewEditor polls
+   * List a ppt-creator project's svg_output/ slides. LivePreviewEditor polls
    * this to detect new/changed pages. See PPT_PREVIEW_LIST_SLIDES.
    */
   listPptPreviewSlides(
@@ -3067,7 +3219,7 @@ export interface ChatApi {
   ): Promise<PptPreviewListSlidesResult>
 
   /**
-   * List the ppt-master skill's built-in template library (brand/layout/
+   * List the ppt-creator skill's built-in template library (brand/layout/
    * deck), each entry carrying a resolved absolute preview path. Feeds the
    * composer's template-picker popover. See PPT_LIST_BUILTIN_TEMPLATES.
    */
@@ -3459,6 +3611,52 @@ export interface ChatApi {
    * 广播自动跟上新用户名。
    */
   updateAccountProfile(payload: AccountUpdatePayload): Promise<AccountUpdateResult>
+
+  /** ppt-creator skill 的安装状态（见 PPT_SKILL_GET_STATUS）。 */
+  getPptSkillStatus(): Promise<import('./pptSkillStatus').PptSkillStatus>
+
+  /**
+   * 确保 ppt-creator 就绪（见 PPT_SKILL_ENSURE）。resolve 时即终态：
+   * `phase:'ready'` 才可以放行 PPT 功能。`force` 用于失败后的重试按钮。
+   */
+  ensurePptSkill(force?: boolean): Promise<import('./pptSkillStatus').PptSkillStatus>
+
+  /** 订阅安装进度推送（见 PPT_SKILL_STATUS）。返回退订函数。 */
+  onPptSkillStatus(
+    handler: (status: import('./pptSkillStatus').PptSkillStatus) => void
+  ): () => void
+
+  /**
+   * 运行时组件整表状态（见 RUNTIME_COMPONENTS_GET_STATE）。**不发网络请求**，
+   * 同步读 main 内存态——渲染层首帧可以直接等它 resolve 再决定挡不挡门。
+   */
+  getRuntimeComponentsState(): Promise<import('./runtimeComponents').RuntimeComponentsState>
+
+  /**
+   * 确保运行时组件就绪（见 RUNTIME_COMPONENTS_ENSURE）。resolve 时即终态；
+   * 门只看 `requiredReady`。`force` 用于失败后的重试按钮。
+   */
+  ensureRuntimeComponents(
+    force?: boolean
+  ): Promise<import('./runtimeComponents').RuntimeComponentsState>
+
+  /** 订阅组件安装进度推送（见 RUNTIME_COMPONENTS_STATE）。返回退订函数。 */
+  onRuntimeComponentsState(
+    handler: (state: import('./runtimeComponents').RuntimeComponentsState) => void
+  ): () => void
+
+  /**
+   * 空态场景导航的远端配置（见 SCENARIO_CATALOG_GET）。**不发网络请求**，
+   * 读的是 main 内存里那份磁盘缓存——渲染层可以在首帧同步等它 resolve。
+   * `catalog: null` 时用内置默认表。
+   */
+  getScenarioCatalog(): Promise<ScenarioCatalogResult>
+
+  /**
+   * 订阅场景目录刷新（见 SCENARIO_CATALOG_CHANGED）。只在版本真的变了时
+   * 触发。handler 收到整份目录——替换，不要合并。返回退订函数。
+   */
+  onScenarioCatalogChanged(handler: (catalog: ScenarioCatalog) => void): () => void
 
   /** 使用记录页筛选器下拉数据源：API 密钥 + 分组列表（见 USAGE_FILTER_OPTIONS_GET）。 */
   getUsageFilterOptions(): Promise<UsageFilterOptionsResult>

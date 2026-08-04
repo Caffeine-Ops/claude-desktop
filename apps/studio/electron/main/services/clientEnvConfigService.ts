@@ -1,6 +1,6 @@
 import { applyRemoteEnvConfig } from '../bootstrap/loadEnv'
 import { recycleAllEnginesRuntimes } from '../tabRegistry'
-import { sub2apiGet } from './sub2apiClient'
+import type { AuthedGet } from './sub2apiClient'
 
 /** Key name patterns that hold a real credential — mask these, not the rest. */
 const SECRET_KEY_RE = /TOKEN|API_KEY|SECRET/i
@@ -36,12 +36,15 @@ function maskEnvValueForLog(key: string, value: string): string {
  * 门槛，不重复拉取）。两处都是 fire-and-forget——网络失败不该挡登录本身，
  * 失败时 process.env 保留 env.json 的旧值，下一轮成功的调用自然覆盖过去，
  * 同 sessionSyncService 的"失败不重试、下次成功自动纠正"设计。
+ *
+ * `get` 由 authService 注入（冷启动路径给的是带自动续期的 authedGet，
+ * login 路径给的是直接用新 token 的裸 GET），本模块不自己取 token——这样
+ * 就不必反向 import authService 构成循环依赖。**这条路径失败是静默的**
+ * （只有一行 console.error），access token 过期时这里第一个受害却最难
+ * 察觉：网关 key 拉不到，process.env 停在 env.json 的旧值上。
  */
-export async function applyClientEnvConfig(accessToken: string): Promise<void> {
-  const result = await sub2apiGet<Record<string, string>>(
-    '/api/v1/keys/client-config',
-    accessToken
-  )
+export async function applyClientEnvConfig(get: AuthedGet): Promise<void> {
+  const result = await get<Record<string, string>>('/api/v1/keys/client-config')
   if (!result.ok) {
     console.error('[clientEnvConfig] fetch failed', {
       reason: result.reason,

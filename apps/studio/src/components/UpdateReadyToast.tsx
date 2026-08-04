@@ -10,9 +10,17 @@
  * app 级事件，不属于任何一个面。数据经 window.chatApi 订阅 main 的
  * appUpdater 状态流。
  *
+ * z-[10000]（2026-07-27 起，此前与 AuthGate/UpgradeScreen 同为 z-[9999]）：
+ * 更新就绪与登录态正交——用户没登录/正看订阅页时同样应该能看到「有新版」
+ * 并一键重启安装，不该被登录墙/升级页（AuthGate z-9999、UpgradeScreen
+ * z-9980）盖住。刻意比它们都高一档，其余浮层语义不变。
+ *
  * 时机（用户 2026-07-05 要求「发现新版就提示」）：不再等下载完，phase 进入
  * available/downloading 就浮现「发现新版本 + 后台下载中（进度）」；下载完
- * （ready）切成「已就绪 + 立即重启更新」。
+ * （ready）切成「已就绪 + 立即重启更新」；点下去进 installing 切成「正在
+ * 安装 + spinner」，无按钮无关闭 X（2026-08-03，随 Windows 静默安装一起
+ * 加——NSIS 不再弹向导窗口，这张卡是「点生效了」的唯一回执，见 main 侧
+ * appUpdater 的 INSTALL_ACK_DELAY_MS）。
  *
  * 「关掉了」的记忆分两份、按卡片各查各的（2026-07-17 修，别再合并回去）：
  * 进度卡的 X 只收起本次下载的进度显示，ready 时提示必须重弹；就绪卡的 X /
@@ -68,9 +76,10 @@ const LEAVE_MS = 220
 const TOAST_SHADOW =
   'shadow-[0_12px_36px_rgba(18,18,23,0.13),0_3px_10px_rgba(18,18,23,0.07),0_0_0_1px_hsl(var(--border)/0.9)] dark:shadow-[0_16px_44px_rgba(0,0,0,0.55),0_4px_12px_rgba(0,0,0,0.35),0_0_0_1px_hsl(var(--border))]'
 
-/** checking 态的圆环 spinner：淡整环 + 1/4 实弧（比 lucide Loader2 的
- * 断点环更细腻，原型定稿形态）。 */
-function SpinnerRing() {
+/** checking / installing 态的圆环 spinner：淡整环 + 1/4 实弧（比 lucide
+ * Loader2 的断点环更细腻，原型定稿形态）。默认 14px 是小卡尺寸；主卡片的
+ * 38px 图标框传 size-[18px] 与就绪态的 Check 对齐。 */
+function SpinnerRing({ className }: { className?: string }) {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -78,7 +87,7 @@ function SpinnerRing() {
       stroke="currentColor"
       strokeWidth={2.4}
       strokeLinecap="round"
-      className="size-3.5 animate-spin"
+      className={cn('size-3.5 animate-spin', className)}
       aria-hidden="true"
     >
       <circle cx="12" cy="12" r="9" opacity={0.18} />
@@ -186,10 +195,16 @@ export function UpdateReadyToast() {
         manualPendingRef.current = false
         clearPendingTimeout()
         setFeedback({ kind: 'error', message: s.errorMessage }, FEEDBACK_ERROR_DISMISS_MS)
-      } else if (s.phase === 'available' || s.phase === 'downloading' || s.phase === 'ready') {
+      } else if (
+        s.phase === 'available' ||
+        s.phase === 'downloading' ||
+        s.phase === 'ready' ||
+        s.phase === 'installing'
+      ) {
         // 发现新版：主卡片就是结论反馈。收掉小卡并解除两份忽略记忆（用户刚
         // 亲手点了「检查更新」= 明确想看结论，之前收起过什么都不该挡着），
-        // 让主卡必现。
+        // 让主卡必现。installing 也算在内——它同样由主卡片表达，且那之后
+        // 不会再有任何广播（进程正在退出），漏掉会把 spinner 挂到超时。
         manualPendingRef.current = false
         clearPendingTimeout()
         setFeedback(null)
@@ -221,9 +236,14 @@ export function UpdateReadyToast() {
           setFeedback({ kind: 'unsupported' }, FEEDBACK_DISMISS_MS)
           return
         }
-        if (snap.phase === 'available' || snap.phase === 'downloading' || snap.phase === 'ready') {
-          // main 的 early-return 快照就是结论（下载在途/已就绪时不会再有
-          // 「本次检查」的广播）：直接唤起主卡片，同样解除两份忽略记忆。
+        if (
+          snap.phase === 'available' ||
+          snap.phase === 'downloading' ||
+          snap.phase === 'ready' ||
+          snap.phase === 'installing'
+        ) {
+          // main 的 early-return 快照就是结论（下载在途/已就绪/安装中时不会
+          // 再有「本次检查」的广播）：直接唤起主卡片，同样解除两份忽略记忆。
           setFeedback(null)
           setDismissedProgressVersion(null)
           setDismissedReadyVersion(null)
@@ -296,7 +316,7 @@ export function UpdateReadyToast() {
         onMouseEnter={pauseLife}
         onMouseLeave={resumeLife}
         className={cn(
-          'group fixed bottom-4 left-4 z-[9999] flex max-w-[336px] items-center gap-[11px] overflow-hidden rounded-[13px] bg-card py-3 pl-3 pr-4',
+          'group fixed bottom-4 left-4 z-[10000] flex max-w-[336px] items-center gap-[11px] overflow-hidden rounded-[13px] bg-card py-3 pl-3 pr-4',
           TOAST_SHADOW,
           feedbackLeaving ? 'od-toast-leave' : 'od-toast-enter'
         )}
@@ -353,7 +373,7 @@ export function UpdateReadyToast() {
     )
   }
 
-  // ── 主卡片（发现新版 / 已就绪）─────────────────────────────────
+  // ── 主卡片（发现新版 / 已就绪 / 正在安装）──────────────────────
   const phase = state?.phase
   const version = state?.availableVersion ?? null
   // 发现新版（下载中）或已就绪都弹，但**各查各的记忆**：进度卡被收起绝不影响
@@ -361,11 +381,18 @@ export function UpdateReadyToast() {
   // （见 state 声明处注释）。
   const isFound = phase === 'available' || phase === 'downloading'
   const isReady = phase === 'ready'
+  // installing = 用户刚点了「立即重启更新」。**不查任何忽略记忆**：这是用户
+  // 主动发起的动作，卡片是它唯一的回执。Windows 改走 NSIS 静默安装后
+  // （appUpdater 的 quitAndInstall(true, …)）不再有安装器窗口顶上来，这张卡
+  // 就是「点生效了」的全部证据；它只活到 main 那边 quitAndInstall 触发退出
+  // 为止（约 380ms），随窗口一起消失。
+  const isInstalling = phase === 'installing'
   const visible =
     version !== null &&
-    (isReady
-      ? version !== dismissedReadyVersion
-      : isFound && version !== dismissedProgressVersion)
+    (isInstalling ||
+      (isReady
+        ? version !== dismissedReadyVersion
+        : isFound && version !== dismissedProgressVersion))
   if (!visible) return null
 
   // 同一个 X 在两张卡上写不同的记忆：就绪卡（含「稍后」按钮）写忽略记忆，
@@ -381,21 +408,24 @@ export function UpdateReadyToast() {
     <div
       role="status"
       className={cn(
-        'od-toast-enter fixed bottom-4 left-4 z-[9999] flex w-[336px] items-start gap-3 rounded-[14px] bg-card p-4',
+        'od-toast-enter fixed bottom-4 left-4 z-[10000] flex w-[336px] items-start gap-3 rounded-[14px] bg-card p-4',
         TOAST_SHADOW
       )}
     >
-      {/* 图标：下载中 = 主题色下载图标、就绪 = 品牌绿描线勾。brand 是 HSL
-        * 三元组 token，必须 hsl() 包裹（AppRail 同款写法）。 */}
+      {/* 图标：下载中 = 主题色下载图标、就绪 = 品牌绿描线勾、安装中 = 品牌绿
+        * spinner（沿用就绪的品牌绿，安装是就绪的延续而非新语义）。brand 是
+        * HSL 三元组 token，必须 hsl() 包裹（AppRail 同款写法）。 */}
       <div
         className={cn(
           'grid size-[38px] shrink-0 place-items-center rounded-[11px]',
-          isReady
+          isReady || isInstalling
             ? 'bg-[hsl(var(--brand)/0.13)] text-[hsl(var(--brand))]'
             : 'bg-primary/10 text-primary'
         )}
       >
-        {isReady ? (
+        {isInstalling ? (
+          <SpinnerRing className="size-[18px]" />
+        ) : isReady ? (
           <Check aria-hidden="true" strokeWidth={2.4} className="od-check-draw size-[18px]" />
         ) : (
           <Download aria-hidden="true" className="size-[18px]" />
@@ -404,12 +434,18 @@ export function UpdateReadyToast() {
 
       <div className="min-w-0 flex-1">
         <div className="text-[13.5px] font-semibold tracking-[-0.1px] text-foreground">
-          {isReady ? `${version} 已就绪` : `发现新版本 ${version}`}
+          {isInstalling
+            ? `正在安装 ${version}`
+            : isReady
+              ? `${version} 已就绪`
+              : `发现新版本 ${version}`}
         </div>
         <p className="mt-[3px] text-[12.5px] leading-relaxed text-muted-foreground">
-          {isReady
-            ? '新版本已下载完成，重启应用即可完成更新。'
-            : '正在后台下载，完成后可一键重启更新。'}
+          {isInstalling
+            ? '应用即将关闭，安装完成后会自动重新打开。'
+            : isReady
+              ? '新版本已下载完成，重启应用即可完成更新。'
+              : '正在后台下载，完成后可一键重启更新。'}
         </p>
 
         {/* 下载进度：4px 圆角轨 + 平滑 width 过渡 + 等宽百分比。下载中卡片
@@ -429,6 +465,8 @@ export function UpdateReadyToast() {
           </div>
         ) : null}
 
+        {/* 安装中无按钮行：动作已经发出且不可取消（NSIS 安装器已被 spawn），
+          * 留一个能点的按钮只会诱发二次点击。 */}
         {isReady ? (
           <div className="mt-3 flex items-center gap-1.5">
             <Button
@@ -446,15 +484,19 @@ export function UpdateReadyToast() {
         ) : null}
       </div>
 
-      <Button
-        size="icon"
-        variant="ghost"
-        aria-label="关闭"
-        onClick={dismiss}
-        className="-mr-1.5 -mt-1.5 size-7 shrink-0 rounded-lg text-muted-foreground hover:bg-hover hover:text-foreground"
-      >
-        <X aria-hidden="true" className="size-4" />
-      </Button>
+      {/* 安装中也不给关闭 X：dismiss 写的是「忽略此版本」记忆，而这时安装
+        * 已经在路上了，收起它既拦不住安装，又会让用户以为取消掉了。 */}
+      {isInstalling ? null : (
+        <Button
+          size="icon"
+          variant="ghost"
+          aria-label="关闭"
+          onClick={dismiss}
+          className="-mr-1.5 -mt-1.5 size-7 shrink-0 rounded-lg text-muted-foreground hover:bg-hover hover:text-foreground"
+        >
+          <X aria-hidden="true" className="size-4" />
+        </Button>
+      )}
     </div>
   )
 }

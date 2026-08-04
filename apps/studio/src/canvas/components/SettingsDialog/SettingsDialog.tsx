@@ -2496,7 +2496,7 @@ export function SettingsDialog({
             />
           ) : null}
 
-          {activeSection === 'routines' ? <RoutinesSection onClose={onClose} /> : null}
+          {activeSection === 'routines' ? <RoutinesSection /> : null}
 
           {activeSection === 'orbit' ? (
             <OrbitSection

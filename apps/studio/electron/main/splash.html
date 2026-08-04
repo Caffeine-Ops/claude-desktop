@@ -142,6 +142,18 @@ body {
   background: var(--brand);
   transition: width 600ms cubic-bezier(0.4, 0, 0.2, 1);
 }
+/* 失败态：进度条转暗红 + 文案转正文色（比 muted 重，是要被读的内容而不是
+ * 陪衬）。启动失败时闪屏是唯一还活着的可见面——studio 的 view 已经被摘掉
+ * 或本就是空的，所以这里必须能表达「出错了」，不能继续假装在加载。 */
+.bar.is-failed .fill {
+  background: #d94a4a;
+}
+.stage-text.is-failed {
+  color: var(--foreground);
+  max-width: 420px;
+  line-height: 1.6;
+  text-align: center;
+}
 
 .stage-text {
   font-size: 13px;
@@ -228,6 +240,16 @@ body {
       fill.style.transitionDuration = '240ms';
       render();
       swapText('马上就好');
+    },
+    /* 启动失败：停住假进度、进度条转红、把原因摆出来。
+     * 调用方是 main 的 showSplashError（renderer 崩溃且重载兜底也用尽时）。
+     * 刻意不清空进度条——保留「走到哪一步」的信息比归零更有诊断价值。 */
+    fail(text) {
+      clearInterval(crawl);
+      fill.parentElement.classList.add('is-failed');
+      stageText.classList.add('is-failed');
+      render();
+      if (text) swapText(text);
     },
   };
 

@@ -1,8 +1,8 @@
 /**
  * canvasConfirm.helpers
  * ---------------------
- * Pure logic ported VERBATIM from the ppt-master confirm_ui front-end
- * (skills/ppt-master/scripts/confirm_ui/static/app.js). The CanvasConfirm
+ * Pure logic ported VERBATIM from the ppt-creator confirm_ui front-end
+ * (skills/ppt-creator/scripts/confirm_ui/static/app.js). The CanvasConfirm
  * React component renders the Eight-Confirmations UI natively inside the
  * 「问题」canvas tab instead of iframing that page; to stay byte-compatible
  * with the Flask server's data contract (recommendations.json in,

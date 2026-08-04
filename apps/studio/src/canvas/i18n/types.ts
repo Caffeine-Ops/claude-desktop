@@ -390,6 +390,8 @@ export interface Dict {
   'updateApp.downloadHint': string;
   'updateApp.ready': string;
   'updateApp.installNow': string;
+  'updateApp.installing': string;
+  'updateApp.installingHint': string;
   'updateApp.retry': string;
   'updateApp.error': string;
   'updateApp.devUnavailable': string;
@@ -398,6 +400,7 @@ export interface Dict {
   'updateApp.badge.checking': string;
   'updateApp.badge.downloading': string;
   'updateApp.badge.ready': string;
+  'updateApp.badge.installing': string;
   'updateApp.badge.error': string;
   'settings.appVersion': string;
   'settings.appChannel': string;
@@ -981,6 +984,21 @@ export interface Dict {
   'mcpClient.storedAt': string;
   'mcpClient.daemonError': string;
   'mcpClient.saveFailed': string;
+  'mcpClient.unsavedChanges': string;
+  'mcpClient.forwardedTo': string;
+  'mcpClient.notForwardedTo': string;
+  'mcpClient.stdioOnly': string;
+  'mcpClient.howToConfigure': string;
+  'mcpClient.notForwardedHelp': string;
+  'mcpClient.acpStdioHelp': string;
+  'mcpClient.rowEnabled': string;
+  'mcpClient.rowDisabled': string;
+  'mcpClient.rowMore': string;
+  'mcpClient.rowMoveUp': string;
+  'mcpClient.rowMoveDown': string;
+  'mcpClient.rowRemove': string;
+  'mcpClient.templateHomepage': string;
+  'mcpClient.templateTry': string;
   'useEverywhere.modalAria': string;
   'useEverywhere.modalTitle': string;
   'useEverywhere.modalSubtitle': string;

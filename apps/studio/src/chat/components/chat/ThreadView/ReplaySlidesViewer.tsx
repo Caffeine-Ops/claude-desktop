@@ -1,11 +1,11 @@
 /**
  * 回放形态的「预览幻灯片」tab 体——SlidesWorkspace 在 replay 会话里用它
- * 替换 LivePreviewEditor（后者依赖 ppt-master 的 live 预览 server，回放
+ * 替换 LivePreviewEditor（后者依赖 ppt-creator 的 live 预览 server，回放
  * 时早已不在）。数据源是【录像包里的 svg 资产】，零服务依赖。
  *
  * 页数与页序的权威来源是 manifest.meta.slides（导出时在导出机上落定，
  * 见 replayPackage.deriveSlides）——不能从消息扫 svg 自推：消息里混着
- * ppt-master 的模板参考图（13 页会被扫成 17 页），且导入重写后文件名是
+ * ppt-creator 的模板参考图（13 页会被扫成 17 页），且导入重写后文件名是
  * 内容哈希，按名排序=按哈希排序。消息扫描只用来做【揭示判定】：清单里
  * 某页的路径在已播消息文本中出现 = 这页「生成到了」，进缩略列（重现
  * 幻灯片逐页出现的过程感）。旧格式包没有清单 → 退回全量扫描兜底（页序
@@ -159,7 +159,7 @@ export function useReplaySlideDeck(): ReplaySlideDeck | null {
   }, [isReplay, messages, manifestSlides])
 }
 
-/** 展示名：去掉 ppt-master 的数字前缀（'13_closing课堂讨论框架' → 'closing课堂讨论框架'）。 */
+/** 展示名：去掉 ppt-creator 的数字前缀（'13_closing课堂讨论框架' → 'closing课堂讨论框架'）。 */
 function displayTitle(s: ReplaySlide): string {
   return s.title.replace(/^\d+[_-]?/, '')
 }

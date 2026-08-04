@@ -1540,13 +1540,13 @@ export function usePendingAskTiming(): {
   )
 }
 
-/* ───────────────── ppt-master in-app preview detection ──────────────── */
+/* ───────────────── ppt-creator in-app preview detection ──────────────── */
 
 /**
- * ppt-master's confirm_ui and live-preview surfaces are file+IPC now — no
+ * ppt-creator's confirm_ui and live-preview surfaces are file+IPC now — no
  * HTTP server, no port, no URL to parse. This hook's only job is to detect
  * that one of them is ACTIVE for the foreground session and hand the
- * renderer the ppt-master project's ABSOLUTE directory, which every IPC
+ * renderer the ppt-creator project's ABSOLUTE directory, which every IPC
  * these tabs call (CONFIRM_UI_READ, PPT_PREVIEW_LIST_SLIDES, …) keys off of:
  *   - `confirm_ui/confirm_wait.py <project> --stage {tier1,final} [--fresh]`
  *     — CanvasConfirm renders in the 「问题」canvas tab while a wait for this
@@ -1652,7 +1652,7 @@ function previewCommandText(part: ContentPart): string {
   return typeof part.argsText === 'string' ? stripLineContinuations(part.argsText) : ''
 }
 
-/** Which ppt-master surface is active + the project it's for. `confirm` →
+/** Which ppt-creator surface is active + the project it's for. `confirm` →
  *  native render in 「问题」; `preview` → native render in 「预览幻灯片」.
  *  `projectDir` is always an ABSOLUTE path — the IPC these tabs call rejects
  *  relative ones. */
@@ -1661,7 +1661,7 @@ export type PreviewServer =
   | { kind: 'preview'; projectDir: string }
 
 /**
- * The foreground session's active ppt-master surface, or null when neither
+ * The foreground session's active ppt-creator surface, or null when neither
  * is up. Scans every Bash tool-call part once, in transcript order — later
  * matches override earlier ones, so a confirm → live-preview handoff (or a
  * retry after a timeout) swaps which tab is driven, same rule the old
@@ -1752,7 +1752,7 @@ export function usePreviewServer(): PreviewServer | null {
   )
 }
 
-/* ───────────────── ppt-master source pptx detection ──────────────── */
+/* ───────────────── ppt-creator source pptx detection ──────────────── */
 
 // An absolute path ending in .pptx/.ppt — matches both the composer's
 // `@"<path>"` mention quoting (the quotes aren't part of the match, so a
@@ -1775,7 +1775,7 @@ function messageText(content: unknown): string {
 
 /**
  * The .pptx/.ppt path named in this session's FIRST user message, if any —
- * the signal that the user handed ppt-master an EXISTING deck to work from
+ * the signal that the user handed ppt-creator an EXISTING deck to work from
  * (beautify/modify), which SlidesWorkspace uses to open a preview of that
  * source file (see PPT_SOURCE_PREVIEW / SourceDeckViewer) before the AI has
  * produced any output of its own. A path only in a LATER message doesn't
@@ -1794,7 +1794,7 @@ export function useSourcePptx(): { path: string } | null {
   )
 }
 
-/* ───────────────── ppt-master template-fill export detection ──────────────── */
+/* ───────────────── ppt-creator template-fill export detection ──────────────── */
 
 // The apply subcommand of template_fill_pptx — covers the plain script
 // invocation, the package's own cli.py called directly, and a quoted script
@@ -1851,7 +1851,7 @@ export function useExportedPptx(): ExportedPptx | null {
   )
 }
 
-/* ───────────────── ppt-master image acquisition feed ──────────────── */
+/* ───────────────── ppt-creator image acquisition feed ──────────────── */
 
 // Match the worklist path off a running `image_gen.py --manifest <path>`
 // command (AI generation) or its web sister `image_search.py --batch <path>`
@@ -1868,7 +1868,7 @@ const IMAGE_MANIFEST_RE =
 const IMAGE_BATCH_RE =
   /image_search\.py[^\n]*?--batch[=\s]+(?:"([^"]+)"|'([^']+)'|((?:\\ |\S)+))/
 // The manifest path in the real command is RELATIVE ("projects/<name>/images/
-// image_prompts.json"), because the ppt-master image step runs
+// image_prompts.json"), because the ppt-creator image step runs
 // `cd ${SKILL_DIR} && python scripts/image_gen.py --manifest projects/…`. Pull
 // the `cd <dir>` target out of the same command so we can resolve the relative
 // manifest against it — the main-process IPC only accepts absolute paths.
@@ -1883,7 +1883,7 @@ function unescapeBareArg(s: string): string {
 
 /**
  * Expand `$VAR` / `${VAR}` occurrences in `raw` against `VAR=value`
- * assignments found in the SAME command text. Real ppt-master launches are
+ * assignments found in the SAME command text. Real ppt-creator launches are
  * self-contained one-liners — `SKILL_DIR="/Applications/…" && cd "$SKILL_DIR"
  * && python3 scripts/image_gen.py --manifest projects/…` — so the assignment
  * for every variable a path references sits earlier on the command line
@@ -1922,7 +1922,7 @@ function isAbsolutePosix(p: string): boolean {
  * (relative path with no `cd` to anchor it) — the caller skips those. Shared
  * by every "read a real value out of the command text" detector in this
  * file — originally written for the image manifest path, now also used to
- * resolve ppt-master project directories (usePreviewServer).
+ * resolve ppt-creator project directories (usePreviewServer).
  */
 function resolveCommandPath(rawPath: string, command: string): string {
   // Both the argument and the `cd` target routinely arrive as shell
@@ -2068,7 +2068,7 @@ export function useImageFeeds(): ImageFeed[] {
   }, [messages])
 }
 
-/* ───────────────── ppt-master written-file canvas feed ──────────────── */
+/* ───────────────── ppt-creator written-file canvas feed ──────────────── */
 
 /** One file written by a Write tool call, surfaced into the 文件 canvas tab. */
 export type WrittenFile = {
@@ -2184,7 +2184,7 @@ export function useWrittenFiles(): WrittenFile[] {
   }, [messages])
 }
 
-/* ───────────────── ppt-master SVG-edit-in-flight feed ──────────────── */
+/* ───────────────── ppt-creator SVG-edit-in-flight feed ──────────────── */
 
 /** The deck page (.svg) the assistant is modifying RIGHT NOW, or null. */
 export type EditingSvgFile = {
