@@ -196,8 +196,13 @@ const LEADING_NUM = /^(\d+)/
 
 /**
  * 节文件名排序。**按数值而非字典序**：字典序会把 `10-x.md` 排到 `2-x.md` 前面，
- * 正文顺序当场错乱且毫无报错。无数字前缀的（如 `附录.md`）统一排在带前缀的之后、
- * 内部按字典序——它们不属于主线节次，钉在尾部比穿插进正文安全。
+ * 正文顺序当场错乱且毫无报错。无数字前缀的统一排在带前缀的之后、内部按字典序。
+ *
+ * 注意本函数只管**顺序**，不管**取舍**——「无前缀的该不该计入正文」由
+ * `selectSectionNames` 决定，进到这里的名字都已经是选定的节。原先这里的注释写着
+ * 「无前缀的（如 `附录.md`）钉在尾部比穿插进正文安全」，那个判断只在它真是附录时成立；
+ * 实测 12 个真实项目，混进 `drafts/` 的无前缀文件全是合并全文，钉在尾部等于全文重播一遍
+ * （详见 selectSectionNames 顶注）。
  */
 export function sortSectionNames(names: string[]): string[] {
   return [...names].sort((a, b) => {
@@ -211,6 +216,54 @@ export function sortSectionNames(names: string[]): string[] {
     if (nb) return 1
     return a.localeCompare(b)
   })
+}
+
+/** `selectSectionNames` 的结果：计入正文的节，以及被判为「不是节」而排除掉的文件。 */
+export interface SectionNameSelection {
+  /** 计入正文的节文件名，已按自然序排好（可直接喂 readWritingSections / joinWritingSections）。 */
+  sections: string[]
+  /** 排除掉的文件名，按字典序。**必须回给 UI 提示**，理由见下方顶注最后一段。 */
+  excluded: string[]
+}
+
+/**
+ * 从 `drafts/` 的 .md 清单里挑出「真正算正文的节」。
+ *
+ * 【要解决的事故】写作流水线的质检脚本（ai_slop_checker.py / readability_check.py /
+ * continuity_check.py）只吃**单个正文文件**，而分节模式下 `drafts/` 是一节一文件——写手为了
+ * 跑质检必须先把各节合并成一份全文，SKILL.md 从前没规定这份合并稿落哪，写手就地存成
+ * `drafts/full.md`。它是合法 .md、名字过得了 `isSafeSectionName`，于是被当成第 5 节拼进正文：
+ * 预览的纸面和导出的 Word/PDF 都在四节之后把全文原样再播一遍（两条链共用
+ * `joinWritingSections` 的结果，所以是同一个 bug 的两个出口，不是两个 bug）。
+ *
+ * 【判据为什么是「有没有序号前缀」】SKILL.md 对分节模式的约定是「一节一文件，按序命名」，
+ * 所以**只要目录里出现了序号节，没序号的那些就不是这条主线上的节**。实测桌面上 12 个真实
+ * 写作项目：10 个纯序号节；`我的工作_.../drafts/正文.md` 与 `ai产品经理.../01-全篇.md` 是单文件
+ * 形态；剩下两个混了无序号文件——`古代惊悚短篇_20260727/全文.md` 和
+ * `程序员的ai岗位地图_20260804/full.md`，**全是合并全文，零个真附录**。可见这不是偶发，
+ * 是同一个坑复发了两次（前一次是小说体裁，每节还会各插一个分页符，重播得更明显）。
+ *
+ * 【为什么不用内容判据】试过「谁的标题集合覆盖了别人的，谁就是合并稿」——在真实数据上当场
+ * 失效：`full.md` 覆盖了四节 17 个标题里的 16 个，唯独末节标题在合并之后被润色改过
+ * （`## 最后` → `## 回到你关掉网页的那一秒`），严格覆盖不成立。要救就得引入相似度阈值，
+ * 阈值是拍脑袋的、还得把每个文件读进来（`scanWritingDoc` 是 2s 一轮的轮询，刻意只 stat
+ * 不读内容）。命名判据零 IO、结论确定、可纯函数测试，是这里更稳的一手。
+ *
+ * 【为什么一个序号节都没有时全收】那是单文件形态：`optimize-existing` 落 `rewrite.md`、
+ * `polish-only` 路由进来落 `<标题>-润色版.md`、用户自己起名 `正文.md`。这些项目的
+ * `drafts/` 里通常就一个无序号文件，一刀切排除会让右栏恒空——比重播更糟。
+ *
+ * 【为什么要把 excluded 回出去】判据认命名就必然存在误伤面：写手哪天真写了个无序号的收尾节
+ * （`尾声.md`），它会被算作非节。**静默吞掉正文比重播正文更难排查**，所以排除的名单要回给
+ * UI 明示，用户一眼能看出「这个文件没算进去」，而不是对着少了一节的稿子找不着北。
+ */
+export function selectSectionNames(names: string[]): SectionNameSelection {
+  const hasNumbered = names.some((n) => LEADING_NUM.test(n))
+  if (!hasNumbered) return { sections: sortSectionNames(names), excluded: [] }
+  const sections: string[] = []
+  const excluded: string[] = []
+  for (const n of names) (LEADING_NUM.test(n) ? sections : excluded).push(n)
+  return { sections: sortSectionNames(sections), excluded: excluded.sort((a, b) => a.localeCompare(b)) }
 }
 
 /**

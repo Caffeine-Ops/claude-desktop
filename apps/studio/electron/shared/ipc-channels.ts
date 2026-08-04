@@ -2426,6 +2426,11 @@ export type WritingScanResultIpc =
        *  "不限量"。 */
       imageCount: number | null
       files: WritingFileMeta[]
+      /** `drafts/` 里判为「不是节」、没计入正文的 .md 文件名。判据与事故背景见
+       *  electron/shared/writing.ts 的 selectSectionNames 顶注（一句话版：质检脚本只吃单文件，
+       *  写手把各节合并成 `full.md` 留在 drafts/，它曾被当成末节拼进正文 → 预览和导出各重播
+       *  一遍全文）。**不是错误信号**，UI 拿它摆一行提示，避免误伤时静默吞掉正文。 */
+      excluded: string[]
     }
   | { ok: false; dirMissing?: true; error: string }
 

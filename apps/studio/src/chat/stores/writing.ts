@@ -117,6 +117,12 @@ interface WritingState {
    */
   imageCount: number | null
   sections: WritingSection[]
+  /**
+   * `drafts/` 里判为「不是节」、没计入正文的 .md 文件名（随 WRITING_SCAN 回来）。
+   * 判据与事故背景见 electron/shared/writing.ts 的 selectSectionNames 顶注。
+   * 纸面用它摆一行提示——命名判据必然有误伤面，静默少一节正文比多播一节更难被发现。
+   */
+  excludedFiles: string[]
   status: WritingStatus
   errMsg: string
   /**
@@ -172,6 +178,7 @@ interface WritingState {
     outlineTotal: number | null
     imageStyle: string | null
     imageCount: number | null
+    excludedFiles: string[]
   }) => void
   setSections: (sections: WritingSection[]) => void
   setStatus: (status: WritingStatus, errMsg?: string) => void
@@ -292,6 +299,7 @@ export const useWritingStore = create<WritingState>((set, get) => ({
   imageStyle: null,
   imageCount: null,
   sections: [],
+  excludedFiles: [],
   status: 'idle',
   errMsg: '',
   revealed: false,
@@ -335,6 +343,7 @@ export const useWritingStore = create<WritingState>((set, get) => ({
       // 就是这篇稿子的归属会话。切源 = 换了篇稿子（多半也换了会话），一并刷新。
       sessionId: source ? useChatStore.getState().sessionId : null,
       sections: [],
+      excludedFiles: [],
       outlineTotal: null,
       imageStyle: null,
       imageCount: null,
@@ -370,8 +379,8 @@ export const useWritingStore = create<WritingState>((set, get) => ({
     // 对话的回复当成这条改写的结果推给用户确认）。
     set({ sessionId, pendingRevision: null, queue: [], review: null, conflictMsg: '' })
   },
-  applyScan: ({ genre, outlineTotal, imageStyle, imageCount }) =>
-    set({ genre, outlineTotal, imageStyle, imageCount }),
+  applyScan: ({ genre, outlineTotal, imageStyle, imageCount, excludedFiles }) =>
+    set({ genre, outlineTotal, imageStyle, imageCount, excludedFiles }),
   // 判据是「有非空正文」而不是 sections.length > 0：AI 有可能先把一节的空文件建出来
   // （占位、或写到一半被打断），文件在但一个字没有——那时开门看到的还是空白纸面。
   setSections: (sections) =>
@@ -622,13 +631,29 @@ export function useWritingPoll(active: boolean): void {
         st.setStatus(scan.dirMissing ? 'missing' : 'error', scan.error)
         return
       }
+      // 【为什么要对一个类型上「必填」的字段做运行时兜底】dev 下 main 与 renderer 是两个
+      // **独立重载**的进程：改 renderer 走 Next 热更新、秒级生效；改 main 要等 electron-vite
+      // 重启主进程。于是每次给 IPC 结果加新字段，都必然有一段「新 renderer 拿着旧 main 的
+      // 返回体」的窗口期——`excluded` 刚加那次就当场炸了（`scan.excluded.map` → Cannot read
+      // properties of undefined，2026-08-04）。类型系统在这个窗口期帮不上任何忙：它描述的是
+      // 源码里的约定，不是运行中那个进程的实际版本。**跨进程边界收到的东西一律当外部输入**，
+      // 与 preload 那侧对 payload 的态度一致。
+      const excluded = Array.isArray(scan.excluded) ? scan.excluded : []
       st.applyScan({
         genre: scan.genre,
         outlineTotal: scan.outlineTotal,
         imageStyle: scan.imageStyle,
-        imageCount: scan.imageCount
+        imageCount: scan.imageCount,
+        excludedFiles: excluded
       })
-      const signature = scan.files.map((f) => `${f.name}:${f.mtimeNs}:${f.size}`).join('|')
+      // 签名要带上 excluded：被排除的文件不进正文，但它的出现/消失要能让提示条跟着变。
+      // 只用 files 的话，写手刚把 full.md 放进 drafts/ 或用户刚把它删掉，签名都纹丝不动
+      // ——纸面提示会一直停在上一轮的状态，直到某一节正文恰好也变了才顺带刷新。
+      // 只记名字不记 mtime/size：排除文件的内容改了与正文无关，不值得为它触发一次重读。
+      const signature = [
+        ...scan.files.map((f) => `${f.name}:${f.mtimeNs}:${f.size}`),
+        ...excluded.map((n) => `x:${n}`)
+      ].join('|')
       // 出图触发器与轮询同拍：磁盘元信息没变 = 正文真没变（含指令块），沿用 store 里已有的
       // sections 就能安全跑一次自动发起的稳定判据比对，不必等下一次真正的重读——两条分支都要
       // 调用 autoFireWritingGenImages，否则「AI 写完不再改」这一刻永远等不到第二轮确认。
@@ -673,8 +698,26 @@ export function useWritingPoll(active: boolean): void {
       autoFireWritingGenImages()
     }
 
-    void tick()
-    const timer = window.setInterval(() => void tick(), POLL_MS)
+    /**
+     * 单轮失败不许打挂整条轮询。
+     *
+     * 【为什么必须包这一层】`tick` 是 async，里面任何一处抛出都会变成一条 unhandled
+     * rejection，而**抛出点之后的 `setSections` / `setStatus` 全部执行不到**；下一轮
+     * setInterval 照常进来、在同一个地方再挂一次。表现是纸面永远停在旧内容、状态卡在上一次
+     * 成功值，界面上没有任何提示——比直接报错难查得多。上面 `excluded` 那条兜底修的是
+     * 「这一次为什么抛」，这一层修的是「抛了之后为什么会全线冻结」，两件事分开修。
+     *
+     * **吞掉但留 console.error**：静默吞异常会让下一个同类 bug 彻底隐形，这里只保证轮询
+     * 活着，不保证问题被隐藏。
+     */
+    function safeTick(): void {
+      void tick().catch((err: unknown) => {
+        console.error('[writing-poll] 本轮轮询失败，下一轮继续', err)
+      })
+    }
+
+    safeTick()
+    const timer = window.setInterval(safeTick, POLL_MS)
     return () => {
       cancelled = true
       window.clearInterval(timer)

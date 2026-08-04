@@ -5,6 +5,7 @@ import {
   parseImageStyle,
   parseImageCount,
   sortSectionNames,
+  selectSectionNames,
   joinWritingSections,
   shouldPageBreak,
   extractRevisionResult,
@@ -215,6 +216,46 @@ describe('sortSectionNames', () => {
       '2-b.md',
       '附录.md'
     ])
+  })
+})
+
+describe('selectSectionNames', () => {
+  it('全是序号节时一个不落，按自然序', () => {
+    const r = selectSectionNames(['10-j.md', '2-b.md', '1-a.md'])
+    expect(r.sections).toEqual(['1-a.md', '2-b.md', '10-j.md'])
+    expect(r.excluded).toEqual([])
+  })
+
+  it('一个序号节都没有时（单文件形态）全收，不排除任何东西', () => {
+    // 真实形态：optimize-existing 落 `rewrite.md`、polish-only 落 `<标题>-润色版.md`、
+    // 用户自己起名 `正文.md`。这类项目的 drafts/ 里就一个文件，排除它等于右栏恒空。
+    const r = selectSectionNames(['正文.md'])
+    expect(r.sections).toEqual(['正文.md'])
+    expect(r.excluded).toEqual([])
+  })
+
+  it('序号节旁边混进合并全文时把它排除掉（本修复的靶子）', () => {
+    // 真实事故：写作流水线在质检阶段把四节 cat 成 drafts/full.md 留在原地，
+    // 无序号名被 sortSectionNames 钉到尾部 → 预览与导出各多播一遍全文。
+    const r = selectSectionNames(['01-立靶.md', '02-破.md', '03-立.md', '04-收.md', 'full.md'])
+    expect(r.sections).toEqual(['01-立靶.md', '02-破.md', '03-立.md', '04-收.md'])
+    expect(r.excluded).toEqual(['full.md'])
+  })
+
+  it('中文命名的合并稿同样排除（历史上出现过「全文.md」）', () => {
+    const r = selectSectionNames(['01.md', '02.md', '全文.md'])
+    expect(r.sections).toEqual(['01.md', '02.md'])
+    expect(r.excluded).toEqual(['全文.md'])
+  })
+
+  it('排除多个时按字典序回，供 UI 稳定展示', () => {
+    const r = selectSectionNames(['1-a.md', 'full.md', '附录.md'])
+    expect(r.sections).toEqual(['1-a.md'])
+    expect(r.excluded).toEqual(['full.md', '附录.md'])
+  })
+
+  it('空目录回两个空数组，不抛', () => {
+    expect(selectSectionNames([])).toEqual({ sections: [], excluded: [] })
   })
 })
 

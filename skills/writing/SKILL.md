@@ -383,6 +383,21 @@ Read references/editor.md
 
 **第一步 · 跑脚本拿客观指标**（按体裁选跑，产物落 `reviews/`）：
 
+> ⛔ **三个脚本都只吃一个正文文件，而 `drafts/` 是一节一文件——合并出来的全文一律落
+> `reviews/_full.md`，绝对不许落进 `drafts/`。**
+>
+> ```bash
+> cat <项目>/drafts/*.md > <项目>/reviews/_full.md   # 质检用的临时全文，落 reviews/
+> $WRITING_PY ${SKILL_DIR}/scripts/ai_slop_checker.py <项目>/reviews/_full.md --spec-lock …
+> ```
+>
+> 为什么这条是硬规矩：桌面端写作工作区把 `drafts/` 下**每个** .md 都当成正文的一节按序拼进
+> 纸面，合并全文放在那儿就成了「第 N+1 节」——预览、导出的 Word 和 PDF 会在正文之后把全篇
+> 原样再播一遍，而磁盘上每个文件各自都是对的，用户完全看不出问题出在哪。这个坑真实发生过
+> 两次（`古代惊悚短篇_20260727/drafts/全文.md`、`程序员的ai岗位地图_20260804/drafts/full.md`）。
+> 桌面端现已加了兜底（`drafts/` 里不以序号开头的文件不计入正文，并在纸面上明示「未计入正文」），
+> 但兜底认的是命名，**别拿它当许可证**：合并稿落 `reviews/`，`drafts/` 里只放真正的分节稿。
+
 ```bash
 # 所有体裁都跑 —— AI 味五维，总分 < 35 直接打回
 $WRITING_PY ${SKILL_DIR}/scripts/ai_slop_checker.py <正文.md> --spec-lock <项目>/spec_lock.md
@@ -455,6 +470,10 @@ Read references/polisher.md
 > 🖼 **没出图的指令导出成占位框，不会丢也不会漏源码**：正文里还没出图的 ```` ```genimage ```` 块、以及公众号渲染不了的 ```` ```mermaid ```` 块，导出时都会变成一个**看得见的占位框**（带图说，标明「待出图」/「待渲染」）——既不会把出图指令 / mermaid 源码当正文段落漏给读者，也不会悄悄删掉让人以为这里本来就没图。源码原样留在 Markdown 原稿里。导出结束时终端会报「还有 N 处氛围图没出图」，出图后把图片按 `![图说](路径)` 换掉对应的块再重跑一次导出即可。
 >
 > 📎 **公众号配图要手工插**：微信编辑器会丢弃指向本地文件的图，「粘一次全带图」在这个平台上做不到。导出会把用到的图按顺序复制到 `<项目>/output/images/`，并在 HTML 顶部生成一份逐张对照的插图清单（封面单列，因为公众号封面是编辑器里的独立上传项、不进正文）。把这份清单一并交给用户。
+
+> 📄 **`<定稿.md>` 从哪来（分节模式）**：把 `drafts/` 各节按序合并成一份完整定稿，**落
+> `<项目>/output/<标题>.md`**，再拿它去导出。同 Step 7 那条硬规矩——合并出来的整篇稿子
+> 一律不许落回 `drafts/`，那儿只放分节稿（原因见 Step 7 第一步的 ⛔ 块）。
 
 ```bash
 $WRITING_PY ${SKILL_DIR}/scripts/export.py <定稿.md> --format wechat --style wechat-default --out <项目>/output/<文件名>

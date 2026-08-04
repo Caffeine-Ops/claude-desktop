@@ -15,6 +15,7 @@ import {
   parseImageStyle,
   parseOutlineTotal,
   parseWritingGenre,
+  selectSectionNames,
   sortSectionNames,
   type WritingDocSource,
   type WritingFileMeta,
@@ -45,6 +46,10 @@ export type WritingScanResult =
        *  桌面端自己的默认上限，不是"不限量"。 */
       imageCount: number | null
       files: WritingFileMeta[]
+      /** `drafts/` 里判为「不是节」而没计入正文的 .md 文件名（判据见 selectSectionNames 顶注）。
+       *  **不是错误信号**，是给 UI 明示用的：命名判据必然有误伤面，静默吞掉一节正文比重播
+       *  一节更难排查，所以宁可在纸面上摆一行「这些文件没算进正文」。single 模式恒为空数组。 */
+      excluded: string[]
     }
   | { ok: false; dirMissing?: true; error: string }
 
@@ -169,7 +174,10 @@ export function scanWritingDoc(source: WritingDocSource): WritingScanResult {
           size: Number(st.size),
           mtimeNs: st.mtimeNs.toString()
         }
-      ]
+      ],
+      // single 模式只认文档自己那一个文件（isAllowedSectionName 已把同目录其他 .md 挡在外面），
+      // 谈不上「谁被排除」——恒空数组，不是 undefined，省得下游到处判空。
+      excluded: []
     }
   }
 
@@ -193,11 +201,16 @@ export function scanWritingDoc(source: WritingDocSource): WritingScanResult {
   try {
     names = readdirSync(sectionDir(source))
   } catch {
-    return { ok: true, genre, outlineTotal, imageStyle, imageCount, files: [] }
+    return { ok: true, genre, outlineTotal, imageStyle, imageCount, files: [], excluded: [] }
   }
 
+  // 先过格式白名单（挡掉 .DS_Store / notes.txt 这类根本不是 .md 的），再过「是不是这条主线上的
+  // 节」——两道闸分开：前者是安全/格式问题（不该出现在 excluded 里让用户困惑），后者是语义取舍，
+  // 只有后者要回给 UI 明示。判据与事故背景见 selectSectionNames 顶注。
+  const { sections: sectionNames, excluded } = selectSectionNames(names.filter(isSafeSectionName))
+
   const files: WritingFileMeta[] = []
-  for (const name of sortSectionNames(names.filter(isSafeSectionName))) {
+  for (const name of sectionNames) {
     try {
       // 同上：{ bigint: true } 一次拿到毫秒 + 纳秒两种精度，见 single 模式分支的注释。
       const st = statSync(join(sectionDir(source), name), { bigint: true })
@@ -213,7 +226,7 @@ export function scanWritingDoc(source: WritingDocSource): WritingScanResult {
       // 扫描与 stat 之间文件消失（AI 正在改名）——跳过，下一轮轮询自会补上。
     }
   }
-  return { ok: true, genre, outlineTotal, imageStyle, imageCount, files }
+  return { ok: true, genre, outlineTotal, imageStyle, imageCount, files, excluded }
 }
 
 export function readWritingSections(

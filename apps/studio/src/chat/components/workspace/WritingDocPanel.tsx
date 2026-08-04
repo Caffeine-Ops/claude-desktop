@@ -85,6 +85,7 @@ export function WritingDocPanel(): React.JSX.Element | null {
   const pendingRevision = useWritingStore((s) => s.pendingRevision)
   const review = useWritingStore((s) => s.review)
   const conflictMsg = useWritingStore((s) => s.conflictMsg)
+  const excludedFiles = useWritingStore((s) => s.excludedFiles)
   // 写盘在飞：禁用对照卡按钮防重入（同一条改写写两遍，第二遍必撞乐观锁刷出假冲突）。
   const [applying, setApplying] = useState(false)
 
@@ -871,6 +872,24 @@ export function WritingDocPanel(): React.JSX.Element | null {
           >
             知道了
           </Button>
+        </div>
+      )}
+
+      {/* 「有文件没算进正文」提示。**刻意不做成可关闭的告警**：它不是一次性事件，而是磁盘现状
+          的投影——只要那个文件还躺在 drafts/ 里就该一直摆着，用户把它挪走（或写手改名成
+          `NN-xxx.md`）提示自会消失。用中性弱化色而非 conflictMsg 的琥珀警告色，因为绝大多数
+          时候这是**正确**的排除（质检用的合并全文），不是出错。
+
+          为什么非提示不可：排除判据认的是命名（见 selectSectionNames 顶注），必然存在误伤面
+          ——写手哪天真写了个不带序号的收尾节，它会被算作非节。少一节正文而无声无息，比多播
+          一节全文难查得多，所以宁可在这里多摆一行字。 */}
+      {excludedFiles.length > 0 && (
+        <div
+          className="border-b border-border bg-muted/40 px-3 py-1.5 text-[11px] leading-relaxed text-muted-foreground"
+          title={`写作项目的 drafts/ 目录里，一节一个文件、按序号命名（01-…、02-…）。不以序号开头的文件不算分节稿，常见的是质检时合并出来的全文（full.md / 全文.md）——把它也算进去，正文就会重复一遍。若这确实是正文的一节，请把它改名成序号开头。`}
+        >
+          未计入正文：{excludedFiles.join('、')}
+          <span className="ml-1 opacity-70">（drafts/ 里不以序号开头的文件不算分节稿）</span>
         </div>
       )}
 

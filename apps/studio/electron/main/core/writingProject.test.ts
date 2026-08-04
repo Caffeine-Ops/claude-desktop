@@ -109,6 +109,36 @@ describe('scanWritingDoc · project 模式', () => {
     expect(r.ok && r.files.map((f) => f.name)).toEqual(['1-a.md'])
   })
 
+  it('序号节旁边混进的合并全文不算节，名字回进 excluded 供 UI 提示', () => {
+    // 真实事故复现：质检脚本只吃单个正文文件，写手把四节 cat 成 drafts/full.md 留在原地，
+    // 于是它被当成第 5 节拼进正文，预览与导出（同一份 joinWritingSections 结果）各重播一遍全文。
+    const dir = makeProject({
+      drafts: { '01-立靶.md': '一', '02-破.md': '二', 'full.md': '一\n\n二' }
+    })
+    const r = scanWritingDoc({ kind: 'project', projectDir: dir })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.files.map((f) => f.name)).toEqual(['01-立靶.md', '02-破.md'])
+    expect(r.excluded).toEqual(['full.md'])
+  })
+
+  it('读全部时同样排除合并全文（预览与导出的正文源就是这一条）', () => {
+    const dir = makeProject({
+      drafts: { '01-a.md': '一', '02-b.md': '二', '全文.md': '一\n\n二' }
+    })
+    const r = readWritingSections({ kind: 'project', projectDir: dir }, [])
+    expect(r.ok && r.sections.map((s) => s.name)).toEqual(['01-a.md', '02-b.md'])
+  })
+
+  it('一个序号节都没有时全收（单文件形态：rewrite.md / 正文.md）', () => {
+    const dir = makeProject({ drafts: { '正文.md': '全篇' } })
+    const r = scanWritingDoc({ kind: 'project', projectDir: dir })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.files.map((f) => f.name)).toEqual(['正文.md'])
+    expect(r.excluded).toEqual([])
+  })
+
   it('项目目录不存在时回 dirMissing，供 UI 退回空态', () => {
     const r = scanWritingDoc({ kind: 'project', projectDir: join(root, 'nope') })
     expect(r.ok).toBe(false)
