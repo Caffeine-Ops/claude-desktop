@@ -474,23 +474,30 @@ app.whenReady().then(async () => {
   // 被清掉的包重开时自动重新解包，无功能损失。
   void cleanReplayCache()
 
-  // ppt-creator skill 的后台预热：它不再随安装包发布（99MB / 12167 文件），
-  // 首次需要时才下载。**刻意不挡启动**——应用照常秒开，只有 PPT 入口在未
-  // 就绪时才挡（用户拍板 2026-07-29）；在这里先跑一遍，让「点进去时已经好了」
-  // 成为常态。全程在 utilityProcess 里做，不占 main 主线程。
-  warmPptSkillInBackground()
-
-  // 运行时组件（AI 引擎 / Python 环境）的按需安装。与上一行 PPT 的后台预热
-  // **刻意相反**：AI 引擎是必需品，缺了整个应用不能聊天，所以渲染层那道门是
-  // 挡住的、不可关闭的。
+  // 运行时组件（AI 引擎 / Python 环境）的按需安装。**必须先于下面的 PPT
+  // 预热注册**：ensureRuntimeComponents 内部单飞，这里先起头，warmPptSkill
+  // 的 preparePython 内部会 await 同一个单飞 promise 去 join 它，而不是抢跑
+  // 在它前面拿到一个还没判定完的 pythonHome（2026-08 排查过的竞态：PPT 预热
+  // 若先跑，会在 python-runtime 下载/系统检测完成前就拿到 null，回退系统
+  // python——若用户机器是 3.13/3.14，直接踩进 python-runtime 本来要躲开的
+  // 源码编译卡死坑，表现为「正在准备运行环境」胶囊一直不消失）。
   //
-  // 但这里仍然 fire-and-forget、不 await —— 挡的是门，不是 whenReady。splash
+  // AI 引擎是必需品，缺了整个应用不能聊天，所以渲染层那道门是挡住的、不可
+  // 关闭的（python-runtime 则不挡，required:false）。
+  //
+  // 这里仍然 fire-and-forget、不 await —— 挡的是门，不是 whenReady。splash
   // 照常走完、studio 首帧照常出，门在 studio 里立起来。这样即使要下一两分钟，
   // 用户看到的也是一个正常窗口 + 说明清楚的进度层，而不是一个卡在闪屏上的死壳
   // （骨架屏那类「越需要越跑不动」的反模式，errors/ 里有同族记录）。
   //
   // 必须在 registerIpcHandlers() 之后——广播要有落点。
   ensureRuntimeComponentsInBackground()
+
+  // ppt-creator skill 的后台预热：它不再随安装包发布（99MB / 12167 文件），
+  // 首次需要时才下载。**刻意不挡启动**——应用照常秒开，只有 PPT 入口在未
+  // 就绪时才挡（用户拍板 2026-07-29）；在这里先跑一遍，让「点进去时已经好了」
+  // 成为常态。全程在 utilityProcess 里做，不占 main 主线程。
+  warmPptSkillInBackground()
 
   // 自动更新：打包形态才真正初始化（dev 下降级为 supported:false 只读态），
   // 内部自带 15s 延迟首查，不跟冷启动抢资源。

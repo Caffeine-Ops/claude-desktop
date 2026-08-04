@@ -236,21 +236,36 @@ export function createShellWindow(): BrowserWindow {
     minHeight: 778,
     show: false,
     autoHideMenuBar: true,
-    titleBarStyle: 'hiddenInset',
-    // Traffic lights sit directly over the active tab's renderer
-    // header — the renderer's `.header` reserves left padding so
-    // the buttons don't overlap any content.
-    // y=17：studio tab 的 WebContentsView 全屏 flush（setBounds x0 y0，见
-    // layoutActiveTab 的 studio 分支），所以窗口坐标 == renderer 视口坐标。
-    // 内容面 46px 标题栏（含收起态展开图标、标题、AI生成徽标）从 y=0 起
-    // （2026-07-08 平铺化去掉了 stage 的 10px 顶部 gutter，见 globals.css
-    // .shell-stage 注释），垂直中线 = 23；红绿灯按钮 ⌀12，position.y 是按钮
-    // 顶部，故 23-6=17 让三者垂直居中对齐。浮卡时代的旧值 27 对的是
-    // 「gutter 10 + header 46」的中线 33，平铺后会偏低 10px。
-    // x=30：整组（红绿灯 + 收起态图标排）离左边缘再放开一档（用户 2026-07-05
-    // 要求「整体往右移」）。旧值 14 太贴边。必须与 RailShell 收起态图标排的
-    // left-[100px] 联动同增：图标排起点 = 红绿灯净空右缘，两者错位就不成一横。
-    trafficLightPosition: { x: 30, y: 17 },
+    ...(process.platform === 'darwin'
+      ? {
+          // Traffic lights sit directly over the active tab's renderer
+          // header — the renderer's `.header` reserves left padding so
+          // the buttons don't overlap any content.
+          // y=17：studio tab 的 WebContentsView 全屏 flush（setBounds x0 y0，见
+          // layoutActiveTab 的 studio 分支），所以窗口坐标 == renderer 视口坐标。
+          // 内容面 46px 标题栏（含收起态展开图标、标题、AI生成徽标）从 y=0 起
+          // （2026-07-08 平铺化去掉了 stage 的 10px 顶部 gutter，见 globals.css
+          // .shell-stage 注释），垂直中线 = 23；红绿灯按钮 ⌀12，position.y 是按钮
+          // 顶部，故 23-6=17 让三者垂直居中对齐。浮卡时代的旧值 27 对的是
+          // 「gutter 10 + header 46」的中线 33，平铺后会偏低 10px。
+          // x=30：整组（红绿灯 + 收起态图标排）离左边缘再放开一档（用户 2026-07-05
+          // 要求「整体往右移」）。旧值 14 太贴边。必须与 RailShell 收起态图标排的
+          // `--shell-top-icons-left` token（globals.css，mac 值 100px）联动同增：
+          // 图标排起点 = 红绿灯净空右缘，两者错位就不成一横。
+          //
+          // 2026-08 显式限定 darwin（此前无条件写在两平台共用的对象里）：
+          // Electron 源码里 `titleBarStyle:'hiddenInset'` 的解析包在
+          // `#if BUILDFLAG(IS_MAC)` 内，win32/linux 上这个值本就无法识别、静默
+          // 落回默认的原生 framed 窗口（`trafficLightPosition` 同样是 mac-only
+          // 选项，非 mac 被引擎直接无视）——这里只是把该既有事实显式化，**不
+          // 改变任何平台的运行时行为**。刻意不为 win32/linux 补 titleBarOverlay
+          // 做自绘窗口控制按钮：0.0.46 的关窗收托盘改动（见下面 'close' handler
+          // 注释）依赖 win32 原生标题栏的关闭按钮，titleBarOverlay 是另一类大改、
+          // 与本次「让顶部图标排可点」的目标无关，风险不对称，留给独立评估。
+          titleBarStyle: 'hiddenInset' as const,
+          trafficLightPosition: { x: 30, y: 17 }
+        }
+      : {}),
     icon: appIcon,
     // 窗口底色 = renderer 没画出来的每一帧的最终兜底（studio 的
     // WebContentsView 是透明底，见 newStudioTab 的 setBackgroundColor）。

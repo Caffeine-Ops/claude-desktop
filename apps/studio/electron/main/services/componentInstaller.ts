@@ -2,7 +2,14 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { utilityProcess } from 'electron'
 
-import { isCliAvailable, resolveBundledPythonHome } from '../core/cliDetect'
+import {
+  detectSystemPythonHomeSync,
+  invalidateSystemPythonCache,
+  isCliAvailable,
+  resolveBundledPythonHome,
+  resolveEffectivePythonHome,
+  verifySystemPython
+} from '../core/cliDetect'
 import {
   componentCacheDir,
   componentDir,
@@ -82,11 +89,12 @@ function baseUrl(): string {
  * 单个组件「现在能用吗」。
  *
  * 刻意不只看下载记账：CLI 走 `isCliAvailable()`（= resolveBundledCliPath 能解析
- * 出路径，随包/dev/下载三种来源通吃），python 走 `resolveBundledPythonHome()`。
- * 这样中间态与 dev 环境都不会被误催下载。
+ * 出路径，随包/dev/下载三种来源通吃），python 走 `resolveEffectivePythonHome()`
+ * （= 捆绑/已下载 runtime，或系统检测到的 3.11/3.12）。这样中间态、dev 环境、
+ * 以及装了系统 python 的用户都不会被误催下载。
  */
 function isComponentAvailable(id: ComponentId): boolean {
-  return id === 'cli' ? isCliAvailable() : resolveBundledPythonHome() !== null
+  return id === 'cli' ? isCliAvailable() : resolveEffectivePythonHome() !== null
 }
 
 /**
@@ -240,7 +248,7 @@ async function ensureOne(
 
   const artifact = pickArtifact(entry, platform)
   const local = installedVersion(entry, platform)
-  const available = isComponentAvailable(id)
+  let available = isComponentAvailable(id)
 
   if (!artifact) {
     // 该平台不发这个组件。可选的静默跳过；必需的且本机也没有 → 只能报错。
@@ -255,6 +263,28 @@ async function ensureOne(
   patch(id, { targetVersion: artifact.version, installedVersion: local })
 
   /**
+   * python-runtime 的「已经能用」如果来自**系统检测**（捆绑/已下载 runtime 为
+   * null，isComponentAvailable 转而落到 detectSystemPythonHomeSync）——在跳过
+   * 70MB 下载前先 verifySystemPython() 验真一次。existsSync 扫到的目录，解释器
+   * 可能已损坏或被系统隔离（企业杀软/macOS Gatekeeper 隔离属性），existsSync
+   * 看不出这些；宁可多花几百毫秒验证，也不能让一个假 ready 换来 venv 建不出来
+   * 的「正在准备运行环境」胶囊卡死。
+   */
+  let systemPythonDetail: string | null = null
+  if (id === 'python-runtime' && available && !force && resolveBundledPythonHome() === null) {
+    const systemPython = detectSystemPythonHomeSync()
+    const verified = systemPython ? await verifySystemPython(systemPython) : false
+    if (verified && systemPython) {
+      systemPythonDetail = `检测到系统 Python ${systemPython.version}，无需下载`
+    } else {
+      // 验真失败：这份系统 python 不可信，本轮当作不可用，强制落到下载分支——
+      // 缓存也要失效，否则 30s 内的重试还会拿到同一个坏结论。
+      invalidateSystemPythonCache()
+      available = false
+    }
+  }
+
+  /**
    * 已经能用就不下载——**哪怕清单里有更新的版本**，只要它不是我们下载装的。
    *
    * 这条是「中间态不打扰任何人」的关键：包里还带着二进制的版本里，用户本来就能
@@ -262,11 +292,16 @@ async function ensureOne(
    * 「已经是下载来的那一份」生效（local !== null），此时用户本就在这条链路上。
    */
   if (available && !force && (local === null || local === artifact.version)) {
-    patch(id, { phase: 'ready', error: null, detail: '', installedVersion: local })
+    patch(id, {
+      phase: 'ready',
+      error: null,
+      detail: systemPythonDetail ?? '',
+      installedVersion: local
+    })
     return
   }
   if (!force && local === artifact.version && available) {
-    patch(id, { phase: 'ready', error: null, detail: '' })
+    patch(id, { phase: 'ready', error: null, detail: systemPythonDetail ?? '' })
     return
   }
 

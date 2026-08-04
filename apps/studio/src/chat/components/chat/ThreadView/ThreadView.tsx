@@ -1337,19 +1337,19 @@ function ChatHeader(): React.JSX.Element {
     //
     // 收起态左净空（2026-07-05，2026-07-08 标题左贴边后机制更直白）：rail
     // 收起后 chat 列顶到窗口左缘，左贴边的标题行会依次撞上左上角两样东西
-    // ——① 红绿灯（浮在窗口 x≈30~90）② 收起态图标排（RailShell 的 fixed
-    // 展开/搜索/新建，x≈100~184）。展开态无此问题：rail（244px）整体推开
-    // chat 列，红绿灯落 rail 顶栏、图标排不渲染。故仅收起态给外层补左
-    // padding 把整行推过两者。208px = 图标排右缘（x≈184）− 内容面左缘
-    // （平铺后为 0，2026-07-08 stage gutter 归零，见 globals.css
-    // .shell-stage；浮卡时代左缘 10px、本值 198）= 184 的净空基线，再 +24 让
-    // 标题与图标排（尤其紧挨的「+」新建钮）之间留出呼吸（2026-07-05 用户要求
-    // 「新对话钮跟标题加间距」，用户选 +24）。起点必须跟 tabRegistry 的
-    // trafficLightPosition 与 RailShell 图标排 left-[100px] 联动（红绿灯/图标
-    // 排右移则同增）。canvas 面 tab 栏的同款净空在 base.css（收起态
-    // --app-chrome-traffic-space: 190px，同一 208 基线）——改这里必同步那边，
-    // 否则两面顶栏起点分家（2026-07-13 canvas 面漏配被红绿灯压住的教训）。
-    <div className="flex h-[46px] shrink-0 select-none items-center border-b border-border/55 [body[data-rail-collapsed]_&]:pl-[208px]">
+    // ——① 红绿灯（mac 浮在窗口 x≈30~90，win32/linux 无）② 收起态图标排
+    // （RailShell 的 fixed 展开/搜索/新建）。展开态无此问题：rail（244px）
+    // 整体推开 chat 列，红绿灯落 rail 顶栏、图标排不渲染。故仅收起态给外层
+    // 补左 padding 把整行推过两者。
+    //
+    // 2026-08 收敛：净空值改引 globals.css 的 `--shell-collapsed-top-inset`
+    // token（单一事实源，mac 208px / win32-linux 120px，随
+    // `html[data-platform]` 自动切换），不再是散在四个文件里各自维护、靠
+    // 注释互相「改一处同步另几处」的字面量。token 定义与换算依据（图标排
+    // 右缘 + 8px 呼吸）见 globals.css `.window-drag-strip` 之后的注释块；
+    // canvas 面同款净空在 base.css 的 `--app-chrome-traffic-space`，同样跟随
+    // 这枚 token（calc 派生），骨架屏 ChatLoadingSkeleton.tsx 也引用它。
+    <div className="flex h-[46px] shrink-0 select-none items-center border-b border-border/55 [body[data-rail-collapsed]_&]:pl-[var(--shell-collapsed-top-inset)]">
       {/* 内层容器：标题左贴边（2026-07-08 用户定稿，参考 Claude.ai 顶栏
           「图标 + 标题 + ···」左对齐形态）。此前是 mx-auto max-w-4xl 与
           消息列同参居中——宽窗口时标题漂在中间偏左、与左缘脱节，用户

@@ -144,16 +144,23 @@ export function RailShell() {
    *
    * z 分档：chat z-[45]——高于 peek overlay（z-40）让按钮浮出时仍可点，
    * 低于 dialog（z-50）被 modal 正常罩住；canvas z-[140]——高于该面
-   * overlay（z-135）。坐标联动：红绿灯 x=30（tabRegistry
-   * trafficLightPosition）/ 本组 left=100，改一个必须同步另一个；组内
-   * 间距 gap 自动排布，无需手算。 */
+   * overlay（z-135）。坐标：left 引用 globals.css 的 `--shell-top-icons-left`
+   * token（2026-08 收敛，单一事实源；mac 100px 与红绿灯 x=30 联动，
+   * win32/linux 12px 贴边——定义与换算见 globals.css `.window-drag-strip`
+   * 之后的注释块，改这里不用再手动同步 tabRegistry）；组内间距 gap 自动
+   * 排布，无需手算。
+   *
+   * ⚠️ win32/linux 上本组不依赖上面这套「app-region 挖洞排序」也能点：
+   * globals.css 对这两个平台整体把 app-region 中和为 initial（见文件末尾
+   * `html[data-platform='win32']` 规则块），顶部 46px 根本不会有任何 drag
+   * 矩形——那才是 win32 真正能点的原因，本段 portal 排序纪律只对 mac 生效。 */
   const railTopButtons =
     mounted &&
     !settingsShowing &&
     createPortal(
       <div
         className={cn(
-          'fixed left-[100px] top-0 flex h-[46px] items-center gap-0.5 [-webkit-app-region:no-drag]',
+          'fixed left-[var(--shell-top-icons-left)] top-0 flex h-[46px] items-center gap-0.5 [-webkit-app-region:no-drag]',
           isChat ? 'z-[45]' : 'z-[140]'
         )}
       >
