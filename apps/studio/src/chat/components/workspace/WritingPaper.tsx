@@ -23,6 +23,7 @@ import {
   stillTargetable
 } from '../../lib/writingGenImageFire'
 import { friendlyImageError } from '../../lib/imageErrorText'
+import { writingAssetBaseDir } from '../../lib/writingAssetUrl'
 import type { ImageReview } from '../../lib/imageReviewTypes'
 import { AssistantMarkdown } from '../chat/AssistantMarkdown'
 import { WritingSelectionBubble } from './WritingSelectionBubble'
@@ -116,11 +117,14 @@ export function WritingPaper({
    * 正文里的图恒为相对路径（`../images/x.png`——正文分节文件在 `<项目>/drafts/`，图在
    * `<项目>/images/`，兄弟目录）。不传 assetBaseDir 给 AssistantMarkdown 的话，相对路径
    * 在 img 覆写的三条协议判定里全不命中，`<img src="../images/x.png">` 会被当 app://
-   * 下的相对 URL 处理，碎图且控制台无线索（Task 1 遗留、这里补上）。单文件模式没有
-   * `<项目>/drafts` 这层结构，assetBaseDir 留空——原本就不该有相对路径图（配图功能整体
-   * 只支持项目模式），留空是安全的兜底，不会误解析出一个不存在的目录。
+   * 下的相对 URL 处理，碎图且控制台无线索（Task 1 遗留、这里补上）。
+   *
+   * 算法抽进 writingAssetBaseDir（task-7 补）：右栏导出（WritingDocPanel.tsx 的 docx/PDF
+   * 两条导出链）需要同一条 project→drafts / single→undefined 规则，原先只在这里内联一份
+   * 三元表达式，导出链要么抄错要么各写各的必然漂移——单文件模式 assetBaseDir 留空的理由见
+   * 该函数头注释（配图功能整体只支持项目模式，留空是安全兜底，不会误解析出不存在的目录）。
    */
-  const assetBaseDir = source && source.kind === 'project' ? `${source.projectDir}/drafts` : undefined
+  const assetBaseDir = writingAssetBaseDir(source)
   // 滚动容器：既是选区气泡的定位参照系（容器 relative），也是「选区必须落在纸面内」的判据。
   const scrollRef = useRef<HTMLDivElement | null>(null)
 

@@ -199,6 +199,88 @@ describe('markdownToDocxBuffer 嵌图（产出图 proposal-drafts 路径，防�
   })
 })
 
+// task-7：写作导出复用同一条 imageParagraphs 读图路径，但写作正文里的图恒为相对路径
+// （`../images/x.png`，正文节文件在 <项目>/drafts/、图在 <项目>/images/，兄弟目录）——
+// 第 5 个参数 assetBaseDir 就是喂给这条路径的「节文件所在目录」，见 WalkEnv.assetBaseDir
+// 与 resolveWritingAssetPath（writingExportPure.ts）头注释。
+describe('markdownToDocxBuffer 嵌图（写作相对路径，assetBaseDir）', () => {
+  it('assetBaseDir 缺省时，相对路径图找不到文件、降级为文字占位（不抛错）', async () => {
+    const md = '<!--proposal-section:content-->\n\n![配图](../images/gen-1.png)'
+    const buf = await markdownToDocxBuffer(md)
+    expect(buf.length).toBeGreaterThan(500)
+  })
+
+  it('传入 assetBaseDir 后，相对路径图解析成绝对路径并真嵌入 docx', async () => {
+    const PNG_100 =
+      'iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAYAAABw4pVUAAAAH0lEQVR42u3BAQ0AAADCoPdPbQ43oAAAAAAAAAAAvg0hAAABmmDh1QAAAABJRU5ErkJggg=='
+    const projectDir = join(tmpdir(), 'writing-test-proj-' + Date.now())
+    const draftsDir = join(projectDir, 'drafts')
+    const imagesDir = join(projectDir, 'images')
+    mkdirSync(draftsDir, { recursive: true })
+    mkdirSync(imagesDir, { recursive: true })
+    writeFileSync(join(imagesDir, 'gen-1.png'), Buffer.from(PNG_100, 'base64'))
+
+    const md = '<!--proposal-section:content-->\n\n![配图](../images/gen-1.png)'
+    const withBase = await markdownToDocxBuffer(md, undefined, undefined, undefined, draftsDir)
+    const withoutBase = await markdownToDocxBuffer(md)
+    // 有 assetBaseDir 时相对路径被解析、真图嵌入（体积显著更大）；没有时降级为
+    // 「[图：gen-1.png]」文字段落，两者体积差 > 200 字节的 media 部件判据同上。
+    expect(withBase.byteLength - withoutBase.byteLength).toBeGreaterThan(200)
+  })
+
+  it('同一张图被引用两次，两处都真嵌入（各自独立解析，互不影响）', async () => {
+    const PNG_100 =
+      'iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAYAAABw4pVUAAAAH0lEQVR42u3BAQ0AAADCoPdPbQ43oAAAAAAAAAAAvg0hAAABmmDh1QAAAABJRU5ErkJggg=='
+    const projectDir = join(tmpdir(), 'writing-test-proj-dup-' + Date.now())
+    const draftsDir = join(projectDir, 'drafts')
+    const imagesDir = join(projectDir, 'images')
+    mkdirSync(draftsDir, { recursive: true })
+    mkdirSync(imagesDir, { recursive: true })
+    writeFileSync(join(imagesDir, 'gen-1.png'), Buffer.from(PNG_100, 'base64'))
+
+    const mdOnce = '<!--proposal-section:content-->\n\n![配图](../images/gen-1.png)'
+    const mdTwice =
+      '<!--proposal-section:content-->\n\n![配图](../images/gen-1.png)\n\n正文分隔段。\n\n![配图2](../images/gen-1.png)'
+    const noImage = '<!--proposal-section:content-->\n\n正文分隔段。'
+    const once = await markdownToDocxBuffer(mdOnce, undefined, undefined, undefined, draftsDir)
+    const twice = await markdownToDocxBuffer(mdTwice, undefined, undefined, undefined, draftsDir)
+    const withoutAnyImage = await markdownToDocxBuffer(noImage)
+    // `docx` 库按内容对 media 部件去重（同一张图两次引用只落一份二进制、两个引用关系），
+    // 故 twice 不会是 once 的整整两倍——但两次引用都必须真解析出同一个 resolvedUrl、
+    // 都不降级：twice 比"完全没有图、只多一段正文"的基线大得多（每个引用各自新增一段
+    // ImageRun 段 + 一条 relationship，即便共享同一份 media 二进制）。
+    expect(twice.byteLength).toBeGreaterThan(withoutAnyImage.byteLength + 200)
+    expect(once.byteLength).toBeGreaterThan(withoutAnyImage.byteLength + 200)
+  })
+
+  it('.webp 相对路径图降级为文字占位，与预览侧同一谓词（isEmbeddableImagePath）', async () => {
+    const projectDir = join(tmpdir(), 'writing-test-proj-webp-' + Date.now())
+    const draftsDir = join(projectDir, 'drafts')
+    const imagesDir = join(projectDir, 'images')
+    mkdirSync(draftsDir, { recursive: true })
+    mkdirSync(imagesDir, { recursive: true })
+    // 内容是否为真 webp 不重要——isEmbeddableImagePath 只按扩展名判定，走到扩展名分支
+    // 就应直接降级，不会尝试读盘/解码。
+    writeFileSync(join(imagesDir, 'gen-1.webp'), Buffer.from('not-a-real-webp'))
+
+    const md = '<!--proposal-section:content-->\n\n![配图](../images/gen-1.webp)'
+    const withBase = await markdownToDocxBuffer(md, undefined, undefined, undefined, draftsDir)
+    const withoutImage = await markdownToDocxBuffer(
+      '<!--proposal-section:content-->\n\n占位文字，没有图。'
+    )
+    // 两者都是纯文字段落量级（降级占位 vs 无图正文），不应出现真嵌图那种 > 200 字节的跳变。
+    expect(withBase.byteLength - withoutImage.byteLength).toBeLessThan(200)
+  })
+
+  // 越界安全阀落到真实导出链路的冒烟：drafts 之外两层的 `..` 不会被解析、不会被 readFileSync
+  // 尝试读取项目目录之外的文件，降级为文字占位，行为与「文件不存在」一致、不抛错。
+  it('相对路径越界（跳出 base 父目录之外）不解析，降级为文字占位', async () => {
+    const md = '<!--proposal-section:content-->\n\n![越界](../../../../../../etc/passwd)'
+    const buf = await markdownToDocxBuffer(md, undefined, undefined, undefined, '/a/b/drafts')
+    expect(buf.length).toBeGreaterThan(500)
+  })
+})
+
 // mdast 节点构造小工具：测试 stripLeadingTocHeading / splitCoverNodes 对【粗体包裹】文本的
 // 递归提取（评审发现：旧内联实现只读直接子节点的 value，strong/emphasis 包裹的文字读成空串）。
 const text = (v: string): RootContent =>

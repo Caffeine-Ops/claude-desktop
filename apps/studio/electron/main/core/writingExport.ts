@@ -14,19 +14,25 @@ import type { ProposalStyleConfig } from '../../shared/proposalStyle'
  *
  * 不做接地闸门（collectUngroundedImagePaths）：那是方案文档「图与文同源」的安全底线，写作
  * 工作区没有 KB 检索/引用配图这一套，稿子里的图都是用户自己的文件，不适用该校验。
+ *
+ * `assetBaseDir`：正文里 `../images/x.png` 这类相对图路径的解析基准目录（节文件所在目录），
+ * 由 renderer 侧算好传入（project 模式是 `<projectDir>/drafts`，single 模式留空——见
+ * WritingDocPanel.tsx 里 writingAssetBaseDir 的头注释）。缺省时 markdownToDocxBuffer 的图片
+ * 分支跳过解析，img.url 原样交给 readFileSync，找不到就降级文字占位，不会抛错中断导出。
  */
 export async function exportWritingDocx(
   win: BrowserWindow,
   markdown: string,
   style: ProposalStyleConfig,
-  defaultBaseName: string
+  defaultBaseName: string,
+  assetBaseDir?: string
 ): Promise<{ path: string | null }> {
   const r = await dialog.showSaveDialog(win, {
     filters: [{ name: 'Word', extensions: ['docx'] }],
     defaultPath: `${sanitizeBaseName(defaultBaseName)}.docx`
   })
   if (r.canceled || !r.filePath) return { path: null }
-  const buf = await markdownToDocxBuffer(markdown, style)
+  const buf = await markdownToDocxBuffer(markdown, style, undefined, undefined, assetBaseDir)
   await writeFile(r.filePath, buf)
   return { path: r.filePath }
 }

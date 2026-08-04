@@ -35,6 +35,7 @@ import type { ProposalKind } from '../../shared/proposal'
 import type { MermaidImage } from '../../shared/ipc-channels'
 import { FUSION_HEADER_BANNER, FUSION_COVER_LOGO } from '../../shared/proposalBrand'
 import { stripGenImageDirectives } from '../../shared/proposalGenImage'
+import { resolveWritingAssetPath } from './writingExportPure'
 import {
   CN_SIZE_PT,
   FONT_DOCX,
@@ -221,6 +222,10 @@ interface WalkEnv {
   // 预渲的 mermaid 位图（mermaid 源码 trim → PNG buffer + 像素尺寸）。renderer 渲 SVG → main
   // 用 sharp 转 PNG 后填入。case 'code' 的 mermaid 分支据此居中嵌图；缺省 / 查不到 → 降级文字。
   mermaidImages?: ReadonlyMap<string, { data: Buffer; width: number; height: number }>
+  // 写作专用：正文相对图路径（`../images/x.png`）的解析基准目录（节文件所在目录，见
+  // writingExportPure.ts 的 resolveWritingAssetPath 头注释）。方案文档的图恒为绝对路径，
+  // 不需要它，此字段缺省 → 图片分支跳过解析、img.url 原样使用（方案调用行为不变）。
+  assetBaseDir?: string
 }
 
 // 在 inline 节点层剥掉标题最前面那段手打章节号（配合 HEADING_REF 自动编号，避免叠号）。
@@ -456,7 +461,12 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
           if (img.type === 'image') {
             // 接地闸门：本图路径在未接地全集里 → imageParagraphs 降级为占位（详见其注释）。
             const isUngrounded = env.ungroundedImagePaths?.has(img.url) ?? false
-            out.push(...imageParagraphs(img.alt ?? '', img.url, maxWidthPx, maxHeightPx, isUngrounded))
+            // 写作正文里的图恒为相对路径（`../images/x.png`），必须先解析成绝对路径才能
+            // readFileSync 读到——env.assetBaseDir 缺省（方案文档 / 未传）时原样返回 img.url，
+            // 不影响方案侧行为。解析失败（越界 / 非法）也原样返回相对串，下面 readFileSync
+            // 找不到文件、按既有降级路径变成文字占位，不抛错。
+            const resolvedUrl = resolveWritingAssetPath(env.assetBaseDir, img.url)
+            out.push(...imageParagraphs(img.alt ?? '', resolvedUrl, maxWidthPx, maxHeightPx, isUngrounded))
           }
         }
         return out
@@ -1035,14 +1045,16 @@ function buildSectionChildren(
   style: ProposalStyleConfig,
   bodyFirstLine: number,
   ungroundedImagePaths?: ReadonlySet<string>,
-  mermaidImages?: ReadonlyMap<string, { data: Buffer; width: number; height: number }>
+  mermaidImages?: ReadonlyMap<string, { data: Buffer; width: number; height: number }>,
+  assetBaseDir?: string
 ): Array<Paragraph | Table> {
   const env: WalkEnv = {
     walk: { titleConsumed: group.kind !== 'cover' },
     bodyFirstLine,
     imgMarginTwips: MARGIN_TWIPS[style.margin],
     ungroundedImagePaths,
-    mermaidImages
+    mermaidImages,
+    assetBaseDir
   }
   const out: Array<Paragraph | Table> = []
 
@@ -1121,7 +1133,10 @@ export async function markdownToDocxBuffer(
   ungroundedImagePaths?: ReadonlySet<string>,
   // 预渲 mermaid 图（mermaid 源码 trim→PNG base64+尺寸）。mermaid 只能在 renderer 渲，main 直接
   // 嵌入其 PNG（renderer canvas 栅格，故无需 sharp、中文字体也正确）。省略 → mermaid 块降级文字。
-  mermaidImages?: Record<string, MermaidImage>
+  mermaidImages?: Record<string, MermaidImage>,
+  // 写作专用：正文相对图路径的解析基准目录（见 WalkEnv.assetBaseDir 注释）。方案文档不传，
+  // 图片分支跳过解析、行为不变。
+  assetBaseDir?: string
 ): Promise<Buffer> {
   // base64 PNG → Buffer，建 code→{data,尺寸} map 供 case 'code' 的 mermaid 分支同步查表嵌图。
   const mermaidImageMap = decodeMermaidImages(mermaidImages)
@@ -1145,7 +1160,14 @@ export async function markdownToDocxBuffer(
   // 封面/目录节不挂页码页脚；正文节挂「— N —」页脚。
   const groups = groupBySectionMarks(tree.children)
   const sections: ISectionOptions[] = groups.map((group) => {
-    const children = buildSectionChildren(group, style, bodyFirstLine, ungroundedImagePaths, mermaidImageMap)
+    const children = buildSectionChildren(
+      group,
+      style,
+      bodyFirstLine,
+      ungroundedImagePaths,
+      mermaidImageMap,
+      assetBaseDir
+    )
     const safeChildren = children.length
       ? children
       : [new Paragraph({ children: [new TextRun('')] })]

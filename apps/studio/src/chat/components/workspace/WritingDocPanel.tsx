@@ -27,6 +27,8 @@ import { replaceBlockAt } from '../../lib/writingEdit'
 import { writingStyleFor } from '../../lib/writingGenreStyle'
 import { renderProposalPdfHtml } from '../../lib/renderProposalPdfHtml'
 import { deriveWritingExportBaseName } from '../../lib/writingExportInput'
+import { writingAssetBaseDir } from '../../lib/writingAssetUrl'
+import { extractMermaidBlocks, renderMermaidImageMap } from '../../lib/mermaidRender'
 // 顶栏图标与方案面板同源（proposalIcons 是历史位置，不代表只归方案用）——两处右栏
 // 的导出入口要长成一套，图标就不能各挑各的。
 import { ChevronDownIcon, FileCodeIcon, FileIcon, FileTextIcon } from './proposalIcons'
@@ -552,7 +554,12 @@ export function WritingDocPanel(): React.JSX.Element | null {
       const r = await window.chatApi.writingExportDocx({
         markdown,
         style: writingStyleFor(useWritingStore.getState().genre),
-        defaultBaseName: baseName
+        defaultBaseName: baseName,
+        // 正文里的图恒为相对路径（`../images/x.png`），main 侧 markdownToDocxBuffer 必须先把它
+        // 解析成绝对路径才能 readFileSync 嵌图——与纸面预览（WritingPaper.tsx）同一条基准目录
+        // 规则，见 writingAssetBaseDir 头注释。single 模式回传 undefined，main 侧据此跳过解析
+        // （图片降级为文字占位，不静默产出一个臆测的错误路径）。
+        assetBaseDir: writingAssetBaseDir(useWritingStore.getState().source)
       })
       setExportMsg(
         r.path ? { tone: 'ok', text: `已导出：${r.path}` } : { tone: 'muted', text: '已取消导出' }
@@ -575,12 +582,20 @@ export function WritingDocPanel(): React.JSX.Element | null {
     }
     setExportingPdf(true)
     try {
-      // renderProposalPdfHtml 的第三个参数（预渲 mermaid 图）不是可选参数，写作体裁不支持
-      // mermaid 代码块，必须显式传 undefined——漏传是 TS2554（Task 8 踩过的坑，见 WritingPreview）。
+      // 与 ProposalDocPanel.handleExportPdf 同源同法：mermaid 只能在 renderer 渲（main 无 DOM），
+      // 先扫出正文里的 mermaid 块、逐个渲成 SVG 再栅格化成 PNG，交给 renderProposalPdfHtml 走
+      // 「同一份 docx 引擎 → docx-preview → printToPDF」这条与预览/Word 逐像素一致的导出链。
+      // 单块渲染失败（语法错误 / 流式未闭合）只跳过、不进映射（renderMermaidImageMap 内部保证），
+      // main 侧查不到就降级一行文字占位，不会让一张坏图打断整篇 PDF 导出。
+      const mermaidImages = await renderMermaidImageMap(extractMermaidBlocks(markdown))
+      // 正文里的图恒为相对路径，PDF 导出复用 PROPOSAL_RENDER 通道生成 docx 字节再转 PDF——
+      // 必须传同一条 assetBaseDir 规则（与上面 exportDocx 同源），否则这条链路只补了流程图、
+      // 图片依旧因相对路径解析不出而降级成文字占位。
       const html = await renderProposalPdfHtml(
         markdown,
         writingStyleFor(useWritingStore.getState().genre),
-        undefined
+        mermaidImages,
+        writingAssetBaseDir(useWritingStore.getState().source)
       )
       const { bytes } = await window.chatApi.renderProposalPdf({ html })
       const r = await window.chatApi.writingExportPdf({ bytes, defaultBaseName: baseName })

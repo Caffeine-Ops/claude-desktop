@@ -2472,6 +2472,12 @@ export interface WritingExportDocxPayload {
   style: ProposalStyleConfig
   /** 保存对话框的默认文件名（不含扩展名）——取自文稿第一节的一级标题，取不到时回退「文稿」。 */
   defaultBaseName: string
+  /**
+   * 正文里相对图路径（`../images/x.png`）的解析基准目录，project 模式为 `<projectDir>/drafts`、
+   * single 模式留空不传（见 WritingDocPanel.tsx 的 writingAssetBaseDir）。main 侧
+   * markdownToDocxBuffer 据此把相对路径解析成绝对路径才能嵌图；缺省时图片降级为文字占位。
+   */
+  assetBaseDir?: string
 }
 /** Payload for WRITING_EXPORT_PDF。`bytes` 是 renderer 经 renderProposalPdf 拿到的 PDF 字节。 */
 export interface WritingExportPdfPayload {
@@ -2564,6 +2570,14 @@ export interface ProposalRenderPayload {
   style?: ProposalStyleConfig
   /** 预渲的 mermaid 图（code→{@link MermaidImage}）。与 PROPOSAL_EXPORT 同义，保证「预览=导出一致」。 */
   mermaidImages?: Record<string, MermaidImage>
+  /**
+   * 【写作专用】正文相对图路径的解析基准目录，与 {@link WritingExportDocxPayload.assetBaseDir}
+   * 同义——写作 PDF 导出（WritingDocPanel.exportPdf）复用本通道生成 docx 字节再转 PDF，图片
+   * 解析必须走同一条路径才能「预览=导出一致」。方案文档的图恒为绝对路径，调用方不传，main
+   * 侧据此判定"是否跳过 collectUngroundedImagePaths 接地闸门"——见 PROPOSAL_RENDER handler
+   * 注释：写作没有 KB 接地这一套，误跑接地检查会把写作自己的图错判成「未接地」而剔除。
+   */
+  assetBaseDir?: string
 }
 
 /**

@@ -120,9 +120,13 @@ ${BREAK_INSIDE_CSS}
 export async function renderProposalPdfHtml(
   markdown: string,
   style: ProposalStyleConfig | undefined,
-  mermaidImages: Record<string, MermaidImage> | undefined
+  mermaidImages: Record<string, MermaidImage> | undefined,
+  // 【写作专用，可选】正文相对图路径（`../images/x.png`）的解析基准目录——方案调用方恒不传
+  // （方案图已是绝对路径）。见 ProposalRenderPayload.assetBaseDir 与 PROPOSAL_RENDER handler
+  // 注释：main 侧还据它是否存在来判定要不要跳过方案专属的接地闸门。
+  assetBaseDir?: string
 ): Promise<string> {
-  const { bytes } = await window.chatApi.renderProposal({ markdown, style, mermaidImages })
+  const { bytes } = await window.chatApi.renderProposal({ markdown, style, mermaidImages, assetBaseDir })
   const blob = new Blob([new Uint8Array(bytes)], {
     type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
   })

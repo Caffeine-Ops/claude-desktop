@@ -11,6 +11,8 @@
  * 可查。改任一侧务必同步另一侧。
  */
 
+import type { WritingDocSource } from '@desktop-shared/writing'
+
 // 只服务位图与 svg，与 main 侧 writingAssetProtocol.ts 的白名单同步。
 const ALLOWED_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i
 
@@ -91,6 +93,25 @@ export function toWritingAssetUrl(src: string): string {
  * isWritingAssetSrc）对着这个未解析的相对串统统不命中，最终只是这张图刷不出来——比
  * 静默算出一个不受控的绝对路径、再拿它去查协议白名单安全得多。
  */
+/**
+ * project/single 两种 {@link WritingDocSource} → 相对图路径解析的基准目录（`../images/x.png`
+ * 就靠这个 base 走 {@link resolveRelativeAssetPath}）。**一处算，三处用**（纸面预览
+ * WritingPaper.tsx + 右栏导出 WritingDocPanel.tsx 的 docx/PDF 两条导出链）——此前只有
+ * WritingPaper.tsx 内联一份三元表达式，导出链本该抄同一条规则却各写各的，是任务书之外
+ * 由控制者裁定要补的一环（task-7）。
+ *
+ * single 模式故意返回 undefined、不猜一个目录出来：单文件模式没有 `<项目>/drafts` 这层
+ * 结构（source.filePath 就是文件本身，没有「项目根」可言），配图功能整体也只支持项目模式
+ * （WRITING_IMAGE_GENERATE 只在 project 模式下触发，见 writingGenImageFire.ts）——single
+ * 模式下正文里本就不该出现相对路径图。留空是安全的兜底：调用方（resolveRelativeAssetPath /
+ * main 侧 resolveWritingAssetPath）在 base 为空时原样返回 src，未解析的相对路径过不了后续
+ * 任何一条 asset 协议判定，最终只是那张图刷不出来／降级文字占位，不会算出一个臆测的、
+ * 实际不存在的目录。
+ */
+export function writingAssetBaseDir(source: WritingDocSource | null): string | undefined {
+  return source && source.kind === 'project' ? `${source.projectDir}/drafts` : undefined
+}
+
 export function resolveRelativeAssetPath(base: string, src: string): string {
   if (!base) return src
   if (!src.startsWith('./') && !src.startsWith('../')) return src

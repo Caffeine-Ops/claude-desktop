@@ -2839,8 +2839,21 @@ export function registerIpcHandlers(): void {
       const markdown = typeof payload?.markdown === 'string' ? payload.markdown : ''
       // 预览也过同一接地闸门（与导出共用 collectUngroundedImagePaths）：未接地图在 docx 预览里
       // 同样降级为占位，保证「预览=导出一致」——绝不出现预览有图、成品 Word 没图（评审 AL3）。
-      const ungrounded = collectUngroundedImagePaths(markdown)
-      const bytes = await markdownToDocxBuffer(markdown, payload?.style, ungrounded, payload?.mermaidImages)
+      //
+      // 【写作调用跳过接地闸门】assetBaseDir 只有写作 PDF 导出（WritingDocPanel.exportPdf）会传
+      // ——方案文档的图恒为绝对路径，不需要这个字段。据它判定「这是写作调用」并跳过接地检查：
+      // collectUngroundedImagePaths 认的是「图必属本节所引文件（据《X》）的 assets 并集」，写作
+      // 正文没有这套引用标记，跑了只会把写作自己的相对路径图统统误判成「未接地」，导出出来变成
+      // 一堆「未接地·疑似挪用」占位框，而不是真的图（写作工作区没有 KB 检索这一套，接地校验
+      // 天然不适用——与 exportWritingDocx 的裸调用 markdownToDocxBuffer 一致，见其头注释）。
+      const ungrounded = payload?.assetBaseDir ? undefined : collectUngroundedImagePaths(markdown)
+      const bytes = await markdownToDocxBuffer(
+        markdown,
+        payload?.style,
+        ungrounded,
+        payload?.mermaidImages,
+        payload?.assetBaseDir
+      )
       return { bytes }
     }
   )
@@ -3389,7 +3402,13 @@ export function registerIpcHandlers(): void {
     async (event, payload: WritingExportDocxPayload): Promise<WritingExportResult> => {
       const win = BrowserWindow.fromWebContents(event.sender)
       if (!win) return { path: null }
-      return exportWritingDocx(win, payload.markdown, payload.style, payload.defaultBaseName)
+      return exportWritingDocx(
+        win,
+        payload.markdown,
+        payload.style,
+        payload.defaultBaseName,
+        payload.assetBaseDir
+      )
     }
   )
 
