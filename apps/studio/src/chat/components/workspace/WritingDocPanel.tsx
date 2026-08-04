@@ -369,7 +369,8 @@ export function WritingDocPanel(): React.JSX.Element | null {
        * 语义——只在键不存在时补 manual 哨兵，不会打扰其他节的记录，也不会覆盖这一节
        * 里其他仍在 pending/done 的键）。等价于「补种」动作的单节版：这个键刚被清空，
        * 立刻由同一处逻辑（这里）重新登记，不留「表空了没人补种」的窗口——与本分支反复
-       * 踩过的那条根因教训对齐（见 progress.md）。
+       * 踩过的那条根因教训对齐（完整事故链见
+       * docs/superpowers/specs/2026-08-03-writing-illustration-design.md 的附录）。
        *
        * 【这一步的已知代价 —— 2026-08 终审复审指出】撤销是**通用**动作，不只服务于
        * 「撤销一次配图应用」。所以撤销任意一次修改时，若这一节里还有一条「已经出现在
@@ -382,7 +383,8 @@ export function WritingDocPanel(): React.JSX.Element | null {
        * 不在 `bun test` 的三个覆盖目录内。`writingGenImageFire.test.ts` 里那条 C-2 用例
        * 复刻的是「补种 manual 能挡住重新发起」这个**机制**，不是这一行接线——终审复审
        * 实测把下面这行整行删掉，全量测试仍然 827 pass / 6 fail 全绿。改动这一行时没有
-       * 自动化保护，只能靠人工走查（清单见 progress.md）。
+       * 自动化保护，只能靠人工走查（清单见
+       * docs/superpowers/specs/2026-08-03-writing-illustration-design.md 附录第五节）。
        */
       useWritingStore
         .getState()

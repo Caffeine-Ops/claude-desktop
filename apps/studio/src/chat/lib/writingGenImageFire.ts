@@ -78,7 +78,8 @@ export function buildWritingGenImagePrompt(
  * 而网络共享盘抖动、目录 rename 这类真实故障**大多属于后者**（首个 tick 落进一段
  * 正在持续的故障，比恰好落在两次 readdir 的缝里概率高得多）。也就是说本判据覆盖的
  * 是较窄的那一半。要真正闭合，得让「seed 名额」与「确实成功读到过内容」绑定，
- * 而不是与「首次成功返回」绑定 —— 属结构性改动，未在收尾轮做，见账本残留清单。
+ * 而不是与「首次成功返回」绑定 —— 属结构性改动，未在收尾轮做。完整残留清单见
+ * docs/superpowers/specs/2026-08-03-writing-illustration-design.md 附录第三节第 1 条。
  *
  * 另一条不区分的窄缝：「scan 那一刻文件还没创建、read 那一刻已创建但读失败」
  * （`scanFilesCount === 0` 但 read 其实该有内容）会被当成「新项目」提前 seed 成
