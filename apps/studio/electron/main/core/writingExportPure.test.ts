@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { win32 } from 'node:path'
+import { posix, win32 } from 'node:path'
 import { sanitizeBaseName, resolveWritingAssetPath } from './writingExportPure'
 
 describe('sanitizeBaseName', () => {
@@ -72,18 +72,28 @@ describe('sanitizeBaseName', () => {
 })
 
 // 与渲染侧 resolveRelativeAssetPath（src/chat/lib/writingAssetUrl.test.ts）覆盖同一组语义
-// 用例，用 node:path 而非手写 posix 解析——测试跑在 bun（真实宿主 OS，这里是 posix），故
-// 断言按 posix 分隔符写；win32 主机上跑同一份测试，path 模块会自动换成 win32 语义，产出的
-// 分隔符会不同，但那是 node:path 自己的职责，不是本函数要额外保证的东西。
+// 用例，用 node:path 而非手写 posix 解析。
+//
+// 【2026-08-04 第四轮收尾：显式注入 path.posix，不再依赖「测试跑在 posix 机器上」】此前
+// 这里不传 pathImpl、断言却写死 posix 形态的期望值（`/p/稿子/images/a.png`）——想当然地
+// 假设「宿主原生 node:path 就是 posix」。但本仓库 CI 矩阵（.github/workflows/build.yml）
+// 明确有 windows-latest 一条腿，且同样跑这份 `bun test`；Windows runner 上宿主原生就是
+// path.win32，不传 pathImpl 时函数会用 `\` 拼接结果，这几条断言在 Windows CI 上必红
+// （审查者用 `resolveWritingAssetPath(base, src, win32)` 复现确认）。这几条用例只关心
+// 「相对路径解析的段栈逻辑对不对」，不关心分隔符风格，故显式传 `path.posix` 把输入输出都
+// 钉死在 posix 语义——不再依赖「测试机器恰好是什么系统」这条脆弱的隐性前提。win32 专属的
+// 分隔符/UNC/混合分隔符回归覆盖见下面「注入 path.win32」的 describe 块，两边职责不重叠。
 describe('resolveWritingAssetPath', () => {
   it('../ 上跳一级到兄弟目录', () => {
-    expect(resolveWritingAssetPath('/p/稿子/drafts', '../images/a.png')).toBe(
+    expect(resolveWritingAssetPath('/p/稿子/drafts', '../images/a.png', posix)).toBe(
       '/p/稿子/images/a.png'
     )
   })
 
   it('./ 同级目录', () => {
-    expect(resolveWritingAssetPath('/p/稿子/drafts', './x.png')).toBe('/p/稿子/drafts/x.png')
+    expect(resolveWritingAssetPath('/p/稿子/drafts', './x.png', posix)).toBe(
+      '/p/稿子/drafts/x.png'
+    )
   })
 
   it('绝对路径原样返回', () => {
@@ -122,7 +132,8 @@ describe('resolveWritingAssetPath', () => {
   })
 
   it('单层 ../ 恰好落在 base 父目录本身（无附加路径段）也算合法', () => {
-    expect(resolveWritingAssetPath('/a/b/drafts', '../')).toBe('/a/b')
+    // 同上：显式传 path.posix，断言的 '/a/b' 才不依赖测试机器是 posix 还是 win32。
+    expect(resolveWritingAssetPath('/a/b/drafts', '../', posix)).toBe('/a/b')
   })
 })
 

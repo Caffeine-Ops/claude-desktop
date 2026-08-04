@@ -101,11 +101,21 @@ export function sanitizeBaseName(name: string): string {
  * 错当分隔符切开，这不是要修的问题，反而会引入新问题。
  *
  * 【可测试性：注入 path 实现】`isAbsolute`/`parse`/`sep` 默认绑定宿主平台的 `node:path`，
- * 但本项目要出 Windows 包、bug 恰恰出在 win32 分支，而单测机器（CI/本地）几乎都是 posix——
- * host-native 的 `path.isAbsolute('C:\\...')` 在 posix 上恒为 false，任何 win32 专属测试都
- * 会在第一道 `isAbsolute` 守卫就被拦下、测不到后面的段栈逻辑。故 `pathImpl` 开了个可选的
- * 依赖注入口子：生产环境不传，用宿主原生 `node:path`；测试传 `path.win32`/`path.posix`，
- * 精确复现目标平台的 `isAbsolute`/`parse`/`sep` 语义，不依赖跑测试的机器是什么系统。
+ * 但本项目要出 Windows 包、bug 恰恰出在 win32 分支。
+ *
+ * 【2026-08-04 第四轮收尾更正】这里曾经写着「单测机器（CI/本地）几乎都是 posix」——这个
+ * 前提对本仓库是错的：`.github/workflows/build.yml` 的 build 矩阵明确有 windows-latest
+ * 一条腿，且**每条腿都跑同一份 `bun test`**（没有 `continue-on-error`，Windows 腿红了会
+ * 卡住发版）。真实教训是反过来的：`bun test` 在本地开发机上多半跑在 posix（mac/Linux），
+ * 但在 CI 的 Windows 腿上宿主原生就是 `path.win32`——`isAbsolute`/`parse`/`sep` 默认绑定
+ * 的 `node:path` 会随 CI 跑在哪条腿而变、不是恒定的。断言里但凡写死了 posix 形态的期望值
+ * （比如 `'/p/稿子/images/a.png'`）却不显式传 `pathImpl`，本地绿、Windows CI 红——这正是
+ * 2026-08-04 第四轮收尾修的那批红灯（`writingExportPure.test.ts` 3 条 + 跨进程对拍
+ * `writingAssetPathParity.test.ts` 3 条），根因就是想当然地假设了「测试机器是什么系统」。
+ * 故这里的规矩是：**任何断言目标平台特定分隔符形态的用例，一律显式传 `pathImpl`
+ * （`path.posix`/`path.win32`），不依赖跑测试的机器恰好是什么系统**——生产环境不传，用
+ * 宿主原生 `node:path`；测试传 `path.win32`/`path.posix`，精确复现目标平台的
+ * `isAbsolute`/`parse`/`sep` 语义。
  *
  * @param base 资产基准目录的绝对路径（如 `<项目>/drafts`）。非绝对路径 / 空 → 原样返回 src
  *   （不做无意义的相对解析——项目侧调用方恒传绝对目录，非绝对多半是调用方没传 assetBaseDir）。
