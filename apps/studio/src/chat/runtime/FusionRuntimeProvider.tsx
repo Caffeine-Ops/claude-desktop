@@ -48,6 +48,7 @@ import { splitBlocks } from '@desktop-shared/proposalBlocks'
 import { extractRevisionResult } from '@desktop-shared/writing'
 import { useWritingStore } from '../stores/writing'
 import { relocateTarget } from '../lib/writingRevision'
+import { autoFireWritingGenImages } from '../lib/writingGenImageFire'
 import { triggerProposalCitationVerification } from '../lib/proposalVerification'
 import { autoFireProposalGenImages } from '../lib/proposalGenImageFire'
 import { maybeNudgeStageConfirmAfterTurn } from '../lib/proposalStageGate'
@@ -1760,6 +1761,11 @@ function makeSessionEventHandler(
         handleProposalTurnEnd(sid, messageId)
       } finally {
         handleWritingTurnEnd(sid, messageId)
+        // genimage 自动发起：轮末触发一次 + 稳定判据（连续两轮内容不变才发），比挂进
+        // useWritingPoll 每轮 tick 都扫更省——本轮落盘的正文里可能带新指令块（同
+        // autoFireProposalGenImages 挂在 proposal 轮末的理由）。自带幂等与稳定判据，
+        // 重复调用零成本；不属于本轮改写作用域的写作项目也会被内部的 source 守卫短路。
+        autoFireWritingGenImages()
       }
     },
     // Unread: a reply just finished. If the user isn't currently looking

@@ -813,6 +813,9 @@ export function WritingDocPanel(): React.JSX.Element | null {
           busy={streaming || pendingRevision !== null}
           onRevise={(target, instruction) => void submitRevision(target, instruction)}
           onEditBlock={editBlock}
+          // genimage 指令块「应用/丢弃」的写盘入口（task 5）：与手动编辑/AI 改写「应用」
+          // 共用同一条 commitSection（乐观锁 + 撤销栈），不新开写盘入口。
+          onCommitSection={commitSection}
         />
       </div>
 

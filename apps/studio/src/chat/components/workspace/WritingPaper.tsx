@@ -1,13 +1,25 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { splitBlocks } from '@desktop-shared/proposalBlocks'
+import {
+  isGenImageDirectiveBlock,
+  parseGenImageBlock,
+  genImageDirectiveKey
+} from '@desktop-shared/proposalGenImage'
 import { cn } from '@/src/lib/utils'
 import { useWritingStore } from '../../stores/writing'
+import { useSettingsStore } from '../../stores/settings'
 import { paperSkinClass } from '../../lib/writingGenreStyle'
 import type { WritingRevisionTarget } from '../../lib/writingRevision'
 import { blockSourceAt, isBlockUnchanged, locateBlockBySource } from '../../lib/writingEdit'
+import { applyGenImageToSection, discardGenImageFromSection } from '../../lib/writingGenImageApply'
+import { fireWritingGenImage, buildWritingGenImagePrompt } from '../../lib/writingGenImageFire'
+import { friendlyImageError } from '../../lib/imageErrorText'
+import type { ImageReview } from '../../lib/imageReviewTypes'
 import { AssistantMarkdown } from '../chat/AssistantMarkdown'
 import { WritingSelectionBubble } from './WritingSelectionBubble'
+import { GenImageDirectiveCard } from './GenImageDirectiveCard'
+import { ProposalImageReview } from './ProposalImageReview'
 
 /**
  * 一次进行中的块编辑。`draft` 是输入框里的实时内容，`base` 是进入编辑那一刻这一块的
@@ -41,7 +53,8 @@ export function WritingPaper({
   writing,
   busy = false,
   onRevise,
-  onEditBlock
+  onEditBlock,
+  onCommitSection
 }: {
   /**
    * 这一轮 AI 是不是正在往当前文档源里落字（`useWritingInProgress()`，见 stores/writing.ts）
@@ -69,12 +82,37 @@ export function WritingPaper({
     nextBlockMarkdown: string
     baseMtimeMs: number
   }) => Promise<boolean>
+  /**
+   * genimage 指令块「应用/丢弃」的写盘入口（配图密度③ · P1b task 5）。**必须**是
+   * WritingDocPanel 那条与手动编辑、AI 改写「应用」共用的 `commitSection`——它内部走
+   * `WRITING_WRITE_SECTION` 的 `expectedMtimeMs` 乐观锁，带 20 步撤销栈。不许新开写盘
+   * 入口：绕过它直接调 IPC 写盘会同时丢掉并发保护和撤销能力。省略时（理论上不会发生，
+   * WritingDocPanel 恒传）审阅卡的应用/丢弃按钮点了不生效，只摘卡不写盘——比抛错更安全，
+   * 不会把字写错地方。
+   */
+  onCommitSection?: (input: {
+    sectionName: string
+    markdown: string
+    expectedMtimeMs: number
+  }) => Promise<'ok' | 'conflict' | 'conflict-missing' | 'error'>
 }): React.JSX.Element {
   const sections = useWritingStore((s) => s.sections)
   const genre = useWritingStore((s) => s.genre)
   const outlineTotal = useWritingStore((s) => s.outlineTotal)
   const status = useWritingStore((s) => s.status)
   const errMsg = useWritingStore((s) => s.errMsg)
+  const source = useWritingStore((s) => s.source)
+  const genImageJobs = useWritingStore((s) => s.genImageJobs)
+  const imageReviews = useWritingStore((s) => s.imageReviews)
+  /**
+   * 正文里的图恒为相对路径（`../images/x.png`——正文分节文件在 `<项目>/drafts/`，图在
+   * `<项目>/images/`，兄弟目录）。不传 assetBaseDir 给 AssistantMarkdown 的话，相对路径
+   * 在 img 覆写的三条协议判定里全不命中，`<img src="../images/x.png">` 会被当 app://
+   * 下的相对 URL 处理，碎图且控制台无线索（Task 1 遗留、这里补上）。单文件模式没有
+   * `<项目>/drafts` 这层结构，assetBaseDir 留空——原本就不该有相对路径图（配图功能整体
+   * 只支持项目模式），留空是安全的兜底，不会误解析出一个不存在的目录。
+   */
+  const assetBaseDir = source && source.kind === 'project' ? `${source.projectDir}/drafts` : undefined
   // 滚动容器：既是选区气泡的定位参照系（容器 relative），也是「选区必须落在纸面内」的判据。
   const scrollRef = useRef<HTMLDivElement | null>(null)
 
@@ -562,6 +600,211 @@ export function WritingPaper({
     el.style.height = `${el.scrollHeight + borders}px`
   }, [])
 
+  /**
+   * genimage 审阅卡（配图密度③ · task 5）的忙碌态。Record 而非单一 boolean——多张卡可能
+   * 同时挂着（不同节各自独立发起出图），一张卡在写盘/重改时不该锁住另一张（同
+   * ProposalPaper `reviewBusy` 的理由）。「应用/丢弃」的失败提示走共享的顶部 conflictMsg
+   * 提示条（commitSection 内部已统一设置具体文案），不需要再存一份错误文本；「重改」不
+   * 经 commitSection（直接调出图 IPC），失败原因单独记在这里、贴在对应卡片上。
+   */
+  const [genImageBusy, setGenImageBusy] = useState<Record<string, boolean>>({})
+  const [genImageRetryError, setGenImageRetryError] = useState<Record<string, string | null>>({})
+  // 陈旧条目清理：审阅项一旦从 imageReviews 消失（应用/丢弃/重改成功后旧 id 被替换），
+  // 对应的 busy/error 记录跟着清掉，避免 map 无限增长（同 ProposalPaper 同名 effect）。
+  useEffect(() => {
+    const ids = new Set(imageReviews.map((r) => r.id))
+    setGenImageBusy((m) => {
+      let changed = false
+      const next: Record<string, boolean> = {}
+      for (const k of Object.keys(m)) {
+        if (ids.has(k)) next[k] = m[k]
+        else changed = true
+      }
+      return changed ? next : m
+    })
+    setGenImageRetryError((m) => {
+      let changed = false
+      const next: Record<string, string | null> = {}
+      for (const k of Object.keys(m)) {
+        if (ids.has(k)) next[k] = m[k]
+        else changed = true
+      }
+      return changed ? next : m
+    })
+  }, [imageReviews])
+
+  /** 「去设置」直达（未配置出图 API 时用）：设置页没有分类参数，先保证入口可达。 */
+  const openImageApiSettings = useCallback((): void => {
+    useSettingsStore.getState().openSettings()
+  }, [])
+
+  /**
+   * 应用：`applyGenImageToSection` 算出新 markdown → `onCommitSection`（乐观锁写盘）→
+   * 成功才 `removeImageReview`。**这是本任务唯一允许的落盘路径**，见 onCommitSection 的
+   * 参数注释——不新开写盘入口。
+   *
+   * 三种「没写成功」的分支都不能悄无声息（自查清单第 1 条）：
+   *  - 定位不到（内容已漂移）：出声 + 摘卡。已生成的图仍留在磁盘（不即时删盘，同既有
+   *    策略），用户可以对着原指令重新生成，但不能假装应用成功。
+   *  - 乐观锁冲突：`onCommitSection` 内部已经把 store 刷新成盘上最新版本、且设好了
+   *    通用冲突提示（顶部 conflictMsg 条）。这里只补一件事——若刷新后指令块依然能在
+   *    新正文里定位到（说明冲突只是「这一节别处被 AI 改过」，配图指令本身没受影响），
+   *    保留审阅卡让用户直接再点一次应用即可（下一次会用刷新后的 mtime，天然重试）；
+   *    定位不到才摘卡，理由同上一条。
+   *  - 写盘失败（磁盘满/权限……）：内容本身仍有效，保留审阅卡，用户可重试；具体错因
+   *    已经被 `onCommitSection` 写进顶部提示条。
+   */
+  const applyGenImageReview = useCallback(
+    async (review: ImageReview): Promise<void> => {
+      const wstore = useWritingStore.getState()
+      if (!onCommitSection || !review.directiveRaw) {
+        wstore.removeImageReview(review.id)
+        return
+      }
+      const sec = wstore.sections.find((s) => s.name === review.sectionId)
+      if (!sec) {
+        wstore.setConflictMsg('这一节已不在了，这张配图未能应用。')
+        wstore.removeImageReview(review.id)
+        return
+      }
+      const next = applyGenImageToSection(
+        sec.markdown,
+        review.directiveRaw,
+        review.directiveOccurrence ?? 0,
+        review.caption ?? '配图',
+        review.resultPath
+      )
+      if (next === null) {
+        wstore.setConflictMsg('这段配图指令的原文已经变了，找不到当初的位置，应用未生效，请重新生成。')
+        wstore.removeImageReview(review.id)
+        return
+      }
+      setGenImageBusy((m) => ({ ...m, [review.id]: true }))
+      try {
+        const outcome = await onCommitSection({
+          sectionName: review.sectionId,
+          markdown: next,
+          expectedMtimeMs: sec.mtimeMs
+        })
+        if (outcome === 'ok') {
+          useWritingStore.getState().removeImageReview(review.id)
+          return
+        }
+        if (outcome === 'conflict' || outcome === 'conflict-missing') {
+          const freshSec = useWritingStore.getState().sections.find((s) => s.name === review.sectionId)
+          const stillLocatable =
+            !!freshSec &&
+            applyGenImageToSection(
+              freshSec.markdown,
+              review.directiveRaw as string,
+              review.directiveOccurrence ?? 0,
+              review.caption ?? '配图',
+              review.resultPath
+            ) !== null
+          if (!stillLocatable) useWritingStore.getState().removeImageReview(review.id)
+          return
+        }
+        // outcome === 'error'：保留审阅卡，不再额外处理——错误文案已经在顶部提示条。
+      } finally {
+        setGenImageBusy((m) => ({ ...m, [review.id]: false }))
+      }
+    },
+    [onCommitSection]
+  )
+
+  /**
+   * 丢弃：`discardGenImageFromSection` 删掉指令块 → 同一条 `onCommitSection` 写盘 →
+   * 成功/已如愿才 `removeImageReview`。与「应用」镜像，但没有「已付费产出需要挽留」的
+   * 顾虑——定位不到就是指令块已经不在了（已被处理过/被手改删掉），丢弃的目的本就是
+   * 「不要这条指令」，块已经不在等于如愿，静默摘卡不需要额外提示；乐观锁冲突/写盘失败
+   * 的处理与应用对称（冲突后重新核对块是否还在，还在就留卡待用户再点一次；写盘失败
+   * 保留卡片可重试）。
+   */
+  const discardGenImageReview = useCallback(
+    async (review: ImageReview): Promise<void> => {
+      const wstore = useWritingStore.getState()
+      if (!onCommitSection || !review.directiveRaw) {
+        wstore.removeImageReview(review.id)
+        return
+      }
+      const sec = wstore.sections.find((s) => s.name === review.sectionId)
+      if (!sec) {
+        wstore.removeImageReview(review.id)
+        return
+      }
+      const next = discardGenImageFromSection(sec.markdown, review.directiveRaw, review.directiveOccurrence ?? 0)
+      if (next === null) {
+        wstore.removeImageReview(review.id)
+        return
+      }
+      setGenImageBusy((m) => ({ ...m, [review.id]: true }))
+      try {
+        const outcome = await onCommitSection({
+          sectionName: review.sectionId,
+          markdown: next,
+          expectedMtimeMs: sec.mtimeMs
+        })
+        if (outcome === 'ok') {
+          useWritingStore.getState().removeImageReview(review.id)
+          return
+        }
+        if (outcome === 'conflict' || outcome === 'conflict-missing') {
+          const freshSec = useWritingStore.getState().sections.find((s) => s.name === review.sectionId)
+          const stillLocatable =
+            !!freshSec &&
+            discardGenImageFromSection(
+              freshSec.markdown,
+              review.directiveRaw as string,
+              review.directiveOccurrence ?? 0
+            ) !== null
+          if (!stillLocatable) useWritingStore.getState().removeImageReview(review.id)
+          return
+        }
+        // outcome === 'error'：指令块原样还在，保留审阅卡，用户可重试「丢弃」。
+      } finally {
+        setGenImageBusy((m) => ({ ...m, [review.id]: false }))
+      }
+    },
+    [onCommitSection]
+  )
+
+  /**
+   * 重改：用用户重新描述的构图再调一次出图 IPC（不经 commitSection——审阅卡本身不写盘，
+   * 只有「应用」才落地）。成功则原子替换审阅项（先摘旧、再插入落点字段相同的新一条），
+   * 失败把错误留在原卡上（`genImageRetryError`），busy 收回供用户再试或改用「放弃」。
+   */
+  const retryGenImageReview = useCallback(async (review: ImageReview, promptText: string): Promise<void> => {
+    const src = useWritingStore.getState().source
+    if (!src || src.kind !== 'project') {
+      setGenImageRetryError((m) => ({ ...m, [review.id]: '当前不是项目模式，无法重新生成' }))
+      return
+    }
+    setGenImageBusy((m) => ({ ...m, [review.id]: true }))
+    setGenImageRetryError((m) => ({ ...m, [review.id]: null }))
+    try {
+      const imageStyle = useWritingStore.getState().imageStyle ?? ''
+      const { path } = await window.chatApi.writingImageGenerate({
+        projectDir: src.projectDir,
+        prompt: buildWritingGenImagePrompt({ caption: review.caption ?? '配图', prompt: promptText }, imageStyle)
+      })
+      const wstore = useWritingStore.getState()
+      wstore.removeImageReview(review.id)
+      wstore.addImageReview({
+        sectionId: review.sectionId,
+        blockIndex: review.blockIndex,
+        resultPath: path,
+        mode: 'directive',
+        directiveRaw: review.directiveRaw,
+        directiveOccurrence: review.directiveOccurrence,
+        caption: review.caption
+      })
+    } catch (err) {
+      setGenImageRetryError((m) => ({ ...m, [review.id]: friendlyImageError(err, 'generate') }))
+    } finally {
+      setGenImageBusy((m) => ({ ...m, [review.id]: false }))
+    }
+  }, [])
+
   if (status === 'missing') {
     return (
       <div className="grid flex-1 place-items-center p-8 text-center">
@@ -648,6 +891,82 @@ export function WritingPaper({
             // AI 落字期间 beginEdit 会直接 return，此时还摆出文本光标 + hover 底色，
             // 就是在演一个点了没反应的按钮。
             const editable = !!onEditBlock && !writing && !isEditing
+
+            // genimage 指令块（配图密度③）：不当普通段落渲染，换成卡片；紧随其后挂载它
+            // 对应的审阅卡。指令块从不接受双击就地编辑（AI 产出、靠卡片按钮驱动），也就
+            // 不会与上面的 isEditing/aimRef/beginEdit 那套手动编辑通道打架。
+            if (isGenImageDirectiveBlock(block)) {
+              // occurrence：同内容指令块在本节内按块序数第几个（0 起）——与
+              // parseGenImageDirectives / fireWritingGenImage 的口径一致，是 genImageJobs
+              // 键与审阅卡匹配的稳定坐标之一（另一个是 directiveRaw 本身）。
+              let occ = 0
+              for (let k = 0; k < i; k++) {
+                if (sec.items[k].trim() === block.trim()) occ++
+              }
+              const trimmedRaw = block.trim()
+
+              // 单文件模式：出图 IPC 产出的 relPath 恒为 `../images/<文件名>`，这个形态只在
+              // 项目模式成立（正文分节在 <项目>/drafts/、图落在 <项目>/images/，兄弟目录）；
+              // 单文件模式没有这层项目结构，硬发只会写出指向 `<cwd>/images/` 的错误引用。
+              // 静默不工作比不支持更糟——用一行说明代替卡片，且不渲染任何指令卡。
+              if (!source || source.kind !== 'project') {
+                return (
+                  <div
+                    key={blockKey}
+                    className="my-2 rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 text-[12px] text-muted-foreground"
+                  >
+                    配图需要项目模式（图要落在项目的 images/ 里），当前是单文件模式
+                  </div>
+                )
+              }
+
+              const content = parseGenImageBlock(block)
+              const jobKey = genImageDirectiveKey(sec.name, trimmedRaw, occ)
+              // 按内容键（sectionId + directiveRaw + directiveOccurrence）匹配审阅卡，
+              // 不用块下标——审阅悬而未决期间该节可能被并发编辑（AI 续写/用户手改别处），
+              // 块序会漂，内容键才稳（与 shared/proposalGenImage.ts 顶注同源的理由）。
+              const matchedReviews = imageReviews.filter(
+                (r) =>
+                  r.sectionId === sec.name &&
+                  r.directiveRaw === trimmedRaw &&
+                  (r.directiveOccurrence ?? 0) === occ
+              )
+              const projectDir = source.projectDir
+              return (
+                <Fragment key={blockKey}>
+                  <GenImageDirectiveCard
+                    label="文章配图"
+                    caption={content?.caption ?? '配图'}
+                    job={genImageJobs[jobKey]}
+                    hasReview={matchedReviews.length > 0}
+                    generating={writing}
+                    onGenerate={() => {
+                      if (!content) return
+                      void fireWritingGenImage(projectDir, sec.name, {
+                        ...content,
+                        blockIndex: i,
+                        occurrence: occ,
+                        raw: trimmedRaw
+                      })
+                    }}
+                    onOpenSettings={openImageApiSettings}
+                  />
+                  {matchedReviews.map((review) => (
+                    <ProposalImageReview
+                      key={review.id}
+                      review={review}
+                      busy={Boolean(genImageBusy[review.id])}
+                      error={genImageRetryError[review.id] ?? null}
+                      onApply={() => void applyGenImageReview(review)}
+                      onDiscard={() => void discardGenImageReview(review)}
+                      onRetry={(p) => void retryGenImageReview(review, p)}
+                      onOpenSettings={openImageApiSettings}
+                    />
+                  ))}
+                </Fragment>
+              )
+            }
+
             return (
               <div
                 key={`${sec.name}:${i}`}
@@ -744,7 +1063,7 @@ export function WritingPaper({
                     </div>
                   </div>
                 ) : (
-                  <AssistantMarkdown text={block} />
+                  <AssistantMarkdown text={block} assetBaseDir={assetBaseDir} />
                 )}
               </div>
             )
