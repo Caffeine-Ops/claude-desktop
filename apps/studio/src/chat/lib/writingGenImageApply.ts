@@ -57,3 +57,31 @@ export function discardGenImageFromSection(
   )
   return changed ? joinBlocks(blocks) : null
 }
+
+/**
+ * 应用/丢弃第 `removedOccurrence` 个 `(sectionId, directiveRaw)` 指令块成功后，把
+ * 同一 `(sectionId, directiveRaw)` 下 occurrence 更大的兄弟审阅项就地减一
+ * （2026-08 复审 M-1）。
+ *
+ * 【为什么这是确定性位移，不是位置猜测】`replaceGenImageDirectiveBlock`/
+ * `removeGenImageDirectiveBlock` 对指令块数组做的是精确的按下标 splice：删除/替换
+ * 第 k 个同内容块后，原本排在它后面的第 j 个（j>k）在新数组里天然变成第 j-1 个，
+ * 这是数组下标算术本身决定的，不依赖任何内容启发式。若不同步调整，同一节里有三个
+ * （或更多）字面完全相同的指令块时，兄弟审阅卡挂着的旧 occurrence 会在下一次应用/
+ * 丢弃时命中错误的、实际属于另一个原始块的新位置——两块时 `applyGenImageToSection`/
+ * `discardGenImageFromSection` 会因下标越界安全失败（回 null），但三块起会命中一个
+ * 「凑巧还存在」的下标、静默把图落错地方（复审 M-1 实测复现）。
+ *
+ * 只影响 `sectionId`/`directiveRaw` 都相同的项（不同节或不同指令内容的审阅卡无关，
+ * 原样返回）；`occurrence <= removedOccurrence` 的项也原样返回（更早的兄弟不受影响，
+ * 被处理的这一项本身应由调用方另行摘除，不归本函数管）。纯函数，不就地修改入参。
+ */
+export function renumberSiblingGenImageReviews<
+  T extends { sectionId: string; directiveRaw?: string; directiveOccurrence?: number }
+>(reviews: readonly T[], sectionId: string, directiveRaw: string, removedOccurrence: number): T[] {
+  return reviews.map((r) => {
+    if (r.sectionId !== sectionId || r.directiveRaw !== directiveRaw) return r
+    const occ = r.directiveOccurrence ?? 0
+    return occ > removedOccurrence ? { ...r, directiveOccurrence: occ - 1 } : r
+  })
+}

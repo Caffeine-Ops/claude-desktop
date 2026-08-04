@@ -30,6 +30,19 @@ export interface ImageReview {
   directiveOccurrence?: number
   // mode='directive'：图说，落位时作 `![图说](路径)` 的 alt 文字。
   caption?: string
+  /**
+   * 写作侧专属（2026-08 复审 C-1 补）：`WRITING_IMAGE_GENERATE` 回的 `../images/<文件名>`
+   * 相对路径——**落位写进正文时必须用这个，不能用 `resultPath`**。`resultPath` 是绝对路径，
+   * 只给审阅卡预览 `<img>` 用（经 `writingasset://` 协议转换显示）；把绝对路径直接写进
+   * markdown 会让「项目文件夹整体搬走/发给别人」后引用全断（`writingImageWriter.ts` 里
+   * `relPath` 存在的唯一理由就是保这份可移植性），路径含空格时更糟——mdast 会把整行
+   * `![图](/Users/k/我的 项目/images/x.png)` 解析成纯文本而非图片节点，图永远出不来、
+   * 源码字面量永久卡在草稿里，且不含空格时预览照样正常（因为 `isWritingAssetSrc` 认
+   * 绝对路径），走查根本抓不到。提案侧没有这个字段——提案的产出图落在会话内存草稿里，
+   * 从不需要相对路径可移植性；这是写作独有的磁盘落位需求。可选（不是全部生产者都填得出，
+   * 理论上兜底缺省时应用会直接失败，同 `directiveRaw` 缺失一视同仁）。
+   */
+  relPath?: string
 }
 
 // genimage 指令块的生图任务态（配图密度③）。键 = genImageDirectiveKey(sectionId, raw, occurrence)。

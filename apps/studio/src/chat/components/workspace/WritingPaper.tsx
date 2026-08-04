@@ -12,8 +12,16 @@ import { useSettingsStore } from '../../stores/settings'
 import { paperSkinClass } from '../../lib/writingGenreStyle'
 import type { WritingRevisionTarget } from '../../lib/writingRevision'
 import { blockSourceAt, isBlockUnchanged, locateBlockBySource } from '../../lib/writingEdit'
-import { applyGenImageToSection, discardGenImageFromSection } from '../../lib/writingGenImageApply'
-import { fireWritingGenImage, buildWritingGenImagePrompt } from '../../lib/writingGenImageFire'
+import {
+  applyGenImageToSection,
+  discardGenImageFromSection,
+  renumberSiblingGenImageReviews
+} from '../../lib/writingGenImageApply'
+import {
+  fireWritingGenImage,
+  buildWritingGenImagePrompt,
+  stillTargetable
+} from '../../lib/writingGenImageFire'
 import { friendlyImageError } from '../../lib/imageErrorText'
 import type { ImageReview } from '../../lib/imageReviewTypes'
 import { AssistantMarkdown } from '../chat/AssistantMarkdown'
@@ -639,25 +647,63 @@ export function WritingPaper({
   }, [])
 
   /**
+   * 摘掉一张审阅卡的同时，把同 `(sectionId, directiveRaw)` 下 occurrence 更大的兄弟
+   * 审阅卡就地减一（复审 M-1）——`removeImageReview(id)` 本身不做这件事，必须两步一起
+   * 才不留下错位的兄弟卡。用单次 `setState` 而不是先 `removeImageReview` 再单独调
+   * 一次 renumber：避免中间态被别的订阅者读到「已经少了一张但兄弟卡还没调整」的半成品。
+   */
+  function removeAndRenumberSiblings(review: ImageReview): void {
+    useWritingStore.setState((st) => ({
+      imageReviews: renumberSiblingGenImageReviews(
+        st.imageReviews.filter((r) => r.id !== review.id),
+        review.sectionId,
+        review.directiveRaw as string,
+        review.directiveOccurrence ?? 0
+      )
+    }))
+  }
+
+  /**
    * 应用：`applyGenImageToSection` 算出新 markdown → `onCommitSection`（乐观锁写盘）→
-   * 成功才 `removeImageReview`。**这是本任务唯一允许的落盘路径**，见 onCommitSection 的
-   * 参数注释——不新开写盘入口。
+   * 成功才 `removeAndRenumberSiblings` + `pushUndo`。**这是本任务唯一允许的落盘路径**，
+   * 见 onCommitSection 的参数注释——不新开写盘入口。
    *
-   * 三种「没写成功」的分支都不能悄无声息（自查清单第 1 条）：
+   * 【复审 I-1】`commitSection` 只管写盘，压撤销栈是调用方各自的责任（手动编辑/AI 改写
+   * 「应用」都在成功后自己调 `pushUndo`，见 `WritingDocPanel.tsx` 的 `editBlock`/
+   * `applyReview`）——此前这里漏了这一步：不只是"不能撤销"，用户若在应用配图前后又做过
+   * 别的手动编辑，`undoLast` 会用现读的最新 mtime 当基准直接跳过这一步、把应用配图这一步
+   * 连同它一起吞掉，界面只报「撤销成功」，不提示任何东西。
+   *
+   * 【复审 C-1】落位用 `review.relPath`（`../images/<文件名>`），**不是** `review.resultPath`
+   * （绝对路径，只给审阅卡预览用）——写绝对路径进正文在项目搬家/发送给别人后引用全断，
+   * 路径含空格时更糟（mdast 把整行解析成纯文本，图连预览态都不会出现，走查抓不到）。
+   * `relPath` 缺失（数据不一致，理论上两个生产者都恒填）与 `directiveRaw` 缺失一视同仁
+   * ——防御性摘卡，不用 `!` 断言硬来。
+   *
+   * 四种「没写成功」的分支都不能悄无声息（自查清单第 1 条 + 复审 M-2）：
+   *  - 数据不一致（`directiveRaw`/`relPath` 缺失）或没有写盘入口：出声 + 摘卡（复审 M-2
+   *    —— 此前这条分支直接摘卡不提示，当前不可达但一旦可达就是「点了应用，付费产出无声
+   *    消失」）。
    *  - 定位不到（内容已漂移）：出声 + 摘卡。已生成的图仍留在磁盘（不即时删盘，同既有
    *    策略），用户可以对着原指令重新生成，但不能假装应用成功。
-   *  - 乐观锁冲突：`onCommitSection` 内部已经把 store 刷新成盘上最新版本、且设好了
-   *    通用冲突提示（顶部 conflictMsg 条）。这里只补一件事——若刷新后指令块依然能在
-   *    新正文里定位到（说明冲突只是「这一节别处被 AI 改过」，配图指令本身没受影响），
-   *    保留审阅卡让用户直接再点一次应用即可（下一次会用刷新后的 mtime，天然重试）；
-   *    定位不到才摘卡，理由同上一条。
-   *  - 写盘失败（磁盘满/权限……）：内容本身仍有效，保留审阅卡，用户可重试；具体错因
-   *    已经被 `onCommitSection` 写进顶部提示条。
+   *  - 乐观锁冲突（`'conflict'`）：`onCommitSection` 内部已经把 store 刷新成盘上最新
+   *    版本、且设好了通用冲突提示（顶部 conflictMsg 条）。这里只补一件事——若刷新后
+   *    指令块依然能在新正文里定位到（说明冲突只是「这一节别处被 AI 改过」，配图指令
+   *    本身没受影响），保留审阅卡让用户直接再点一次应用即可（下一次会用刷新后的 mtime，
+   *    天然重试）；定位不到才摘卡，理由同上一条。
+   *  - **`'conflict-missing'`（复审 M-3）**：这一分支下 `res.current === null`，
+   *    `commitSection` **不会**刷新 store（见其函数头注释），若还去跑上面那套
+   *    「刷新后重新定位」的判断，拿到的是陈旧正文、`stillLocatable` 恒为 true——卡片
+   *    永远保留，用户每点一次撞一次同样的墙（文件已经不在了，不会再有"下一次成功"）。
+   *    直接摘卡，不做定位判断。
+   *  - 写盘失败（`'error'`，磁盘满/权限……）：内容本身仍有效，保留审阅卡，用户可重试；
+   *    具体错因已经被 `onCommitSection` 写进顶部提示条。
    */
   const applyGenImageReview = useCallback(
     async (review: ImageReview): Promise<void> => {
       const wstore = useWritingStore.getState()
-      if (!onCommitSection || !review.directiveRaw) {
+      if (!onCommitSection || !review.directiveRaw || !review.relPath) {
+        wstore.setConflictMsg('这张配图的信息不完整，未能应用。')
         wstore.removeImageReview(review.id)
         return
       }
@@ -667,12 +713,13 @@ export function WritingPaper({
         wstore.removeImageReview(review.id)
         return
       }
+      const before = sec.markdown
       const next = applyGenImageToSection(
-        sec.markdown,
+        before,
         review.directiveRaw,
         review.directiveOccurrence ?? 0,
         review.caption ?? '配图',
-        review.resultPath
+        review.relPath
       )
       if (next === null) {
         wstore.setConflictMsg('这段配图指令的原文已经变了，找不到当初的位置，应用未生效，请重新生成。')
@@ -687,10 +734,15 @@ export function WritingPaper({
           expectedMtimeMs: sec.mtimeMs
         })
         if (outcome === 'ok') {
+          useWritingStore.getState().pushUndo({ sectionName: review.sectionId, markdown: before })
+          removeAndRenumberSiblings(review)
+          return
+        }
+        if (outcome === 'conflict-missing') {
           useWritingStore.getState().removeImageReview(review.id)
           return
         }
-        if (outcome === 'conflict' || outcome === 'conflict-missing') {
+        if (outcome === 'conflict') {
           const freshSec = useWritingStore.getState().sections.find((s) => s.name === review.sectionId)
           const stillLocatable =
             !!freshSec &&
@@ -699,7 +751,7 @@ export function WritingPaper({
               review.directiveRaw as string,
               review.directiveOccurrence ?? 0,
               review.caption ?? '配图',
-              review.resultPath
+              review.relPath as string
             ) !== null
           if (!stillLocatable) useWritingStore.getState().removeImageReview(review.id)
           return
@@ -714,16 +766,17 @@ export function WritingPaper({
 
   /**
    * 丢弃：`discardGenImageFromSection` 删掉指令块 → 同一条 `onCommitSection` 写盘 →
-   * 成功/已如愿才 `removeImageReview`。与「应用」镜像，但没有「已付费产出需要挽留」的
-   * 顾虑——定位不到就是指令块已经不在了（已被处理过/被手改删掉），丢弃的目的本就是
-   * 「不要这条指令」，块已经不在等于如愿，静默摘卡不需要额外提示；乐观锁冲突/写盘失败
-   * 的处理与应用对称（冲突后重新核对块是否还在，还在就留卡待用户再点一次；写盘失败
-   * 保留卡片可重试）。
+   * 成功才 `removeAndRenumberSiblings` + `pushUndo`（复审 I-1，理由同「应用」）。与
+   * 「应用」镜像，但没有「已付费产出需要挽留」的顾虑——定位不到就是指令块已经不在了
+   * （已被处理过/被手改删掉），丢弃的目的本就是「不要这条指令」，块已经不在等于如愿，
+   * 静默摘卡不需要额外提示；乐观锁冲突/`conflict-missing`/写盘失败的处理与应用对称
+   * （见应用函数头注释，复审 M-2/M-3 同样适用）。
    */
   const discardGenImageReview = useCallback(
     async (review: ImageReview): Promise<void> => {
       const wstore = useWritingStore.getState()
       if (!onCommitSection || !review.directiveRaw) {
+        wstore.setConflictMsg('这条配图指令的信息不完整，未能丢弃。')
         wstore.removeImageReview(review.id)
         return
       }
@@ -732,7 +785,8 @@ export function WritingPaper({
         wstore.removeImageReview(review.id)
         return
       }
-      const next = discardGenImageFromSection(sec.markdown, review.directiveRaw, review.directiveOccurrence ?? 0)
+      const before = sec.markdown
+      const next = discardGenImageFromSection(before, review.directiveRaw, review.directiveOccurrence ?? 0)
       if (next === null) {
         wstore.removeImageReview(review.id)
         return
@@ -745,10 +799,15 @@ export function WritingPaper({
           expectedMtimeMs: sec.mtimeMs
         })
         if (outcome === 'ok') {
+          useWritingStore.getState().pushUndo({ sectionName: review.sectionId, markdown: before })
+          removeAndRenumberSiblings(review)
+          return
+        }
+        if (outcome === 'conflict-missing') {
           useWritingStore.getState().removeImageReview(review.id)
           return
         }
-        if (outcome === 'conflict' || outcome === 'conflict-missing') {
+        if (outcome === 'conflict') {
           const freshSec = useWritingStore.getState().sections.find((s) => s.name === review.sectionId)
           const stillLocatable =
             !!freshSec &&
@@ -772,6 +831,16 @@ export function WritingPaper({
    * 重改：用用户重新描述的构图再调一次出图 IPC（不经 commitSection——审阅卡本身不写盘，
    * 只有「应用」才落地）。成功则原子替换审阅项（先摘旧、再插入落点字段相同的新一条），
    * 失败把错误留在原卡上（`genImageRetryError`），busy 收回供用户再试或改用「放弃」。
+   *
+   * 【复审 I-3】IPC 往返十几到几十秒，期间用户完全可能切到另一个写作项目——
+   * `fireWritingGenImage` 走的是同一条 IPC，同样的往返窗口，早就在写表前做了
+   * `stillTargetable` 守卫（见其函数头注释：不这样做的话会把旧项目的图路径塞进新
+   * 项目的 store，写作节名模板化、跨项目重名是常态，卡片一旦凑巧渲染出来，「应用」
+   * 会把 A 项目的图路径写进 B 项目的稿子）。「重改」走的是同一条往返，此前漏了这道
+   * 守卫，现在直接复用同一个导出函数，不重复写一份判断逻辑。
+   *
+   * 【复审 C-1】同 apply/discard，把 IPC 回的 `relPath` 一并存进新审阅项——落位写正文
+   * 用的是它，不是 `resultPath`（绝对路径，只给预览用）。
    */
   const retryGenImageReview = useCallback(async (review: ImageReview, promptText: string): Promise<void> => {
     const src = useWritingStore.getState().source
@@ -783,16 +852,20 @@ export function WritingPaper({
     setGenImageRetryError((m) => ({ ...m, [review.id]: null }))
     try {
       const imageStyle = useWritingStore.getState().imageStyle ?? ''
-      const { path } = await window.chatApi.writingImageGenerate({
+      const { path, relPath } = await window.chatApi.writingImageGenerate({
         projectDir: src.projectDir,
         prompt: buildWritingGenImagePrompt({ caption: review.caption ?? '配图', prompt: promptText }, imageStyle)
       })
+      // 项目在往返期间被切走：图已经生成完成（落盘本身无害），但此刻已经没有「当下这份
+      // 文档」可挂审阅卡——不写表，静默返回（同 fireWritingGenImage 对这条守卫的处理）。
+      if (!stillTargetable(src.projectDir, review.sectionId)) return
       const wstore = useWritingStore.getState()
       wstore.removeImageReview(review.id)
       wstore.addImageReview({
         sectionId: review.sectionId,
         blockIndex: review.blockIndex,
         resultPath: path,
+        relPath,
         mode: 'directive',
         directiveRaw: review.directiveRaw,
         directiveOccurrence: review.directiveOccurrence,
@@ -892,10 +965,21 @@ export function WritingPaper({
             // 就是在演一个点了没反应的按钮。
             const editable = !!onEditBlock && !writing && !isEditing
 
-            // genimage 指令块（配图密度③）：不当普通段落渲染，换成卡片；紧随其后挂载它
-            // 对应的审阅卡。指令块从不接受双击就地编辑（AI 产出、靠卡片按钮驱动），也就
-            // 不会与上面的 isEditing/aimRef/beginEdit 那套手动编辑通道打架。
-            if (isGenImageDirectiveBlock(block)) {
+            // genimage 指令块（配图密度③）：项目模式下不当普通段落渲染，换成卡片；紧随
+            // 其后挂载它对应的审阅卡。指令块从不接受双击就地编辑（AI 产出、靠卡片按钮
+            // 驱动），也就不会与上面的 isEditing/aimRef/beginEdit 那套手动编辑通道打架。
+            //
+            // 单文件模式（复审 M-6）：出图 IPC 产出的 relPath 恒为 `../images/<文件名>`，
+            // 这个形态只在项目模式成立（正文分节在 <项目>/drafts/、图落在 <项目>/images/，
+            // 兄弟目录）；单文件模式没有这层项目结构，硬发只会写出指向 `<cwd>/images/` 的
+            // 错误引用。静默不工作比不支持更糟——不进这个分支，落到下面的普通块 wrapper
+            // 里、只是把渲染内容换成一行说明代替卡片。**这不是可有可无的写法选择**：走
+            // 普通 wrapper 意味着这一块保留了双击进「整块源码」编辑的入口——单文件模式下
+            // 没有任何按钮能删掉一个 genimage 指令块（没有卡片、没有审阅流程），双击手动
+            // 删是唯一的出路，若也走这里的裸 div 分支（不挂 data-block-index/onDoubleClick）
+            // 就会把这条唯一的删除路径堵死。
+            const isSingleModeDirective = isGenImageDirectiveBlock(block) && (!source || source.kind !== 'project')
+            if (isGenImageDirectiveBlock(block) && source && source.kind === 'project') {
               // occurrence：同内容指令块在本节内按块序数第几个（0 起）——与
               // parseGenImageDirectives / fireWritingGenImage 的口径一致，是 genImageJobs
               // 键与审阅卡匹配的稳定坐标之一（另一个是 directiveRaw 本身）。
@@ -904,21 +988,6 @@ export function WritingPaper({
                 if (sec.items[k].trim() === block.trim()) occ++
               }
               const trimmedRaw = block.trim()
-
-              // 单文件模式：出图 IPC 产出的 relPath 恒为 `../images/<文件名>`，这个形态只在
-              // 项目模式成立（正文分节在 <项目>/drafts/、图落在 <项目>/images/，兄弟目录）；
-              // 单文件模式没有这层项目结构，硬发只会写出指向 `<cwd>/images/` 的错误引用。
-              // 静默不工作比不支持更糟——用一行说明代替卡片，且不渲染任何指令卡。
-              if (!source || source.kind !== 'project') {
-                return (
-                  <div
-                    key={blockKey}
-                    className="my-2 rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 text-[12px] text-muted-foreground"
-                  >
-                    配图需要项目模式（图要落在项目的 images/ 里），当前是单文件模式
-                  </div>
-                )
-              }
 
               const content = parseGenImageBlock(block)
               const jobKey = genImageDirectiveKey(sec.name, trimmedRaw, occ)
@@ -1061,6 +1130,10 @@ export function WritingPaper({
                     <div className="mt-1 text-[11px] text-muted-foreground">
                       {isSavingThis ? '保存中…' : 'Esc 取消 · 点击别处保存'}
                     </div>
+                  </div>
+                ) : isSingleModeDirective ? (
+                  <div className="my-2 rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 text-[12px] text-muted-foreground">
+                    配图需要项目模式（图要落在项目的 images/ 里），当前是单文件模式
                   </div>
                 ) : (
                   <AssistantMarkdown text={block} assetBaseDir={assetBaseDir} />

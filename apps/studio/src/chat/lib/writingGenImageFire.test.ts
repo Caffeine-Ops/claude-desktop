@@ -378,3 +378,99 @@ describe('fireWritingGenImage · 失败路径', () => {
     expect(job?.error).toContain('未配置')
   })
 })
+
+// 复审 C-1：WRITING_IMAGE_GENERATE 的契约明写 path=绝对路径（预览用）、
+// relPath=`../images/<文件名>`（落位写正文用）。此前 fireWritingGenImage 只解出
+// path、把 relPath 整个丢弃，写进 imageReviews 的审阅项没有任何字段能承载它——
+// WritingPaper 应用时只能拿 resultPath（绝对路径）落位，项目路径含空格时正文里
+// 会留下一行解析不出图片的源码字面量、且不含空格时预览照样正常显示，走查完全
+// 抓不到这个 bug。钉住 relPath 确实从 IPC 一路原样流进 imageReviews。
+describe('fireWritingGenImage · relPath 落位字段（复审 C-1）', () => {
+  it('imageReviews 里的 relPath 与 IPC 契约回的 relPath 一致，且与 resultPath（绝对路径）不同', async () => {
+    const md = directiveBlock(0)
+    useWritingStore.getState().setSections([section('1-a.md', md)])
+    autoFireWritingGenImages()
+    autoFireWritingGenImages()
+    await flush()
+
+    const review = useWritingStore.getState().imageReviews[0]
+    expect(review).toBeDefined()
+    expect(review.relPath).toBe('../images/x.png')
+    // resultPath 恒为绝对路径（mock 里是 `${projectDir}/images/x.png`），relPath 恒为
+    // 相对路径——两者形态不同，断言不相等能防止未来有人图省事又把 relPath 改回
+    // 从 resultPath 派生（那正是 C-1 的根因）。
+    expect(review.resultPath).not.toBe(review.relPath)
+  })
+
+  it('项目路径含空格时（C-1 的真实诱因，macOS 常态），relPath 原样流入，不受影响', async () => {
+    // 临时替换本文件共享 mock：模拟项目路径与文件名都含空格的场景。
+    ;(
+      globalThis as {
+        window: { chatApi: { writingImageGenerate: (a: { projectDir: string; prompt: string }) => Promise<unknown> } }
+      }
+    ).window.chatApi.writingImageGenerate = (args: { projectDir: string; prompt: string }) => {
+      calls.push(args)
+      const p = Promise.resolve({
+        path: `${args.projectDir}/我的 项目/images/gen 1.png`,
+        relPath: '../images/gen 1.png'
+      })
+      pending.push(p)
+      return p
+    }
+    const md = directiveBlock(0)
+    useWritingStore.getState().setSections([section('1-a.md', md)])
+    autoFireWritingGenImages()
+    autoFireWritingGenImages()
+    await flush()
+
+    const review = useWritingStore.getState().imageReviews[0]
+    expect(review.relPath).toBe('../images/gen 1.png')
+  })
+})
+
+// 复审 M-1/M-4：与 genImageJobs 的孤儿键清理完全同构（复用同一份 validKeys）。
+describe('autoFireWritingGenImages · imageReviews 孤儿清扫（复审 M-1/M-4）', () => {
+  it('AI 在悬而未决期间重写了这一节导致指令块消失后，对应的审阅卡会被自动清掉', async () => {
+    const md = directiveBlock(0)
+    useWritingStore.getState().setSections([section('1-a.md', md)])
+    autoFireWritingGenImages()
+    autoFireWritingGenImages()
+    await flush()
+    expect(useWritingStore.getState().imageReviews.length).toBe(1)
+
+    // AI 把这一节整个重写了，原指令块（连同它的内容）不再存在于当前正文。
+    useWritingStore.getState().setSections([section('1-a.md', '全新的正文，不含任何指令块')])
+    autoFireWritingGenImages()
+
+    expect(useWritingStore.getState().imageReviews.length).toBe(0)
+  })
+
+  it('sections 空读的那一轮不清扫审阅卡（与 job 键共用同一条 M-1 保护，防网络盘抖动误清）', async () => {
+    const md = directiveBlock(0)
+    useWritingStore.getState().setSections([section('1-a.md', md)])
+    autoFireWritingGenImages()
+    autoFireWritingGenImages()
+    await flush()
+    expect(useWritingStore.getState().imageReviews.length).toBe(1)
+
+    // 模拟「scan 成功但 read 阶段读盘瞬时失败」：sections 读成空数组的这一帧不该清扫。
+    useWritingStore.getState().setSections([])
+    autoFireWritingGenImages()
+    expect(useWritingStore.getState().imageReviews.length).toBe(1)
+  })
+
+  it('指令块内容还在（尚未被处理）时审阅卡不受任何影响，不会被自己的清扫逻辑误伤', async () => {
+    const md = directiveBlock(0)
+    useWritingStore.getState().setSections([section('1-a.md', md)])
+    autoFireWritingGenImages()
+    autoFireWritingGenImages()
+    await flush()
+    expect(useWritingStore.getState().imageReviews.length).toBe(1)
+
+    // 再跑几轮轮询，内容完全没变——审阅卡应该原样保留。
+    autoFireWritingGenImages()
+    autoFireWritingGenImages()
+    await flush()
+    expect(useWritingStore.getState().imageReviews.length).toBe(1)
+  })
+})

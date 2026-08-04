@@ -50,8 +50,12 @@ export function buildWritingGenImagePrompt(
  * 硬写只会把旧项目的状态串到新项目上。与提案侧 fireGenImageDirective 第 43-45 /
  * 58-62 行的节存在性守卫同一理由，这里多一条 projectDir 比对因为写作没有 sessionId
  * 那样天然绑定的归属会话。
+ *
+ * **导出**（2026-08 复审 I-3）：`WritingPaper` 的「重改」也走 `writingImageGenerate`
+ * 这同一条十几到几十秒的网络往返，同样需要在写回 store 前核对项目没有被切走——不导出
+ * 就只能在 `WritingPaper.tsx` 里重复一份一模一样的判断，两份迟早漂。
  */
-function stillTargetable(projectDir: string, sectionName: string): boolean {
+export function stillTargetable(projectDir: string, sectionName: string): boolean {
   const s = useWritingStore.getState()
   if (s.source?.kind !== 'project' || s.source.projectDir !== projectDir) return false
   return s.sections.some((sec) => sec.name === sectionName)
@@ -69,7 +73,12 @@ export async function fireWritingGenImage(
     // 画风在发起这一刻现读（而不是由调用方传入）：fireWritingGenImage 也是手动卡按钮的
     // 发起入口（未来任务），现读能保证手动重试时用的是当下契约里最新的 image_style。
     const imageStyle = useWritingStore.getState().imageStyle ?? ''
-    const { path } = await window.chatApi.writingImageGenerate({
+    // 【2026-08 复审 C-1】`path` 是绝对路径，只给审阅卡预览 `<img>` 用；`relPath`
+    // （`../images/<文件名>`）才是落位时要写进正文的那个——两者都要存，见
+    // `ImageReview.relPath` 字段注释里「为什么不能用 path」的完整推演（含空格路径、
+    // Windows 反斜杠两个失败场景）。此前这里只解出 `path`，`relPath` 被整个丢弃，
+    // 审阅卡应用后写进正文的是绝对路径。
+    const { path, relPath } = await window.chatApi.writingImageGenerate({
       projectDir,
       prompt: buildWritingGenImagePrompt(d, imageStyle)
     })
@@ -79,6 +88,7 @@ export async function fireWritingGenImage(
       sectionId: sectionName,
       blockIndex: d.blockIndex,
       resultPath: path,
+      relPath,
       mode: 'directive',
       directiveRaw: d.raw,
       directiveOccurrence: d.occurrence,
@@ -201,6 +211,44 @@ export function autoFireWritingGenImages(): void {
       for (const k of orphanKeys) delete jobs[k]
       return { genImageJobs: jobs }
     })
+  }
+
+  // 孤儿审阅卡清理（2026-08 复审 M-1/M-4，与上面 job 键孤儿清理完全同构、复用同一份
+  // validKeys）：`imageReviews` 挂着「待用户裁决」的出图产物，若它对应的指令块在
+  // 当前正文里已经找不到（AI 在悬而未决期间整段重写了这一节，直接改掉了指令内容），
+  // 指令卡与审阅卡在渲染层会一起消失（`WritingPaper` 靠内容键匹配，见其块渲染循环），
+  // 但审阅项本身不清理的话会永远留在 store 里当一个渲不出来、也没人能点「应用/丢弃」
+  // 的幽灵——用户看不到任何提示，已经生成的图就此不可达（M-4）。
+  //
+  // 判据与 job 键一致：审阅项换算出的 `genImageDirectiveKey(sectionId, directiveRaw,
+  // directiveOccurrence)` 键不在 validKeys 里就清掉。**这不足以堵住 M-1 那类「同一节
+  // 有三个及以上字面相同的指令块，处理了其中一个后兄弟卡 occurrence 错位」的问题**
+  // ——内容完全相同的多个块在 key 空间里互相「可替身」，某个 occurrence 的 key 依然
+  // 存在于 validKeys 不代表它此刻真的对应同一个原始块。那类漂移由 `WritingPaper` 在
+  // 应用/丢弃成功后精确调用 `renumberSiblingGenImageReviews`（splice 语义决定的确定性
+  // 位移，不是内容匹配的猜测）解决，与这里的差集清理是互补关系，不是同一件事——这里
+  // 只管「指令内容被 AI 整个改掉/删掉」这一类。
+  //
+  // 不会误伤在飞的：`addImageReview` 是 IPC 成功回调里的同步调用，写进去的
+  // `directiveRaw` 就是那一刻的当前内容，只要内容在生图 IPC 往返期间没有再变，这里
+  // 重新解析当前 sections 得到的合法集合里一定还有这个 key。与 job 键清理同受
+  // `s.sections.length === 0` 短路保护（理由见上方那段注释，此处不重复）。
+  const orphanReviewIds =
+    s.sections.length === 0
+      ? []
+      : s.imageReviews
+          .filter(
+            (r) =>
+              r.mode === 'directive' &&
+              !!r.directiveRaw &&
+              !validKeys.has(genImageDirectiveKey(r.sectionId, r.directiveRaw, r.directiveOccurrence ?? 0))
+          )
+          .map((r) => r.id)
+  if (orphanReviewIds.length > 0) {
+    const orphanSet = new Set(orphanReviewIds)
+    useWritingStore.setState((st) => ({
+      imageReviews: st.imageReviews.filter((r) => !orphanSet.has(r.id))
+    }))
   }
 
   // 守卫④的配额来源：genImageJobs 本身就是全部已发起记录（含手动发起），按它的长度算

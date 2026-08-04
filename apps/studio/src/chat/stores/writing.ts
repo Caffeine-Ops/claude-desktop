@@ -628,6 +628,14 @@ export function useWritingPoll(active: boolean): void {
       // 出图触发器与轮询同拍：磁盘元信息没变 = 正文真没变（含指令块），沿用 store 里已有的
       // sections 就能安全跑一次自动发起的稳定判据比对，不必等下一次真正的重读——两条分支都要
       // 调用 autoFireWritingGenImages，否则「AI 写完不再改」这一刻永远等不到第二轮确认。
+      //
+      // 【2026-08 复审 I-2：别在别处再加一次调用】P1b task 5 曾经在 FusionRuntimeProvider 的
+      // onTurnEnd 里额外调过一次 autoFireWritingGenImages()，已经删掉——那次调用夹在两次真实
+      // 磁盘重读之间，中间没有任何重新读盘，稳定判据「与上一次观察到的内容哈希相同」的比较对象
+      // 还是这里刚记的签名，于是必然判定「连续两轮不变」而立即对可能只写了一半的陈旧内容发起，
+      // 且下一轮真实轮询读到最终内容后旧 key 被孤儿清理、又会把它当成没见过的新指令重新发起
+      // ——同一张配图付两次钱，且第一张图的审阅卡因 directiveRaw 对不上任何块而永远渲染不出来。
+      // 这两处轮询分支已经覆盖「正文变了」与「正文没变」全部情形，不需要、也不应该再加调用点。
       if (signature === lastSignature.current) {
         st.setStatus('ready')
         autoFireWritingGenImages()
