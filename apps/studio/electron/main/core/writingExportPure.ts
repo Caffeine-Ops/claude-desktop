@@ -3,7 +3,7 @@
 // 在没有 Electron 运行时的 bun test 进程里会直接炸掉整个 import（同 appSettings.ts /
 // appSettingsNormalize.ts 的拆分理由）。
 
-import { isAbsolute, parse as parsePath, sep } from 'node:path'
+import nodePath, { type PlatformPath } from 'node:path'
 
 // Windows 保留字符（含路径分隔符）：这几个字符在 NTFS 文件名里非法，Windows 原生保存框
 // 会直接拒绝、报「文件名语法不正确」。**macOS/Linux 上这些字符本来是合法文件名字符**（比如
@@ -60,9 +60,11 @@ export function sanitizeBaseName(name: string): string {
  * 与渲染侧 `resolveRelativeAssetPath`（src/chat/lib/writingAssetUrl.ts）同一语义，但**不
  * 直接复用那份实现**：那份是手写的纯 posix 语义解析——之所以手写，是因为渲染进程（Chromium
  * 沙箱里的前端代码）拿不到 `node:path`。main 进程没有这层限制，天生跑在真实宿主 OS 上，
- * `node:path` 已经按当前平台的分隔符规则正确工作（win32 用反斜杠、posix 用正斜杠），用它
- * 比再手搓一套「假装自己不知道宿主 OS」的归一化更准确，也少一份要跟渲染侧逐字对齐、否则
- * 悄悄漂移的重复逻辑（本文件其它函数头注释里反复出现的同一类教训）。
+ * `node:path` 按当前平台的分隔符规则解析【单一分隔符风格】的输入是对的（win32 认反斜杠、
+ * posix 认正斜杠），用它比再手搓一套「假装自己不知道宿主 OS」的归一化更准确，也少一份要跟
+ * 渲染侧逐字对齐、否则悄悄漂移的重复逻辑（本文件其它函数头注释里反复出现的同一类教训）——
+ * 但【`node:path` 不会替调用方兜底混合分隔符输入】，这条留在下面第三轮 review 的注释里，
+ * 别再想当然。
  *
  * 【2026-08-04 code review：算法从 `path.resolve` + `startsWith` 改成与渲染侧同款的「段栈
  * 模拟」】起初图省事直接用 `resolve(base, src)` 算结果、`resolved.startsWith(baseParent +
@@ -82,26 +84,60 @@ export function sanitizeBaseName(name: string): string {
  * 输出会被直接喂进 `readFileSync` 塞进交付 Word/PDF，没有第二道闸，值得钉一个只覆盖「唯一
  * 合法场景」的更紧边界。
  *
+ * 【2026-08-04 第三轮 code review：base 必须先归一化分隔符，否则 win32 上算错目录】
+ * `base` 是 `writingAssetBaseDir()`（渲染侧，`src/chat/lib/writingAssetUrl.ts`）用字符串
+ * 拼接产出的——`` `${projectDir}/drafts` `` 硬编码正斜杠拼在 `projectDir`（来自 CLI stdout，
+ * Windows 上是原生反斜杠）后面，结果 main 侧收到的 base 在 Windows 上恒为**混合分隔符**
+ * （如 `C:\Users\k\稿子/drafts`）。上一版实现按段切分时只认 `sep`（win32 上是 `\`），
+ * `稿子/drafts` 这种夹着正斜杠的尾段会被当成【一整段】，一个 `..` 就多弹一级——审查者用
+ * `path.win32` 模拟 31 组输入，31 组里 15 组语义分歧，是本轮修复里最严重的一次回归（比
+ * 「预览有图、导出没图」更糟：还可能撞上上一级目录里同名文件、静默嵌入错误的图）。
+ *
+ * 修法：切段前用【逐字符替换】（`/[\\/]/g`，不是 `+` 合并）把 `/` 和 `\` 都统一成 `sep`——
+ * 逐字符而非合并连续分隔符是为了不破坏 UNC 路径的双反斜杠前缀（`\\srv\share\...` 的开头两个
+ * `\` 各自独立替换成 `sep`，仍然是两个字符，前缀语义不丢）；只在 `sep === '\\'`（即 win32，
+ * 包括下面测试用 `path.win32` 注入的场景）时才做这个替换——posix 上 `sep` 本来就是 `/`，若
+ * 无差别地把 `\` 也替换成 `/`，会把 posix 文件名里合法的字面反斜杠字符（虽罕见但确实合法）
+ * 错当分隔符切开，这不是要修的问题，反而会引入新问题。
+ *
+ * 【可测试性：注入 path 实现】`isAbsolute`/`parse`/`sep` 默认绑定宿主平台的 `node:path`，
+ * 但本项目要出 Windows 包、bug 恰恰出在 win32 分支，而单测机器（CI/本地）几乎都是 posix——
+ * host-native 的 `path.isAbsolute('C:\\...')` 在 posix 上恒为 false，任何 win32 专属测试都
+ * 会在第一道 `isAbsolute` 守卫就被拦下、测不到后面的段栈逻辑。故 `pathImpl` 开了个可选的
+ * 依赖注入口子：生产环境不传，用宿主原生 `node:path`；测试传 `path.win32`/`path.posix`，
+ * 精确复现目标平台的 `isAbsolute`/`parse`/`sep` 语义，不依赖跑测试的机器是什么系统。
+ *
  * @param base 资产基准目录的绝对路径（如 `<项目>/drafts`）。非绝对路径 / 空 → 原样返回 src
  *   （不做无意义的相对解析——项目侧调用方恒传绝对目录，非绝对多半是调用方没传 assetBaseDir）。
  * @param src markdown 里写的原始 src。非 `./` / `../` 开头（绝对路径、http(s) 外链……）原样返回。
+ * @param pathImpl 可选，默认宿主原生 `node:path`；测试传 `path.win32`/`path.posix` 精确复现
+ *   目标平台语义，见上方「可测试性」段。
  */
-export function resolveWritingAssetPath(base: string | undefined, src: string): string {
+export function resolveWritingAssetPath(
+  base: string | undefined,
+  src: string,
+  pathImpl: Pick<PlatformPath, 'isAbsolute' | 'parse' | 'sep'> = nodePath
+): string {
   // typeof 守卫（2026-08-04 code review 补）：base 来自 IPC payload，类型标注是编译期约束，
   // 不是运行期保证——一个非串真值（畸形 payload / 未来某次改动传错类型）若只挡在 `!base`，
   // 会一路走到 `isAbsolute(非串)` 抛 TypeError，让整条导出 reject。提前挡在这里，比指望每个
   // 调用方各自守一遍更可靠（IPC handler 侧另有一道同款守卫，双保险不冲突）。
   if (typeof base !== 'string' || !base || typeof src !== 'string' || !src) return src
   if (!src.startsWith('./') && !src.startsWith('../')) return src
-  if (!isAbsolute(base)) return src
+  if (!pathImpl.isAbsolute(base)) return src
+
+  const { sep } = pathImpl
+  // 归一化分隔符：见函数头注释「base 必须先归一化」——只在 win32（sep 为反斜杠）时把正斜杠
+  // 逐字符替换成反斜杠，posix 不动（避免误伤合法含字面反斜杠的文件名）。
+  const normalizedBase = sep === '\\' ? base.replace(/[\\/]/g, sep) : base
 
   // 取 base 的「根」（posix 恒为 '/'；win32 是盘符形如 'C:\\'）与根之后的段。重建绝对路径
   // 时用 root + parts.join(sep)——不能直接对整个 base 按 sep 切分再直接 join，那样 posix
   // 下会丢失前导 '/'（'/a/b'.split('/') 产出 ['', 'a', 'b']，第一个空段过滤掉之后 join 不出
   // 前导斜杠），win32 下则要小心 'C:' 与 'Users' 之间到底该不该多插一个分隔符。用 parse().root
   // 明确切开「根」和「段」，两个平台的重建规则统一成 `root + parts.join(sep)`，不必分平台特判。
-  const root = parsePath(base).root
-  const baseParts = base.slice(root.length).split(sep).filter(Boolean)
+  const root = pathImpl.parse(normalizedBase).root
+  const baseParts = normalizedBase.slice(root.length).split(sep).filter(Boolean)
   // 只放一层上跳：起始层数固定为「base 去掉最后一段」，与渲染侧 resolveRelativeAssetPath
   // 的 floor 同一语义（那边直接对 posixBase 的段数组做同款计算）。
   const floor = Math.max(0, baseParts.length - 1)

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { win32 } from 'node:path'
 import { sanitizeBaseName, resolveWritingAssetPath } from './writingExportPure'
 
 describe('sanitizeBaseName', () => {
@@ -122,5 +123,74 @@ describe('resolveWritingAssetPath', () => {
 
   it('单层 ../ 恰好落在 base 父目录本身（无附加路径段）也算合法', () => {
     expect(resolveWritingAssetPath('/a/b/drafts', '../')).toBe('/a/b')
+  })
+})
+
+// 2026-08-04 第三轮 code review：Windows 上的 base 恒为混合分隔符（writingAssetBaseDir 用
+// `${projectDir}/drafts` 字符串拼接，projectDir 来自 CLI stdout 是原生反斜杠，硬编码的
+// `/drafts` 却是正斜杠）。跑测试的机器几乎总是 posix，host-native `path.isAbsolute('C:\\...')`
+// 在 posix 上恒为 false，任何 win32 专属输入不注入 path.win32 就测不到——这正是上一轮
+// parity 测试漏抓这条回归的原因（那份测试只喂了 posix 绝对路径）。这里显式传 win32 精确
+// 复现目标平台语义，不依赖跑测试的机器是什么系统。
+describe('resolveWritingAssetPath（注入 path.win32，模拟真实 Windows 运行时）', () => {
+  it('纯反斜杠 base（未混合）：单层 .. 解析到兄弟目录', () => {
+    expect(
+      resolveWritingAssetPath('C:\\Users\\k\\稿子\\drafts', '../images/a.png', win32)
+    ).toBe('C:\\Users\\k\\稿子\\images\\a.png')
+  })
+
+  // 【核心回归用例】base 尾段混着正斜杠（writingAssetBaseDir 拼接的真实产物）：修复前的
+  // 段栈实现只按 `\` 切分，`稿子/drafts` 被当成一整段，一个 `..` 多弹一级，产出少一层的
+  // 错误目录（审查者实测：`C:\Users\k\images\a.png`，把 `稿子` 那一级也弹没了）。
+  it('base 尾段混着正斜杠（真实 Windows 上 writingAssetBaseDir 的拼接产物）——单层 .. 仍应只弹一级', () => {
+    expect(
+      resolveWritingAssetPath('C:\\Users\\k\\稿子/drafts', '../images/a.png', win32)
+    ).toBe('C:\\Users\\k\\稿子\\images\\a.png')
+  })
+
+  // 更极端：base 整段全用正斜杠（比如未来某处改用 path.posix 风格拼接）——修复前会把整条
+  // 路径当成一段，结果塌成 `C:/images\a.png` 这种胡乱拼接。
+  it('base 整段全是正斜杠——同样应正确归一后解析', () => {
+    expect(resolveWritingAssetPath('C:/Users/k/proj/drafts', '../images/a.png', win32)).toBe(
+      'C:\\Users\\k\\proj\\images\\a.png'
+    )
+  })
+
+  // UNC 路径（网络共享盘）：双反斜杠前缀是语义的一部分，归一化必须逐字符替换、不能用
+  // `+` 合并连续分隔符，否则会把开头的 `\\` 压成一个 `\`、破坏 UNC 前缀。
+  it('UNC 路径（网络共享盘）：双反斜杠前缀不被破坏', () => {
+    expect(
+      resolveWritingAssetPath('\\\\srv\\share\\稿子\\drafts', '../images/a.png', win32)
+    ).toBe('\\\\srv\\share\\稿子\\images\\a.png')
+  })
+
+  it('两层 .. 在 win32 上同样判越界（与 posix 侧同一条 floor 规则）', () => {
+    expect(
+      resolveWritingAssetPath('C:\\Users\\k\\proj\\drafts', '../../images/a.png', win32)
+    ).toBe('../../images/a.png')
+  })
+
+  it('win32 上非绝对路径（缺盘符）原样返回', () => {
+    expect(resolveWritingAssetPath('Users\\k\\drafts', '../images/a.png', win32)).toBe(
+      '../images/a.png'
+    )
+  })
+})
+
+// 2026-08-04 第三轮 code review：渲染侧 resolveRelativeAssetPath 没有 isAbsolute 守卫（只
+// 检查 `!base`），main 侧 resolveWritingAssetPath 从最初版本起就显式拒绝非绝对 base——这是
+// 一条真实存在、刻意为之的语义不对称（main 侧注释写着「不做无意义的相对解析——项目侧调用方
+// 恒传绝对目录」），不是本轮要修的分歧。之所以从未在真实调用链上炸出问题，是因为
+// writingAssetBaseDir() 的唯一输出形态就是 `${projectDir}/drafts`，而 projectDir 恒为绝对
+// 路径（CLI 侧保证）。这里用测试把这条差异钉下来，不让它在归档时被读成"两侧行为一致"。
+describe('resolveWritingAssetPath 对相对 base 的处理——与渲染侧刻意不同（记录差异，不是待修 bug）', () => {
+  it('main 侧对非绝对 base 一律拒绝、原样返回 src（渲染侧对同样输入会尝试"解析"出一个相对串）', () => {
+    // 对照：src/chat/lib/writingAssetUrl.test.ts 没有对应的"非绝对 base"用例（渲染侧从不
+    // 检查 isAbsolute），若真传一个相对 base 进 resolveRelativeAssetPath，它会把 base 当
+    // 绝对路径一样切分处理、吐出一个不带前导分隔符的相对字符串，而不是原样返回 src——两侧
+    // 对这类输入的处理结论不同，是设计上的不对称，main 更保守。
+    expect(resolveWritingAssetPath('relative/drafts', '../images/a.png')).toBe(
+      '../images/a.png'
+    )
   })
 })

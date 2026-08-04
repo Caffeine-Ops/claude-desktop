@@ -146,7 +146,21 @@ export function resolveRelativeAssetPath(base: string, src: string): string {
  * main 侧 resolveWritingAssetPath）在 base 为空时原样返回 src，未解析的相对路径过不了后续
  * 任何一条 asset 协议判定，最终只是那张图刷不出来／降级文字占位，不会算出一个臆测的、
  * 实际不存在的目录。
+ *
+ * 【2026-08-04 第三轮 code review：拼接分隔符跟随 projectDir 自身风格，不再硬编码正斜杠】
+ * 此前恒为 `` `${projectDir}/drafts` ``——Windows 上 `projectDir` 来自 CLI stdout 是原生
+ * 反斜杠，硬编码的正斜杠拼上去后，main 侧收到的 assetBaseDir 恒为**混合分隔符**（如
+ * `C:\Users\k\稿子/drafts`），main 侧 `resolveWritingAssetPath` 按段切分时一度把这类混合
+ * 尾段错当一整段处理、算错目录（该函数头注释有完整事故记录）。main 侧现在已经能正确归一化
+ * 兜底这种输入，但**从源头就产出单一分隔符风格的字符串**仍然更值得做——不必依赖「下游每一个
+ * 消费者都记得先归一化」这条隐性契约（这正是上一轮出问题的地方）。判定规则：`projectDir`
+ * 含反斜杠且不含正斜杠时判定为纯 win32 路径、跟着用反斜杠拼接；其余情况（posix、已经是
+ * 正斜杠、甚至已经混合）一律用正斜杠——不会比现状更差，且覆盖了 win32 最常见的输入形态。
+ * 渲染侧唯一消费者（WritingPaper.tsx）经 `resolveRelativeAssetPath` 的 `toPosix()` 会把
+ * 任何分隔符风格都归一化，这条改动对它不可见、行为不变。
  */
 export function writingAssetBaseDir(source: WritingDocSource | null): string | undefined {
-  return source && source.kind === 'project' ? `${source.projectDir}/drafts` : undefined
+  if (!source || source.kind !== 'project') return undefined
+  const sep = source.projectDir.includes('\\') && !source.projectDir.includes('/') ? '\\' : '/'
+  return `${source.projectDir}${sep}drafts`
 }

@@ -111,4 +111,19 @@ describe('writingAssetBaseDir', () => {
   it('source 为 null（尚未识别出写作项目）返回 undefined', () => {
     expect(writingAssetBaseDir(null)).toBeUndefined()
   })
+
+  // 2026-08-04 第三轮 code review：拼接分隔符跟随 projectDir 自身风格，不再硬编码正斜杠
+  // ——否则 win32 上 `${projectDir}/drafts` 会拼出混合分隔符字符串，main 侧一度因此算错
+  // 目录（见 main 侧 resolveWritingAssetPath 头注释的完整事故记录）。
+  it('projectDir 是纯 win32 反斜杠路径时，拼接也用反斜杠（不产出混合分隔符）', () => {
+    expect(writingAssetBaseDir({ kind: 'project', projectDir: 'C:\\Users\\k\\稿子' })).toBe(
+      'C:\\Users\\k\\稿子\\drafts'
+    )
+  })
+
+  it('projectDir 已含正斜杠（哪怕同时也有反斜杠）时，仍用正斜杠拼接——不比现状更差', () => {
+    expect(writingAssetBaseDir({ kind: 'project', projectDir: 'C:/Users/k/稿子' })).toBe(
+      'C:/Users/k/稿子/drafts'
+    )
+  })
 })
