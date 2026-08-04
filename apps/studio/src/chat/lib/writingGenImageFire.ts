@@ -43,6 +43,40 @@ export function buildWritingGenImagePrompt(
 }
 
 /**
+ * 【2026-08 终审 #2】判定这一轮 `read.sections` 是不是「可疑地读空」——scan 阶段已经
+ * 证明 drafts/ 下有文件（`scanFilesCount > 0`），但 read 阶段却一节都没读到
+ * （`sectionsCount === 0`）。这个组合只有一种解释：`readWritingSections` 内部对
+ * `readdirSync(drafts)` 抛错时静默兜底成 `{ ok: true, sections: [] }`
+ * （`writingProject.ts:230`，与轮询孤儿清扫的 M-1 那条窄缝同源）——不是「项目真的
+ * 没有内容」，而是这一轮读盘本身不可信（网络共享盘抖动、目录正被 rename）。
+ *
+ * `useWritingPoll` 的 tick() 用它来决定这一轮要不要放行 `claimSeedSlot`：可疑的
+ * 空读不能消耗 seed 名额——`claimSeedSlot` 只领一次，若在这种「读空」的假状态下
+ * 被领走、又只 seed 了个空，往后文件正常回来时 `claimSeedSlot` 已经返回过 `false`、
+ * 没人再补种 manual 哨兵，已有的指令块会被稳定判据当成「从没见过的新指令」两轮后
+ * 整篇重新发起、重复扣费——与「表被清空但没人补种哨兵」这条本分支反复踩过的根因
+ * 同构，只是这次的「清空」是「从没成功写入过」而不是「写入后被清掉」。
+ *
+ * 【不能只用 `sectionsCount > 0` 单独判断】新项目第一次真的只写出一节时，
+ * `sectionsCount` 也是从 0 变成 >0 的这个瞬间——若因为「非空」就跳过 seed，等于把
+ * AI 刚写完的第一条指令块直接标成 manual，这张图永远不会自动出，功能反而废掉。
+ * 必须用 scan 阶段（`scanFilesCount`）与 read 阶段（`sectionsCount`）**两次独立观察
+ * 之间的不一致**做判据，而不是只看某一次观察的绝对值——真·新项目是两次观察都是 0
+ * （一致，放行 seed，seed 到的是空集合，无害）；「已有项目但这轮读空」是两次观察
+ * 不一致（scan 非 0、read 是 0，拦住）。
+ *
+ * 【这条判据不区分什么】scan 与 read 是两次独立的 IPC 往返（中间隔着一次真实的
+ * await），理论上「scan 那一刻文件还没创建、read 那一刻文件已经创建完但内容读
+ * 失败」这种两次观察之间状态本身在变的窄缝依然可能通过（`scanFilesCount === 0`
+ * 但 read 其实该有内容却读失败）——代价是把这一轮真实的新内容错误当成「新项目」
+ * 提前 seed 成 manual，后果是这条新指令退化成「手动点一下才出图」，不是重复扣费，
+ * 权衡后不额外处理。
+ */
+export function isReadSuspiciouslyEmpty(scanFilesCount: number, sectionsCount: number): boolean {
+  return scanFilesCount > 0 && sectionsCount === 0
+}
+
+/**
  * 本次发起时项目是否仍然有效：① 仍是 project 模式且 projectDir 没变——网络往返期间
  * 用户可能切走了写作项目（甚至切成了另一份 project）；② 目标节仍在当前 sections 里
  * ——节可能已被删除/重命名。两条都不满足就不写表：生成已经完成（图已经落盘在旧项目的

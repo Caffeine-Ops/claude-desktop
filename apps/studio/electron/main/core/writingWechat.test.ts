@@ -214,6 +214,49 @@ describe('markdownToWechatHtml · genimage/mermaid 占位框（对齐 export.py 
   })
 })
 
+// 终审 #3：断行只认 LF/CRLF 的既有代码（`markdown.replace(/\r\n/g,'\n').split('\n')`）
+// 与 export.py 的 `splitlines()` 认的断行字符集不对齐——后者还认单独的 \r、\v、\f、\x85、
+// U+2028（LINE SEPARATOR）、U+2029（PARAGRAPH SEPARATOR）。这条断行逻辑本身是本任务
+// 未改动的既有代码，但「围栏源码绝不进成品」这条保证是本任务新加的，稿子里混进这类
+// 字符（U+2028/U+2029 从网页/JSON 复制粘贴很常见）会让整段围栏被当成一行文本，
+// FENCE_OPEN 逐行匹配不上开合标记，围栏源码原样渲进 <p>，恰是要防的事。
+describe('markdownToWechatHtml · 终审 #3 断行需要认识 LF/CRLF 之外的行终止符', () => {
+  it('正文夹带 U+2028（LINE SEPARATOR）时，genimage 围栏依然被识别成占位框，源码不泄漏进 <p>', () => {
+    const md = ['正文第一行' + '\u2028' + '```genimage', '图说: 封面配图', '一只猫在写代码', '```'].join('\n')
+    const html = markdownToWechatHtml(md, FALLBACK_WECHAT_STYLE)
+    expect(html).toContain('正文第一行')
+    expect(html).toContain('封面配图')
+    expect(html).toContain('待出图')
+    expect(html).not.toContain('```')
+    expect(html).not.toContain('一只猫在写代码')
+  })
+
+  it('正文夹带 U+2029（PARAGRAPH SEPARATOR）时同样正确断行成两段', () => {
+    const md = '正文' + '\u2029' + '下一段'
+    const html = markdownToWechatHtml(md, FALLBACK_WECHAT_STYLE)
+    expect(html).toContain('正文')
+    expect(html).toContain('下一段')
+    expect((html.match(/<p/g) ?? []).length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('单独出现的 \\r（老式 Mac 断行，非 \\r\\n）也能正确拆行', () => {
+    const md = '第一行\r第二行'
+    const html = markdownToWechatHtml(md, FALLBACK_WECHAT_STYLE)
+    expect(html).toContain('第一行')
+    expect(html).toContain('第二行')
+  })
+
+  it('\\r\\n 依然被当作单个断行处理，不会被拆成一个空段落', () => {
+    // 回归防呆：新正则用 `\r\n|[...]` 交替匹配，`\r\n` 分支必须排在字符类之前，
+    // 否则会被拆成 \r 和 \n 两段、之间插入一个空字符串（多出一段空 <p>）。
+    const md = '第一行\r\n第二行'
+    const html = markdownToWechatHtml(md, FALLBACK_WECHAT_STYLE)
+    expect(html).toContain('第一行')
+    expect(html).toContain('第二行')
+    expect((html.match(/<p/g) ?? []).length).toBe(2)
+  })
+})
+
 describe('loadWechatStyle', () => {
   it('读到真实的 wechat-default 样式 JSON（字段名对齐 export.py 的 schema）', () => {
     const style = loadWechatStyle('wechat-default')

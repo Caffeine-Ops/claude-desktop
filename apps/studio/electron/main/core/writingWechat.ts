@@ -172,7 +172,21 @@ const DEFAULT_FIGCAPTION_STYLE = 'display:block;text-align:center;font-size:13px
  * 单测里精简过的 style 对象，容错比对齐 Python `KeyError` 更适合这层。
  */
 export function markdownToWechatHtml(markdown: string, style: Record<string, string>): string {
-  const lines = markdown.replace(/\r\n/g, '\n').split('\n')
+  // 【2026-08 终审 #3】断行必须认 Python `str.splitlines()` 认的那一整套，不能只认 LF/CRLF。
+  // 旧实现 `replace(/\r\n/g,'\n').split('\n')` 只识别 `\n`/`\r\n`；`export.py` 侧的
+  // `splitlines()` 还认单独的 `\r`、`\v`（垂直制表符）、`\f`（换页符）、`\x85`（NEL）、
+  // U+2028（LINE SEPARATOR）、U+2029（PARAGRAPH SEPARATOR）——后两个从网页/JSON
+  // 复制粘贴进来的文本里并不罕见。**这两个字符本身是 ECMAScript 语法认定的行终止符，
+  // 连 `//` 单行注释都会被它们截断在原地**——本注释只能用 `U+2028` 这种转义写法指代它们，
+  // 不能把字面字符直接写进注释文本（第一版实现踩过这个坑：字面字符出现在注释里，
+  // 把这条注释自身从那里截断，之后的文字被解析器当成代码，整个文件语法错误）。
+  // 若稿子里混进这类字符，genimage 围栏所在的整段
+  // 会被当成一行，`FENCE_OPEN` 逐行匹配不上开合标记 → 占位框机制失效 → 围栏源码原样
+  // 当成正文段落渲进 `<p>`，直接粘进公众号——这正是本任务新加的「围栏源码绝不进成品」
+  // 这条保证要防的事，这行断行逻辑本身是未改动的既有代码，但现在才真正扛着这条保证。
+  // `\r\n` 分支必须放在字符类之前：交替匹配从左到右尝试，先吃两字符的 CRLF 才不会被
+  // 拆成两段空行，与旧实现「先合并 CRLF 再切」的效果一致。
+  const lines = markdown.split(/\r\n|[\n\r\v\f\x85\u2028\u2029]/)
   const units = splitBlocks(lines)
   const out: string[] = []
   let inList = false

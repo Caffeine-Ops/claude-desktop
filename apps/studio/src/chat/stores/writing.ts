@@ -17,7 +17,11 @@ import {
 import { pushBounded } from '../lib/writingEdit'
 import type { WritingRevisionTarget } from '../lib/writingRevision'
 import type { GenImageJob, ImageReview } from '../lib/imageReviewTypes'
-import { autoFireWritingGenImages, resetWritingGenImageAutoFireState } from '../lib/writingGenImageFire'
+import {
+  autoFireWritingGenImages,
+  isReadSuspiciouslyEmpty,
+  resetWritingGenImageAutoFireState
+} from '../lib/writingGenImageFire'
 import { useChatStore } from './chat'
 
 /** 轮询间隔。2s 是「AI 写完一节到你看见」的上限，对人眼足够；再密只是空转 IPC。 */
@@ -650,7 +654,18 @@ export function useWritingPoll(active: boolean): void {
       lastSignature.current = signature
       // 见 seededProjects / claimSeedSlot 顶注：只在「这个项目本次挂载期间还没
       // seed 过」时才登记 manual 哨兵。
-      if (claimSeedSlot(source)) {
+      //
+      // 【2026-08 终审 #2】`claimSeedSlot` 不能无条件在这里领走名额——`read.sections`
+      // 可能是这一轮读盘瞬时失败（`readdirSync(drafts)` 抛错）静默兜底出的空数组，
+      // 与「项目本来就没有文件」在这里长得一模一样（都是 `read.ok === true` 且
+      // `sections === []`）。若不加区分地领走名额，名额在这一轮被空耗（seed 到的是
+      // 空集合），往后 sections 恢复正常时 `claimSeedSlot` 已经返回过一次 `false`，
+      // 没人再补种 manual 哨兵——已有的指令块被稳定判据当成「从没见过的新指令」，
+      // 两轮之后整篇重新发起、重复扣费（cap 张以内）。判据与理由见
+      // `isReadSuspiciouslyEmpty` 的完整注释；`scan.files.length` 取自本轮 tick()
+      // 前面那次 scan 调用的结果，与 `read.sections` 是两次独立观察，用它们之间的
+      // 不一致做判据，不是只看 `read.sections.length` 的绝对值。
+      if (!isReadSuspiciouslyEmpty(scan.files.length, read.sections.length) && claimSeedSlot(source)) {
         useWritingStore.getState().seedManualGenImageJobs(read.sections)
       }
       useWritingStore.getState().setSections(read.sections)

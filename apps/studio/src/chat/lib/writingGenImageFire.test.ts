@@ -5,6 +5,7 @@ import {
   buildWritingGenImagePrompt,
   autoFireWritingGenImages,
   resetWritingGenImageAutoFireState,
+  isReadSuspiciouslyEmpty,
   MAX_AUTO_FIRE_PER_WRITING_PROJECT
 } from './writingGenImageFire'
 import { useWritingStore, claimSeedSlot, resetSeededProjectsState } from '../stores/writing'
@@ -472,5 +473,96 @@ describe('autoFireWritingGenImages · imageReviews 孤儿清扫（复审 M-1/M-4
     autoFireWritingGenImages()
     await flush()
     expect(useWritingStore.getState().imageReviews.length).toBe(1)
+  })
+})
+
+// 终审 #1：`undoLast` 是 WritingDocPanel.tsx 里的 React 回调，本仓库的测试目录
+// （electron/、src/chat/lib、src/chat/composer）够不到组件文件，测不了 undoLast 本身。
+// 但它依赖的机制——"撤销把指令块写回正文后，必须立刻用 seedManualGenImageJobs 补种
+// manual 哨兵，否则稳定判据会把它当新指令重新发起"——是纯 store 操作，可以在这里直接
+// 复刻 undoLast 成功分支里新加的那一行调用，验证这个机制本身成立。
+describe('终审 #1 回归：应用/丢弃 → 撤销后补种哨兵，不会自动重新出图、再扣一次费', () => {
+  it('指令块被应用后消失、孤儿清扫删掉 job 键；撤销把它写回正文时若不补种，会被当新指令重新发起', async () => {
+    const md = directiveBlock(0)
+    const [d] = parseGenImageDirectives(md)
+    const key = genImageDirectiveKey('1-a.md', d.raw, d.occurrence)
+
+    // 第 1 步：正常发起一次，模拟指令块第一次被看到、稳定两轮后自动出图——
+    // 对应用户看到审阅卡、点「应用」之前的状态。
+    useWritingStore.getState().setSections([section('1-a.md', md)])
+    autoFireWritingGenImages()
+    autoFireWritingGenImages()
+    await flush()
+    expect(calls.length).toBe(1)
+
+    // 第 2 步：模拟「应用」成功——WritingPaper.applyGenImageReview 把指令块换成了
+    // `![图说](../images/x.png)`，指令块从正文里消失。下一轮轮询的孤儿清扫会把这个
+    // 键从 genImageJobs 里删掉，这一步本身是清扫机制的正常动作，不是 bug。
+    useWritingStore.getState().setSections([section('1-a.md', '![图说](../images/x.png)')])
+    autoFireWritingGenImages()
+    expect(useWritingStore.getState().genImageJobs[key]).toBeUndefined()
+
+    // 第 3 步：模拟「撤销」——undoLast 把 pushUndo 存的旧版正文（entry.markdown，仍
+    // 带着指令块）重新写盘。指令块原样回到了正文里，但 genImageJobs 表对这个键毫无
+    // 记忆（上一步刚清掉）。
+    useWritingStore.getState().setSections([section('1-a.md', md)])
+
+    // 【本条回归钉住的行为】undoLast 成功分支里新加的那一行：commitSection 成功后
+    // 立刻对 entry.markdown 补种 manual 哨兵。这里直接调用同一个 store 方法
+    // （WritingDocPanel.tsx 那一行就是这个调用），验证它确实能挡住重新发起。
+    useWritingStore.getState().seedManualGenImageJobs([section('1-a.md', md)])
+    expect(useWritingStore.getState().genImageJobs[key]?.status).toBe('manual')
+
+    // 第 4 步：稳定判据走完两轮——如果第 3 步没有补种（旧行为，undoLast 全程不碰
+    // genImageJobs），这里会把「重新出现」的指令块当成「从没见过的新指令」再次发起，
+    // calls.length 会变成 2，等价于对同一张图重复扣费。
+    autoFireWritingGenImages()
+    autoFireWritingGenImages()
+    await flush()
+    expect(calls.length).toBe(1)
+  })
+})
+
+// 终审 #2：`useWritingPoll` 是 React hook（用到 useEffect/useRef），本仓库没有
+// renderHook 一类的测试设施，够不到它本身。但它 tick() 里那句
+// `if (!isReadSuspiciouslyEmpty(...) && claimSeedSlot(source)) seedManualGenImageJobs(...)`
+// 是纯函数 + 两个已导出的 store 操作的组合，这里逐字复刻同一行验证名额不会被空读消耗。
+describe('终审 #2 回归：claimSeedSlot 名额不被一次空读消耗', () => {
+  it('scan 非空但 read 读空的这一轮不该领走 seed 名额，文件正常回来后仍能正确补种', async () => {
+    const A = { kind: 'project' as const, projectDir: PROJECT_DIR }
+    const md = directiveBlock(0)
+    useWritingStore.getState().setSource(A)
+
+    // 与 stores/writing.ts tick() 里那一行逐字同构，避免测试自己另造一份可能漂移的判断。
+    function maybeSeed(scanFilesCount: number, sections: WritingSection[]): void {
+      if (!isReadSuspiciouslyEmpty(scanFilesCount, sections.length) && claimSeedSlot(A)) {
+        useWritingStore.getState().seedManualGenImageJobs(sections)
+      }
+    }
+
+    // tick1：模拟「渲染进程刚启动、用户打开一份已有配图指令的项目，恰好撞上 drafts/
+    // 短暂不可读」——scan 看到 1 个文件，但 read 阶段（readdirSync 抖动）读空。
+    // 修复前：claimSeedSlot 在这里被无条件领走，名额已耗尽、seed 到的却是空集合。
+    // 修复后：可疑空读短路掉 claimSeedSlot 调用，名额留到下一轮。
+    maybeSeed(1, [])
+
+    // tick2：文件正常回来，read 读到真实内容——这一节本来就带着一个 genimage 指令块
+    // （模拟「已有配图指令的项目被重新打开」这个失败场景的前提）。
+    maybeSeed(1, [section('1-a.md', md)])
+    useWritingStore.getState().setSections([section('1-a.md', md)])
+
+    const [d] = parseGenImageDirectives(md)
+    const key = genImageDirectiveKey('1-a.md', d.raw, d.occurrence)
+    // 修复后：名额在 tick2 被正确领到，指令块补种成了 manual 哨兵。
+    // 修复前：名额已经在 tick1 被空耗，这里查不到任何记录（undefined）。
+    expect(useWritingStore.getState().genImageJobs[key]?.status).toBe('manual')
+
+    // 稳定判据走两轮：manual 哨兵应挡住幂等守卫（守卫③），不会被当成「从没见过的新
+    // 指令」重新发起。修复前的行为（没有哨兵）会让这里 calls.length 变成 1——对一个
+    // 项目重新打开时本就已经存在的指令块，凭空多生成一次、多扣一次费。
+    autoFireWritingGenImages()
+    autoFireWritingGenImages()
+    await flush()
+    expect(calls.length).toBe(0)
   })
 })

@@ -27,6 +27,7 @@ import { replaceBlockAt } from '../../lib/writingEdit'
 import { writingStyleFor } from '../../lib/writingGenreStyle'
 import { renderProposalPdfHtml } from '../../lib/renderProposalPdfHtml'
 import { deriveWritingExportBaseName } from '../../lib/writingExportInput'
+import { buildWechatCopyMsg } from '../../lib/writingWechatCopyMsg'
 import { writingAssetBaseDir } from '../../lib/writingAssetUrl'
 import { extractMermaidBlocks, renderMermaidImageMap } from '../../lib/mermaidRender'
 // 顶栏图标与方案面板同源（proposalIcons 是历史位置，不代表只归方案用）——两处右栏
@@ -350,6 +351,29 @@ export function WritingDocPanel(): React.JSX.Element | null {
       // 撤销失败不把 entry 塞回栈：塞回去用户会以为还能再撤一次，而失败原因（这一节被
       // 改过 / 文件没了）多半下一次还在，只是让他再撞一次。冲突提示已经说清了发生什么。
       if (outcome !== 'ok') return
+      /**
+       * 【终审 #1】`entry.markdown` 是「应用/丢弃」成功前 `pushUndo` 存的那一版——
+       * 恰好就是指令块**被删掉之前**的正文（见 WritingPaper.tsx 的 applyGenImageReview /
+       * discardGenImageReview：两处都在移除指令块、写盘成功后才 `pushUndo(before)`）。
+       * 撤销把它写回盘上，指令块原样重新出现在正文里。
+       *
+       * 但 `genImageJobs` 那张表不认识这次「复活」：应用/丢弃成功后，指令块已经从正文里
+       * 消失，下一轮轮询的孤儿清扫（`autoFireWritingGenImages` 里按 validKeys 做差集）
+       * 会把这个键从表里删掉——这是清扫机制的正常动作，删得没错，因为那一刻指令确实
+       * 已经不在正文里了。`undoLast` 全程不碰 `genImageJobs`，若到此为止，撤销之后
+       * 稳定判据会把这段「重新出现」的指令块当成「从没见过的新指令」，两轮之后自动
+       * 重新发起——对一张已经应用过（或已经明确丢弃过）的指令重新出图、重新扣费，
+       * 「丢弃 → 撤销」还会再弹一张新审阅卡，比什么都没做过更糟。
+       *
+       * 修法：对 `entry.markdown` 单独跑一次 `seedManualGenImageJobs`（复用它的 `??=`
+       * 语义——只在键不存在时补 manual 哨兵，不会打扰其他节的记录，也不会覆盖这一节
+       * 里其他仍在 pending/done 的键）。等价于「补种」动作的单节版：这个键刚被清空，
+       * 立刻由同一处逻辑（这里）重新登记，不留「表空了没人补种」的窗口——与本分支反复
+       * 踩过的那条根因教训对齐（见 progress.md）。
+       */
+      useWritingStore
+        .getState()
+        .seedManualGenImageJobs([{ name: entry.sectionName, markdown: entry.markdown, mtimeMs: sec.mtimeMs }])
     } finally {
       setUndoing(false)
     }
@@ -650,11 +674,11 @@ export function WritingDocPanel(): React.JSX.Element | null {
           'text/plain': new Blob([r.html], { type: 'text/plain' })
         })
       ])
-      setExportMsg(
-        r.styleFallback
-          ? { tone: 'muted', text: '已复制（样式文件未找到，用了内置样式）' }
-          : { tone: 'ok', text: '已复制，可粘贴进公众号编辑器' }
-      )
+      // 【终审 #4】剪贴板的 text/html flavor 没有 base URL，正文里 `![...](../images/x.png)`
+      // 这种相对路径的图在公众号编辑器里解析不到、会被静默丢弃——绿色的「已复制」成功提示
+      // 会掩盖这个事实。`buildWechatCopyMsg` 数出正文里的配图张数，有图时把提示降级成
+      // 「已复制 + 需要手动上传」的如实告知，见该函数顶注的完整推演。
+      setExportMsg(buildWechatCopyMsg(markdown, r.styleFallback))
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err)
       console.error('[writing-export wechat]', err)
