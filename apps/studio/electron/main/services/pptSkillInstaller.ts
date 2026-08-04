@@ -5,7 +5,8 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { utilityProcess } from 'electron'
 
-import { resolveBundledPythonHome } from '../core/cliDetect'
+import { resolveEffectivePythonHome } from '../core/cliDetect'
+import { ensureRuntimeComponents } from './componentInstaller'
 import { broadcastPptSkillStatus, recycleAllEnginesRuntimes } from '../tabRegistry'
 import {
   PPT_SKILL_LOG_TAIL_LINES,
@@ -59,6 +60,16 @@ const DEFAULT_BASE_URL = 'https://cowork.cntcn.com/downloads/skills'
 const INSTALL_META = '.ppt-skill.json'
 
 const SKILL_ID = 'ppt-creator'
+
+/**
+ * preparePython 的输出停滞看门狗（毫秒）：pip 正常安装持续吐行
+ * （PYTHONUNBUFFERED 已设），静默这么久只有两种解释——网络挂死，或者退化成了
+ * python-runtime 组件本来要躲开的源码编译。比 componentWorker 下载看门狗的
+ * 45s 宽松，因为 pip 解析依赖树本身有几十秒的合法静默。
+ */
+const PY_STALL_TIMEOUT_MS = 120_000
+/** 绝对上限：逐行慢速输出会骗过停滞检测，这道是第二重兜底。 */
+const PY_HARD_TIMEOUT_MS = 15 * 60_000
 
 interface RemoteManifest {
   id: string
@@ -294,7 +305,16 @@ function downloadAndExtract(manifest: RemoteManifest): Promise<boolean> {
  * 失败不算致命：venv 也可能在会话里由 skill 自己重试，所以这里降级为「已就绪
  * 但带一条错误说明」而不是把整个功能判死。
  */
-function preparePython(version: string): Promise<PptSkillStatus> {
+async function preparePython(version: string): Promise<PptSkillStatus> {
+  // 与运行时组件的 python-runtime ensure 汇合：任何触发路径（启动预热/用户点
+  // PPT 入口/重试）都要等它跑完（下载完成，或判定系统 python 可用）再决定
+  // base 解释器——否则会在下载还没完成前就拿到 pythonHome=null、回退系统
+  // python，若用户机器是 3.13/3.14 就直接踩进 python-runtime 本来要躲开的
+  // 源码编译卡死坑（2026-08 胶囊「一直显示」的根因之一）。
+  // ensureRuntimeComponents 内部单飞，这里只是 join，已在跑的那次不会被
+  // 重复触发；已经 ready（不管是下载来的还是检测到的系统 python）时秒过。
+  await ensureRuntimeComponents()
+
   return new Promise<PptSkillStatus>((resolve) => {
     const skillDir = pptSkillDir()
     const isWin = process.platform === 'win32'
@@ -306,7 +326,7 @@ function preparePython(version: string): Promise<PptSkillStatus> {
     }
 
     setPhase('preparing-python', { installedVersion: version, detail: '正在启动环境准备…' })
-    const pythonHome = resolveBundledPythonHome()
+    const pythonHome = resolveEffectivePythonHome()
     const env = {
       ...process.env,
       ...(pythonHome ? { PPT_MASTER_PYTHON_HOME: pythonHome } : {}),
@@ -314,11 +334,18 @@ function preparePython(version: string): Promise<PptSkillStatus> {
       // 块缓冲，用户盯着一个不动的界面等几分钟，最后所有输出一次性涌出来。
       PYTHONUNBUFFERED: '1'
     }
-    // .sh 必须 source（它靠 export PPT_PY 回灌调用方 shell），直接执行拿不到
-    // 结果——但这里只关心副作用（venv 建好），所以 source 完即可退出。
-    const child = isWin
-      ? spawn(script, [], { env, windowsHide: true })
-      : spawn('bash', ['-c', `source ${JSON.stringify(script)}`], { env })
+
+    let settled = false
+    let stallTimer: ReturnType<typeof setInterval> | null = null
+    let hardTimer: ReturnType<typeof setTimeout> | null = null
+    let lastOutputAt = Date.now()
+
+    const clearWatchdogs = (): void => {
+      if (stallTimer) clearInterval(stallTimer)
+      if (hardTimer) clearTimeout(hardTimer)
+      stallTimer = null
+      hardTimer = null
+    }
 
     let stderr = ''
     // 行缓冲：chunk 边界不等于行边界，直接 split 会把一行劈成两半（尤其
@@ -348,27 +375,19 @@ function preparePython(version: string): Promise<PptSkillStatus> {
     }
 
     const feed = (chunk: Buffer): void => {
+      lastOutputAt = Date.now()
       pending += chunk.toString()
       const parts = pending.split('\n')
       pending = parts.pop() ?? ''
       for (const line of parts) onLine(line)
     }
 
-    child.stdout?.on('data', feed)
-    child.stderr?.on('data', (b: Buffer) => {
-      stderr += b.toString()
-      // stderr 同样进日志尾巴：pip 的报错、编译警告都走这里，只收 stdout
-      // 会让失败现场在 UI 上一片空白。
-      feed(b)
-    })
-    child.on('error', (err) => {
-      finish(`Python 环境准备失败：${err.message}`)
-    })
-    child.on('exit', (code) => {
-      finish(code === 0 ? null : `Python 环境准备失败（退出码 ${code}）：${stderr.slice(-300)}`)
-    })
-
+    /** 幂等收敛：error/exit/看门狗/spawn 同步 throw 四个入口都可能调用它，
+     *  只有第一次真正生效——否则 setStatus 会被后到者的文案覆盖。 */
     function finish(error: string | null): void {
+      if (settled) return
+      settled = true
+      clearWatchdogs()
       // 冲掉行缓冲里最后一截没换行的输出（脚本正常结束时常留一行没 \n）。
       if (pending.trim().length > 0) onLine(pending)
       pending = ''
@@ -384,6 +403,64 @@ function preparePython(version: string): Promise<PptSkillStatus> {
       })
       resolve(status)
     }
+
+    /** 看门狗触发时杀掉整个进程树，不只是直接子进程——mac 侧 bash 之下还挂着
+     *  pip/编译器，只杀 bash 会留下孤儿进程继续烧 CPU 到用户手动结束任务。 */
+    function killProcessTree(child: ReturnType<typeof spawn>): void {
+      try {
+        if (isWin) {
+          spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true })
+        } else if (child.pid) {
+          process.kill(-child.pid, 'SIGKILL')
+        }
+      } catch {
+        /* 进程可能已经自己退出了，忽略 */
+      }
+    }
+
+    let child: ReturnType<typeof spawn>
+    try {
+      // Windows 的 .cmd 不能裸 spawn：Node ≥18.20.2（CVE-2024-27980 收紧后）
+      // 禁止不带 shell 执行 .cmd/.bat，会**同步 throw** EINVAL（不是 emit
+      // 'error'！）——本仓 cliDetect.ts 的 resolveSystemClaudeJsEntry 早就
+      // 踩过同一个坑并写了注释，这里当时没跟上，是 Windows 上胶囊永远不消失
+      // 的确定性根因。用 cmd.exe /c 显式起一层 shell 解决。
+      //
+      // mac 的 .sh 必须 source（它靠 export PPT_PY 回灌调用方 shell），直接
+      // 执行拿不到结果——但这里只关心副作用（venv 建好），source 完即可退出。
+      // detached:true 让它自成进程组，供上面的看门狗连子子进程一起杀。
+      child = isWin
+        ? spawn(process.env.ComSpec ?? 'cmd.exe', ['/c', script], { env, windowsHide: true })
+        : spawn('bash', ['-c', `source ${JSON.stringify(script)}`], { env, detached: true })
+    } catch (err) {
+      finish(`Python 环境准备失败：${err instanceof Error ? err.message : String(err)}`)
+      return
+    }
+
+    stallTimer = setInterval(() => {
+      if (Date.now() - lastOutputAt > PY_STALL_TIMEOUT_MS) {
+        killProcessTree(child)
+        finish('Python 环境准备超时（输出停滞超过 2 分钟），已中止。可稍后在 PPT 入口重试。')
+      }
+    }, 10_000)
+    hardTimer = setTimeout(() => {
+      killProcessTree(child)
+      finish('Python 环境准备超时（超过 15 分钟），已中止。可稍后在 PPT 入口重试。')
+    }, PY_HARD_TIMEOUT_MS)
+
+    child.stdout?.on('data', feed)
+    child.stderr?.on('data', (b: Buffer) => {
+      stderr += b.toString()
+      // stderr 同样进日志尾巴：pip 的报错、编译警告都走这里，只收 stdout
+      // 会让失败现场在 UI 上一片空白。
+      feed(b)
+    })
+    child.on('error', (err) => {
+      finish(`Python 环境准备失败：${err.message}`)
+    })
+    child.on('exit', (code) => {
+      finish(code === 0 ? null : `Python 环境准备失败（退出码 ${code}）：${stderr.slice(-300)}`)
+    })
   })
 }
 

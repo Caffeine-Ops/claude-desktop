@@ -563,10 +563,12 @@ export function EntryShell({
             删多标签栏后画布面顶部彻底空了、与聊天面「图标+标题」的稳定顶
             锚点分家，切两面顶部重量跳变（"像两个应用"的最后一处结构不对
             称）。这里补一条同规格的轻量标题栏——像素照抄 chat：h-[46px] +
-            border-b border-border/55 + 收起态 pl-208 让红绿灯（与 ThreadView
-            :1252、canvas tab 栏退役前的 --app-chrome-traffic-space:190 同一
-            208 基线，改这里必同步那两处）。常驻所有 entry 子视图（首页/项目
-            /插件/设计体系），让画布面切子视图时顶部不跳。
+            border-b border-border/55 + 收起态左净空引用与 ThreadView 同一枚
+            `--shell-collapsed-top-inset` token（2026-08 收敛，定义与换算见
+            globals.css `.window-drag-strip` 之后的注释块；canvas tab 栏退役前
+            的 --app-chrome-traffic-space 也随它 calc 派生，不必再各自同步字面
+            量）。常驻所有 entry 子视图（首页/项目/插件/设计体系），让画布面
+            切子视图时顶部不跳。
             **不声明 drag**（2026-07-14 拖拽机制重构定稿）：窗口拖拽由根
             .window-drag-strip 统一负责，本 nav 是纯静态图标+标题、无交互元素，
             落在 strip 的 drag 上天然可拖、无需挖洞、也不用自带 drag。此前一版
@@ -574,7 +576,7 @@ export function EntryShell({
             穿 strip + region-refresh 脉冲竞态卡死」，已由「隐藏面整棵 app-region:
             initial（非 none，none 非法静默无效）+ 删所有脉冲」根治（见 globals.css .surface-inactive / .window-
             drag-strip 注释）——strip 恒定生效，本 nav 回归纯静态、不再自带 drag。 */}
-        <div className="flex h-[46px] shrink-0 select-none items-center border-b border-border/55 [body[data-rail-collapsed]_&]:pl-[208px]">
+        <div className="flex h-[46px] shrink-0 select-none items-center border-b border-border/55 [body[data-rail-collapsed]_&]:pl-[var(--shell-collapsed-top-inset)]">
           <div className="flex h-full w-full min-w-0 items-center gap-2 px-4">
             <ImageIcon
               aria-hidden

@@ -702,16 +702,17 @@ code:where(:not([data-slot], .chat-app *)) {
   overflow: hidden;
 }
 /* 红绿灯/图标排让位（顶栏退役后接管，2026-07-14）——
-   展开态：rail（244px）把内容整体推开，红绿灯（窗口 x≈30~90，tabRegistry
-   trafficLightPosition {x:30,y:17}）落在 rail 头部、收起态图标排（RailShell
-   fixed 展开/新建，x≈100~184）不渲染，内容面够不到二者 → 无需让位。
+   展开态：rail（244px）把内容整体推开，红绿灯（mac 窗口 x≈30~90，tabRegistry
+   trafficLightPosition {x:30,y:17}，win32/linux 无）落在 rail 头部、收起态
+   图标排（RailShell fixed 展开/新建）不渲染，内容面够不到二者 → 无需让位。
    收起态（body[data-rail-collapsed]）：内容顶到窗口左缘，顶部左贴边的视图
    header 会撞红绿灯 + 图标排（2026-07-13「canvas 面漏配被红绿灯压住」错误库
    同款坑）。让位量 = --canvas-collapsed-inset，默认 0（首页等内容居中/靠下
    的视图不受影响），**顶部有左贴边 header 的视图各自 opt-in 声明该变量**
-   （如 marketplace，见 plugins 样式）。基线 208px 与 chat ThreadView 收起态
-   pl-[208px]、被删顶栏的 --app-chrome-traffic-space:190px 同源（图标排右缘
-   184 + 呼吸），改一处必同步另两处。 */
+   （如 marketplace，见 plugins 样式）。opt-in 时引用 globals.css 的
+   `--shell-collapsed-top-inset` token（2026-08 单一事实源，与 chat
+   ThreadView 收起态 pl 同一枚变量，见 globals.css `.window-drag-strip`
+   之后的注释块），不要再手写字面量。 */
 body[data-rail-collapsed] .workspace-shell__body {
   padding-left: var(--canvas-collapsed-inset, 0);
 }
@@ -765,12 +766,16 @@ body[data-rail-collapsed] .workspace-shell__body {
 }
 /* 收起态红绿灯/图标排让位（顶栏退役后接管，2026-07-14）——多标签栏退役前，
    返回栏在其下方 46px、红绿灯（y17~37）够不到；退役后返回栏上移到 y0，收起
-   态会撞红绿灯 + 图标排（x≈30~184）。用返回栏自带的 .app-chrome-traffic-space
-   flex spacer 把返回箭头右推 190px（与被删多标签栏 base.css 收起态同值、与
-   chat ThreadView 收起态 pl-[208px] 同源；改一处同步另两处）。展开态 rail
-   已把内容整体推开、spacer 保持 0。 */
+   态会撞红绿灯 + 图标排。用返回栏自带的 .app-chrome-traffic-space flex
+   spacer 把返回箭头右推。
+   2026-08 收敛：190px 改为 calc(--shell-collapsed-top-inset − 18px)，跟随
+   globals.css 的单一事实源 token（18px = 208 基线与本值的既有差，header 自身
+   padding 造成，calc 只是把这份差值显式化，不改变 mac 上的实际像素）——
+   win32/linux 下 token 是 120px，本值自动得 102px，不用再手动同步。定义与
+   换算依据见 globals.css `.window-drag-strip` 之后的注释块；chat ThreadView
+   收起态 pl 也引用同一枚 token。展开态 rail 已把内容整体推开、spacer 保持 0。 */
 body[data-rail-collapsed] .app-chrome-header {
-  --app-chrome-traffic-space: 190px;
+  --app-chrome-traffic-space: calc(var(--shell-collapsed-top-inset) - 18px);
 }
 .app-chrome-traffic-space {
   width: var(--app-chrome-traffic-space);

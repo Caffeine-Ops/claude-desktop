@@ -18,14 +18,18 @@
  * 此刻早已渲染——骨架只画 chat 内容区，不画 rail。
  *
  * 度量对齐真实 chat 面，让加载→内容零位移：顶栏 h-[46px] + border-b（同
- * ChatHeader）、收起态 pl-[208px] 让红绿灯（同 ThreadView 顶栏、208 基线）、
- * hero 与输入卡走 max-w-4xl（同消息列 / EmptyState / ComposerSkeleton）。
+ * ChatHeader）、收起态 pl 引用 `--shell-collapsed-top-inset` token 让红绿灯
+ * （同 ThreadView 顶栏，2026-08 起单一事实源在 globals.css，见
+ * `.window-drag-strip` 之后的注释块——mac/win32/linux 自动切换，骨架屏本身
+ * 不用关心平台分支）、hero 与输入卡走 max-w-4xl（同消息列 / EmptyState /
+ * ComposerSkeleton）。token 是根 layout 层的全局 :root 变量，符合上面「只能
+ * 用根 layout 层已就位的东西」的约束。
  */
 export function ChatLoadingSkeleton(): React.JSX.Element {
   return (
     <div className="flex h-full flex-col" aria-hidden>
       {/* 顶栏骨架：对齐 ChatHeader（46px + 底 hairline + 左「圆图标 + 标题条」）。 */}
-      <div className="flex h-[46px] shrink-0 items-center gap-2 border-b border-border/55 px-4 [body[data-rail-collapsed]_&]:pl-[208px]">
+      <div className="flex h-[46px] shrink-0 items-center gap-2 border-b border-border/55 px-4 [body[data-rail-collapsed]_&]:pl-[var(--shell-collapsed-top-inset)]">
         <div className="size-4 shrink-0 animate-pulse rounded-md bg-foreground/[0.08]" />
         <div className="h-3.5 w-40 animate-pulse rounded bg-foreground/[0.06]" />
       </div>
