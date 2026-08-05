@@ -913,6 +913,12 @@ function stripCommandPrefixes(cmd: string): string {
  * Pull `file_path` out of an arbitrary tool-args blob. Tools are
  * free-form JSON so we just poke at the conventional keys the
  * file-oriented tools use.
+ *
+ * 与 `src/chat/lib/writingDocSource.ts` 导出的同名函数同源（同一份三字段兜底链的两份
+ * 拷贝）——这份留在这里未导出、不进 bun test 覆盖范围；那份是 export 出来专门被测试的
+ * 权威版本。**唯一的行为分歧**：这份用 `??` 链，字段存在但类型不对时不会继续尝试下一个
+ * 字段名；那份逐字段做类型检查，类型不对也会往下退。改一处要同步另一处（是否也要把这里
+ * 改成逐字段检查，看这条路径是否也遇到过类型错的脏参数）。
  */
 function pickFilePath(args: unknown): string | undefined {
   if (!args || typeof args !== 'object') return undefined

@@ -167,7 +167,22 @@ import {
   type ProposalImageResult,
   type ProposalImageUploadPayload,
   type BackgroundThemeMeta,
-  type BackgroundThemeDeletePayload
+  type BackgroundThemeDeletePayload,
+  type WritingScanPayload,
+  type WritingScanResultIpc,
+  type WritingReadSectionsPayload,
+  type WritingReadSectionsResultIpc,
+  type WritingWriteSectionPayload,
+  type WritingWriteSectionResultIpc,
+  type WritingWechatHtmlPayload,
+  type WritingWechatHtmlResult,
+  type WritingExportDocxPayload,
+  type WritingExportPdfPayload,
+  type WritingCheckImagesPayload,
+  type WritingCheckImagesResult,
+  type WritingExportResult,
+  type WritingImageGeneratePayload,
+  type WritingImageResult
 } from '../../shared/ipc-channels'
 import { setKbRoot, getKbRoot, readKbIndex, kbOutDir, getKbConfig, setKbRemote, kbStoreDir, setKbMode } from '../core/kbIndexStore'
 import { scanLocalDocs, listLocalDocsDirs, setLocalDocsDir } from '../core/localDocsScan'
@@ -204,6 +219,15 @@ import { appendProposalMetric } from '../core/proposalMetricsStore'
 import { generateImage, editImage, sniffImageExt } from '../services/imageGenService'
 import { submitFeedback } from '../services/feedbackService'
 import { writeProposalImage } from '../services/proposalImageWriter'
+import { writeWritingImage } from '../core/writingImageWriter'
+import {
+  scanWritingDoc,
+  readWritingSections,
+  writeWritingSection
+} from '../core/writingProject'
+import { markdownToWechatHtml, loadWechatStyle, FALLBACK_WECHAT_STYLE } from '../core/writingWechat'
+import { exportWritingDocx, saveWritingPdf } from '../core/writingExport'
+import { findMissingWritingImages } from '../core/writingExportPure'
 import {
   importBackgroundThemeFromFile,
   listBackgroundThemes,
@@ -492,6 +516,14 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_GENERATE)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_EDIT)
   ipcMain.removeHandler(IPC_CHANNELS.PROPOSAL_IMAGE_UPLOAD)
+  ipcMain.removeHandler(IPC_CHANNELS.WRITING_SCAN)
+  ipcMain.removeHandler(IPC_CHANNELS.WRITING_READ_SECTIONS)
+  ipcMain.removeHandler(IPC_CHANNELS.WRITING_WRITE_SECTION)
+  ipcMain.removeHandler(IPC_CHANNELS.WRITING_WECHAT_HTML)
+  ipcMain.removeHandler(IPC_CHANNELS.WRITING_EXPORT_DOCX)
+  ipcMain.removeHandler(IPC_CHANNELS.WRITING_EXPORT_PDF)
+  ipcMain.removeHandler(IPC_CHANNELS.WRITING_CHECK_IMAGES)
+  ipcMain.removeHandler(IPC_CHANNELS.WRITING_IMAGE_GENERATE)
   ipcMain.removeHandler(IPC_CHANNELS.BACKGROUND_THEME_IMPORT)
   ipcMain.removeHandler(IPC_CHANNELS.BACKGROUND_THEME_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.BACKGROUND_THEME_DELETE)
@@ -2917,10 +2949,35 @@ export function registerIpcHandlers(): void {
     IPC_CHANNELS.PROPOSAL_RENDER,
     async (_event, payload: ProposalRenderPayload): Promise<ProposalRenderResult> => {
       const markdown = typeof payload?.markdown === 'string' ? payload.markdown : ''
+      // assetBaseDir 只用来算「解析基准目录」，不能兼职当「这是不是写作调用」的判据——
+      // 2026-08-04 code review 抓到的洞：写作 single 模式（打开单个 .md，非项目）恒不传
+      // assetBaseDir（writingAssetBaseDir 对 single 恒返回 undefined），若拿它判定调用方
+      // 身份，single 模式会被误当方案调用。同时补上 typeof 守卫（与上面 markdown 同款）——
+      // 渲染侧若传入非串真值，`isAbsolute(非串)` 会直接抛 TypeError、整个 render reject。
+      const assetBaseDir = typeof payload?.assetBaseDir === 'string' ? payload.assetBaseDir : undefined
       // 预览也过同一接地闸门（与导出共用 collectUngroundedImagePaths）：未接地图在 docx 预览里
       // 同样降级为占位，保证「预览=导出一致」——绝不出现预览有图、成品 Word 没图（评审 AL3）。
-      const ungrounded = collectUngroundedImagePaths(markdown)
-      const bytes = await markdownToDocxBuffer(markdown, payload?.style, ungrounded, payload?.mermaidImages)
+      //
+      // 【写作调用跳过接地闸门】判据是显式的 payload.kind === 'writing'（WritingDocPanel.exportPdf
+      // 两种模式都会传，不看 assetBaseDir 有没有值）。collectUngroundedImagePaths 认的是「图
+      // 必属本节所引文件（据《X》）的 assets 并集」，写作正文没有这套引用标记，跑了只会把写作
+      // 自己的相对路径图统统误判成「未接地」，导出出来变成一堆「未接地·疑似挪用」占位框，而
+      // 不是真的图（写作工作区没有 KB 检索这一套，接地校验天然不适用——与 exportWritingDocx
+      // 的裸调用 markdownToDocxBuffer 一致，见其头注释）。方案的两个调用点不传 kind，缺省即
+      // 走原有分支，逐字节验证过不受影响。
+      const ungrounded = payload?.kind === 'writing' ? undefined : collectUngroundedImagePaths(markdown)
+      // 章节装饰（标题自动编号 + 每章分页）同样按 kind 分流：方案要，写作不要。这条通道既服务
+      // 方案预览/导出，也服务写作的 PDF 导出链（WritingDocPanel.exportPdf → renderProposalPdfHtml
+      // → 本通道 → docx-preview → printToPDF），漏掉这里会出现「Word 已修好、PDF 仍双重编号」的
+      // 半修状态——两条链共用同一个 docx 引擎，开关就必须两处一起给。见 markdownToDocxBuffer 注释。
+      const bytes = await markdownToDocxBuffer(
+        markdown,
+        payload?.style,
+        ungrounded,
+        payload?.mermaidImages,
+        assetBaseDir,
+        payload?.kind !== 'writing'
+      )
       return { bytes }
     }
   )
@@ -3332,6 +3389,43 @@ export function registerIpcHandlers(): void {
   )
 
   ipcMain.handle(
+    IPC_CHANNELS.WRITING_IMAGE_GENERATE,
+    async (_event, args: WritingImageGeneratePayload): Promise<WritingImageResult> => {
+      const projectDir = typeof args?.projectDir === 'string' ? args.projectDir : ''
+      const prompt = typeof args?.prompt === 'string' ? args.prompt : ''
+      if (!projectDir || !prompt) throw new Error('缺少项目路径或提示词')
+      // 路径守卫必须钉在 main 侧，渲染侧修不牢：projectDir 的源头是
+      // detectWritingSource()（src/chat/lib/writingDocSource.ts）从会话里 Bash
+      // 工具的命令文本／输出里正则抠出来的字符串，那层本身就不可信（它自己的
+      // 注释写着「用户手敲 echo 调试，字面量不可信」），到 main 这一层必须重新
+      // 当成不可信输入把关，不能假设"渲染侧已经校验过"。
+      //
+      // 两条校验对齐同目录 writingProject.ts 的既有惯例：
+      // - isAbsolute：sourceAbsPath() 的老规矩，相对路径在 main 侧没有基准目录
+      //   可言，不拒绝的话 mkdir/writeFile 会相对 main 进程 cwd 落盘（dev 下
+      //   落进仓库目录），且返回的 path 是相对路径，渲染侧 isWritingAssetSrc
+      //   判定为假，图会显示失败且协议守卫从头到尾没被触发，连 403 都看不到。
+      // - 目录必须已存在：scanWritingDoc 在 project 模式下的不变量是"写作从不
+      //   创建项目根"（目录不存在只回 dirMissing，从不 mkdir 出来）；若这里放行
+      //   mkdir({recursive:true})，会单方面打破这条不变量——间接提示注入场景下
+      //   （模型被诱导 echo 一行 WRITING_PROJECT=<任意路径>）会在任意位置无提示
+      //   建出一条目录链，且完全绕开 PermissionBroker（这条 IPC 是 renderer 直
+      //   接 invoke，不经 canUseTool 权限卡）。收窄成"目录必须已存在"后，攻击面
+      //   降到"在已存在目录下的 images/ 子目录里放一张图片"，不再能凭空造目录树。
+      if (!isAbsolute(projectDir)) throw new Error('项目路径必须是绝对路径')
+      if (!statSync(projectDir, { throwIfNoEntry: false })?.isDirectory()) {
+        throw new Error('写作项目目录不存在')
+      }
+      const cfg = getAppSettings().imageApi
+      // 文案与提案侧逐字一致：卡片按「未配置」字样决定要不要显示「去设置」按钮，
+      // 换个说法会让那个按钮静默消失（见 src/chat/lib/imageErrorText.ts 的判定）。
+      if (!cfg?.apiKey) throw new Error('未配置出图 API，请到设置里填写 key 与地址')
+      const bytes = await generateImage(cfg, { prompt })
+      return writeWritingImage(projectDir, bytes, embeddableExtFor(bytes))
+    }
+  )
+
+  ipcMain.handle(
     IPC_CHANNELS.PROPOSAL_IMAGE_EDIT,
     async (_event, args: ProposalImageEditPayload): Promise<ProposalImageResult> => {
       const sessionId = typeof args?.sessionId === 'string' ? args.sessionId : ''
@@ -3373,6 +3467,98 @@ export function registerIpcHandlers(): void {
       const ext = extname(filePath).slice(1).toLowerCase() || 'png'
       const path = await writeProposalImage(sessionId, 'uploaded', bytes, ext)
       return { path }
+    }
+  )
+
+  // 写作工作区：扫 / 读 / 写。业务逻辑全在 writingProject.ts（可单测），
+  // 这里只做「拿到 payload → 转调 → 原样回传」的薄壳。
+  ipcMain.handle(
+    IPC_CHANNELS.WRITING_SCAN,
+    async (_event, payload: WritingScanPayload): Promise<WritingScanResultIpc> =>
+      scanWritingDoc(payload.source)
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.WRITING_READ_SECTIONS,
+    async (
+      _event,
+      payload: WritingReadSectionsPayload
+    ): Promise<WritingReadSectionsResultIpc> =>
+      readWritingSections(payload.source, Array.isArray(payload.names) ? payload.names : [])
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.WRITING_WRITE_SECTION,
+    async (
+      _event,
+      payload: WritingWriteSectionPayload
+    ): Promise<WritingWriteSectionResultIpc> =>
+      writeWritingSection(
+        payload.source,
+        payload.name,
+        payload.markdown,
+        payload.expectedMtimeMs
+      )
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.WRITING_WECHAT_HTML,
+    async (
+      _event,
+      payload: WritingWechatHtmlPayload
+    ): Promise<WritingWechatHtmlResult> => {
+      const loaded = loadWechatStyle(payload.styleName)
+      const style = loaded ?? FALLBACK_WECHAT_STYLE
+      return {
+        ok: true,
+        html: markdownToWechatHtml(payload.markdown ?? '', style),
+        // UI 据此在角标提示「样式未加载」——降级要看得见，不能静默换一套样式。
+        styleFallback: loaded === null
+      }
+    }
+  )
+
+  // 写作导出 Word / PDF：与 PROPOSAL_EXPORT(_PDF) 同引擎（markdownToDocxBuffer / printToPDF），
+  // 但保存框默认名与日志语义都该说「写作」而不是「方案」，故走独立的 writingExport.ts（详见
+  // WRITING_EXPORT_DOCX / WRITING_EXPORT_PDF 通道注释）。取当前窗口的写法照抄 PROPOSAL_EXPORT。
+  ipcMain.handle(
+    IPC_CHANNELS.WRITING_EXPORT_DOCX,
+    async (event, payload: WritingExportDocxPayload): Promise<WritingExportResult> => {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      if (!win) return { path: null }
+      return exportWritingDocx(
+        win,
+        payload.markdown,
+        payload.style,
+        payload.defaultBaseName,
+        payload.assetBaseDir,
+        payload.mermaidImages
+      )
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.WRITING_EXPORT_PDF,
+    async (event, payload: WritingExportPdfPayload): Promise<WritingExportResult> => {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      if (!win) return { path: null }
+      return saveWritingPdf(win, payload.bytes, payload.defaultBaseName)
+    }
+  )
+
+  // 图片就位闸（WRITING_CHECK_IMAGES 通道注释）。判据全在纯函数 findMissingWritingImages 里，
+  // 这里只负责把「碰磁盘」这件事补上（existsSync）——renderer 判不了存在性，故必须过一趟 main。
+  //
+  // typeof 守卫与 assetBaseDir 的处理照抄 PROPOSAL_RENDER 那处：payload 来自 IPC，类型标注是
+  // 编译期约束不是运行期保证，畸形入参不能让整条导出 reject（那会把「缺图提示」变成「导出失败」，
+  // 用户看到的原因就错了）。
+  ipcMain.handle(
+    IPC_CHANNELS.WRITING_CHECK_IMAGES,
+    async (_event, payload: WritingCheckImagesPayload): Promise<WritingCheckImagesResult> => {
+      const markdown = typeof payload?.markdown === 'string' ? payload.markdown : ''
+      const assetBaseDir =
+        typeof payload?.assetBaseDir === 'string' ? payload.assetBaseDir : undefined
+      return { missing: findMissingWritingImages(markdown, assetBaseDir, existsSync) }
     }
   )
 

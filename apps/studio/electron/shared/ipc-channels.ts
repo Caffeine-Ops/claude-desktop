@@ -15,6 +15,7 @@ import type {
   SectionVerification
 } from './proposal'
 import type { ReplayMeta, ReplayTimeline } from './replayTypes'
+import type { WritingDocSource, WritingFileMeta, WritingGenre, WritingSection } from './writing'
 
 /**
  * Central registry of IPC channel names. Main and renderer both import
@@ -1055,6 +1056,55 @@ export const IPC_CHANNELS = {
    * 不同：上传不调出图 API，不受未配置 apiKey 限制。
    */
   PROPOSAL_IMAGE_UPLOAD: 'proposal-image:upload',
+  /**
+   * Renderer → main. 写作工作区轮询入口：回体裁、大纲总节数、节文件元信息。
+   * 【只回元信息不回正文】——每 2s 搬一遍万字正文毫无必要，正文走 WRITING_READ_SECTIONS
+   * 按需拉。同款分工见 PPT_PREVIEW_LIST_SLIDES。
+   */
+  WRITING_SCAN: 'writing:scan',
+  /** Renderer → main. 按名字批量拉节正文；names 为空数组 = 拉全部。 */
+  WRITING_READ_SECTIONS: 'writing:read-sections',
+  /**
+   * Renderer → main. 带乐观锁写回一节。expectedMtimeMs 与盘上不符即拒写、回传盘上最新内容
+   * （AI 可能在润色阶段回头重写该节）。绝不静默覆盖。
+   */
+  WRITING_WRITE_SECTION: 'writing:write-section',
+  /**
+   * Renderer → main. markdown → 公众号内联样式 HTML。样式 JSON 在 skill 目录里，
+   * 只有 main 能用 skillsDir() 定位；且预览与「复制」共用这同一份 HTML，两者天然一致。
+   */
+  WRITING_WECHAT_HTML: 'writing:wechat-html',
+  /**
+   * Renderer → main. 导出 Word。渲染层拼好 markdown（joinWritingSections）+ 体裁样式
+   * （writingStyleFor），main 弹原生保存对话框、跑 markdownToDocxBuffer 并写盘。
+   * **不复用 PROPOSAL_EXPORT**：那条通道的保存框默认文件名写死成「方案草稿.docx」，写作
+   * 复用会让用户在保存框里看到「方案草稿」、日志也显示成方案导出，误导排查——真正的重逻辑
+   * （markdownToDocxBuffer）两边共用，只是各自管自己的保存框与默认名（见 writingExport.ts）。
+   */
+  WRITING_EXPORT_DOCX: 'writing:export-docx',
+  /**
+   * Renderer → main. 保存 PDF 字节。PDF 由渲染层经 `renderProposalPdfHtml` → `PROPOSAL_RENDER_PDF`
+   * 生成字节后传来，main 只管保存框与写盘——与 WRITING_EXPORT_DOCX 分成两条通道是因为生成方不同
+   * （docx 由 main 从 markdown 生成，PDF 字节由 renderer 侧渲染层出），塞进一条通道会让 payload
+   * 出现互斥字段。
+   */
+  WRITING_EXPORT_PDF: 'writing:export-pdf',
+  /**
+   * Renderer → main. 导出前的「图片就位闸」：给正文与资产基准目录，回「解析得出绝对路径但盘上
+   * 没有」的配图清单。**必须走 main**：renderer 碰不到文件系统，存在性只有主进程能判。
+   *
+   * 独立成一条通道而不是塞进三条导出通道各判一次——三个导出入口（Word / PDF / 公众号复制）
+   * 走的是三条完全不同的链（main 直出 docx / renderer 渲 PDF / renderer 拼 HTML 进剪贴板），
+   * 塞进去要写三份同样的检查，日后判据一改就必然漏改其中一条。闸抽出来，三个入口各调一次。
+   */
+  WRITING_CHECK_IMAGES: 'writing:check-images',
+  /**
+   * 写作工作区出图：按提示词生成一张配图，落进 `<项目>/images/`。
+   * 与 PROPOSAL_IMAGE_GENERATE 分成两条通道而不是加参数，是因为**落点根本不同**
+   * （项目目录 vs userData 草稿区），合并会让 handler 里长出一个 kind 分支，
+   * 两种落盘语义混在一处，日后改任一侧都要重读另一侧。
+   */
+  WRITING_IMAGE_GENERATE: 'writing:image-generate',
   /**
    * Renderer → main. 语义检索：模糊自然语言 → 混合(向量+BM25)命中片段+出处。供写方案
    * 搜索面板主动用。embedding 在 utilityProcess、不冻 main；模型缺失/stale 降级 BM25。
@@ -2517,6 +2567,132 @@ export interface ReplayListDemosResult {
   demos: ReplayDemoInfo[]
 }
 
+/** Payload for WRITING_SCAN. */
+export interface WritingScanPayload {
+  source: WritingDocSource
+}
+/** Result of WRITING_SCAN. `dirMissing` 供 UI 区分「目录没了」与「读失败」。 */
+export type WritingScanResultIpc =
+  | {
+      ok: true
+      genre: WritingGenre
+      outlineTotal: number | null
+      /** 契约锁定的配图画风（spec_lock.md「## 配图」段的 image_style），见
+       *  electron/shared/writing.ts 的 parseImageStyle 顶注——无 spec_lock / 无该段 /
+       *  该字段留空三种正常态都回 null。顺路跟 genre/outlineTotal 一起算，不为它新开
+       *  一条 IPC 往返。 */
+      imageStyle: string | null
+      /** 契约锁定的配图张数上限（image_count），见 parseImageCount 顶注——null 时由
+       *  调用方退回桌面端自己的默认上限（MAX_AUTO_FIRE_PER_WRITING_PROJECT），不是
+       *  "不限量"。 */
+      imageCount: number | null
+      files: WritingFileMeta[]
+      /** `drafts/` 里判为「不是节」、没计入正文的 .md 文件名。判据与事故背景见
+       *  electron/shared/writing.ts 的 selectSectionNames 顶注（一句话版：质检脚本只吃单文件，
+       *  写手把各节合并成 `full.md` 留在 drafts/，它曾被当成末节拼进正文 → 预览和导出各重播
+       *  一遍全文）。**不是错误信号**，UI 拿它摆一行提示，避免误伤时静默吞掉正文。 */
+      excluded: string[]
+    }
+  | { ok: false; dirMissing?: true; error: string }
+
+/** Payload for WRITING_READ_SECTIONS. `names` 为空数组表示读全部。 */
+export interface WritingReadSectionsPayload {
+  source: WritingDocSource
+  names: string[]
+}
+/** Result of WRITING_READ_SECTIONS. */
+export type WritingReadSectionsResultIpc =
+  | { ok: true; sections: WritingSection[] }
+  | { ok: false; error: string }
+
+/** Payload for WRITING_WRITE_SECTION. */
+export interface WritingWriteSectionPayload {
+  source: WritingDocSource
+  name: string
+  markdown: string
+  expectedMtimeMs: number
+}
+/** Result of WRITING_WRITE_SECTION. `conflict` = 乐观锁拦下，`current` 是盘上最新内容。 */
+export type WritingWriteSectionResultIpc =
+  | { ok: true; mtimeMs: number }
+  | { ok: false; conflict: true; current: { markdown: string; mtimeMs: number } | null }
+  | { ok: false; conflict?: false; error: string }
+
+/** Payload for WRITING_WECHAT_HTML. `styleName` 对应 skill 目录里的两个导出样式文件。 */
+export interface WritingWechatHtmlPayload {
+  markdown: string
+  styleName: 'wechat-default' | 'wechat-serif'
+}
+/**
+ * Result of WRITING_WECHAT_HTML. `styleFallback: true` = skill 目录的样式 JSON 读不到，
+ * 已降级用内置默认样式——UI 据此在角标提示「样式未加载」，降级要看得见，不能静默换一套样式。
+ */
+export type WritingWechatHtmlResult =
+  | { ok: true; html: string; styleFallback: boolean }
+  | { ok: false; error: string }
+
+/** Payload for WRITING_EXPORT_DOCX. */
+export interface WritingExportDocxPayload {
+  markdown: string
+  /** 体裁样式模板（writingStyleFor(genre)）。纯数据，结构化克隆安全。 */
+  style: ProposalStyleConfig
+  /** 保存对话框的默认文件名（不含扩展名）——取自文稿第一节的一级标题，取不到时回退「文稿」。 */
+  defaultBaseName: string
+  /**
+   * 正文里相对图路径（`../images/x.png`）的解析基准目录，project 模式为 `<projectDir>/drafts`、
+   * single 模式留空不传（见 WritingDocPanel.tsx 的 writingAssetBaseDir）。main 侧
+   * markdownToDocxBuffer 据此把相对路径解析成绝对路径才能嵌图；缺省时图片降级为文字占位。
+   */
+  assetBaseDir?: string
+  /**
+   * 预渲的 mermaid 图（code→{@link MermaidImage}），与 {@link ProposalRenderPayload.mermaidImages}
+   * 同义（2026-08-04 code review 补齐）：此前只有 PDF 导出传这个字段，Word 导出恒省略，导致
+   * 同一份稿子 PDF 里流程图正常显示、Word 里却是灰字「[图示]」占位——两条导出链行为不一致。
+   * 与 ProposalDocPanel 的写法对齐（`format === 'docx' ? await renderMermaidImageMap(...) :
+   * undefined`）：写作 Word 导出现在也在 renderer 侧预渲 mermaid 再传入。
+   */
+  mermaidImages?: Record<string, MermaidImage>
+}
+/** Payload for WRITING_EXPORT_PDF。`bytes` 是 renderer 经 renderProposalPdf 拿到的 PDF 字节。 */
+export interface WritingExportPdfPayload {
+  bytes: Uint8Array
+  defaultBaseName: string
+}
+/** Result of WRITING_EXPORT_DOCX / WRITING_EXPORT_PDF 共用：`path: null` = 用户取消保存框，不是错误。 */
+export interface WritingExportResult {
+  path: string | null
+}
+
+/** Payload for WRITING_CHECK_IMAGES。字段语义与 {@link WritingExportDocxPayload} 的同名字段一致。 */
+export interface WritingCheckImagesPayload {
+  markdown: string
+  assetBaseDir?: string
+}
+/**
+ * Result of WRITING_CHECK_IMAGES。`missing` 为空 = 全部就位（也包括「没有配图」和
+ * 「有配图但解析不出绝对路径、无从验证」两种情况——无法验证不算缺失，见
+ * findMissingWritingImages 头注释）。
+ */
+export interface WritingCheckImagesResult {
+  missing: Array<{ src: string; resolved: string }>
+}
+
+/** Payload for WRITING_IMAGE_GENERATE. `projectDir` 是写作项目根（含 drafts/ images/ 的那层）。 */
+export interface WritingImageGeneratePayload {
+  projectDir: string
+  prompt: string
+}
+/**
+ * Result of WRITING_IMAGE_GENERATE。
+ * `path` = 绝对路径，渲染侧转 writingasset:// 显示用；
+ * `relPath` = `../images/<文件名>`，落位时写进正文用。两个都回，是为了让渲染侧
+ * 不必自己做路径运算（它拿不到 node:path，手拼容易在 Windows 上出错）。
+ */
+export interface WritingImageResult {
+  path: string
+  relPath: string
+}
+
 /** Payload for PROPOSAL_EXPORT. */
 export interface ProposalExportPayload {
   markdown: string
@@ -2582,6 +2758,28 @@ export interface ProposalRenderPayload {
   style?: ProposalStyleConfig
   /** 预渲的 mermaid 图（code→{@link MermaidImage}）。与 PROPOSAL_EXPORT 同义，保证「预览=导出一致」。 */
   mermaidImages?: Record<string, MermaidImage>
+  /**
+   * 【写作专用】正文相对图路径的解析基准目录，与 {@link WritingExportDocxPayload.assetBaseDir}
+   * 同义——写作 PDF 导出（WritingDocPanel.exportPdf）复用本通道生成 docx 字节再转 PDF，图片
+   * 解析必须走同一条路径才能「预览=导出一致」。方案文档的图恒为绝对路径，调用方不传。
+   *
+   * **不要**用「这个字段有没有传」去判断调用方是不是写作（历史教训，2026-08-04 code review
+   * 抓到）：写作 single 模式（打开单个 .md，非项目）本来就不传 assetBaseDir（见
+   * writingAssetBaseDir 对 `kind: 'single'` 恒返回 undefined 的头注释），若拿它兼职当「是否
+   * 写作调用」的判据，single 模式会被误当成方案调用，白白挨一次 collectUngroundedImagePaths
+   * 接地检查——写作没有「接地」这个概念，检查通不过就会把图判成「未接地·疑似挪用」剔除，
+   * 而这句话在写作语境里毫无意义。判「是不是写作调用」必须用下面独立的 {@link kind} 字段。
+   */
+  assetBaseDir?: string
+  /**
+   * 【写作专用，显式意图字段】标记本次调用来自写作导出（WritingDocPanel.exportPdf），与
+   * assetBaseDir 是否传值【无关】——写作两种模式（project / single）都要传 `'writing'`，
+   * 哪怕 single 模式没有 assetBaseDir。main 侧 PROPOSAL_RENDER handler 据此跳过方案专属的
+   * collectUngroundedImagePaths 接地闸门（见上面 assetBaseDir 注释里的教训）。方案的两个
+   * 调用点（ProposalPreview.tsx / ProposalDocPanel.tsx）不传，缺省即走原有方案行为，逐字节
+   * 验证过不受影响。
+   */
+  kind?: 'writing'
 }
 
 /**
@@ -3730,6 +3928,40 @@ export interface ChatApi {
    * API，不受 apiKey 是否配置影响。
    */
   proposalImageUpload(args: ProposalImageUploadPayload): Promise<ProposalImageResult | null>
+
+  /**
+   * 写作工作区轮询入口：回体裁、大纲总节数、节文件元信息（不含正文，见 WRITING_SCAN 通道注释）。
+   */
+  writingScan(payload: WritingScanPayload): Promise<WritingScanResultIpc>
+  /** 按名字批量拉节正文；names 为空数组 = 拉全部（WRITING_READ_SECTIONS）。 */
+  writingReadSections(payload: WritingReadSectionsPayload): Promise<WritingReadSectionsResultIpc>
+  /**
+   * 带乐观锁写回一节。expectedMtimeMs 与盘上不符即拒写、回传盘上最新内容
+   * （WRITING_WRITE_SECTION 通道注释）。
+   */
+  writingWriteSection(payload: WritingWriteSectionPayload): Promise<WritingWriteSectionResultIpc>
+  /**
+   * markdown → 公众号内联样式 HTML（WRITING_WECHAT_HTML 通道注释）。main 生成、渲染层拿成品——
+   * 打印预览 tab 的微信分支与「复制公众号 HTML」共用同一个字符串，天然一致。
+   */
+  writingWechatHtml(payload: WritingWechatHtmlPayload): Promise<WritingWechatHtmlResult>
+  /**
+   * 导出 Word（WRITING_EXPORT_DOCX 通道注释）。**不复用 exportProposal**——保存框默认名与
+   * 日志语义都该说「写作」而不是「方案」，真正的重逻辑（markdownToDocxBuffer）仍是共用的。
+   */
+  writingExportDocx(payload: WritingExportDocxPayload): Promise<WritingExportResult>
+  /**
+   * 保存 PDF 字节（WRITING_EXPORT_PDF 通道注释）。字节由 renderer 经 renderProposalPdf 生成，
+   * 这里只弹保存框、写盘。
+   */
+  writingExportPdf(payload: WritingExportPdfPayload): Promise<WritingExportResult>
+  /**
+   * 导出前的图片就位闸（WRITING_CHECK_IMAGES 通道注释）：三个导出入口在动手前各调一次，
+   * `missing` 非空就报清单并中止，不产出引用损坏的交付物。
+   */
+  writingCheckImages(payload: WritingCheckImagesPayload): Promise<WritingCheckImagesResult>
+  /** 写作工作区出图：生成一张配图并落进项目的 images/。未配置出图 API 时抛错。 */
+  writingImageGenerate(payload: WritingImageGeneratePayload): Promise<WritingImageResult>
 }
 
 /**

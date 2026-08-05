@@ -3,6 +3,7 @@ import { create } from 'zustand'
 import { useChatStore } from './chat'
 import { useComposerModeStore } from './composerMode'
 import { useProposalStore, useProposalWorkspace } from './proposal'
+import { useWritingStore, useWritingWorkspace } from './writing'
 
 /* marker 协议解析是纯函数，抽在 lib/messageMarkers.ts（无 zustand/window
  * 依赖）——RailSessionList 等 SSR 敏感组件要用同一套解析但不能 import 本
@@ -73,17 +74,31 @@ export const useImageEditStore = create<ImageEditStore>((set) => ({
 }))
 
 /**
- * 右栏是否已被 slides / proposal 工作区占用 —— DeliverableCard 用它决定
- * 表格卡片的点击去向：占用时降级回系统应用打开（ThreadView 里预览面板
- * 对这两种分栏让位，点了不弹等于点了没反应）。判定逻辑与 ThreadView 的
- * isSplitMode 完全同源（slides 按会话启动模式标记、proposal 随激活实时
- * 切换），放这里而不放 ThreadView 是避免组件层互相 import。
+ * 右栏是否已被 slides / proposal / 写作 工作区占用 —— DeliverableCard 用它
+ * 决定表格卡片的点击去向：占用时降级回系统应用打开（ThreadView 里预览面板
+ * 对这三种分栏让位，点了不弹等于点了没反应）。判定逻辑必须与 ThreadView 的
+ * isSplitMode **完全同源**（slides 按会话启动模式标记、proposal 随激活实时
+ * 切换、写作按 useWritingWorkspace 的 store.source + revealed 判定），放这里而不放
+ * ThreadView 是避免组件层互相 import。
+ *
+ * 【为什么必须同源，别嫌麻烦】isSplitMode 决定 ThreadView 是否渲染预览面板
+ * （showSheetPreview = path !== null && !isSplitMode）；这里决定要不要先调
+ * openPreview/openEditor 写 path。两边脱节的后果是：写作分栏下这里判 false
+ * → 五个 UI 调用点（AssistantMessage 成果卡、OutputsPanel 行式/图块、
+ * ImageGenCard 生成图卡、Composer 附件卡）照常调 openPreview(path) →
+ * useSheetPreviewStore.path 被写入且顺手 closeEditor() → 但 ThreadView 那边
+ * isSplitMode 为真、面板不渲染——点击死、零报错，且脏 path 会在写作模式退出
+ * 后突然弹出一张不相干的旧预览。isSplitMode 加第三个来源时若忘了同步这两个
+ * 函数，就是这条缺陷本身（2026-07-29 复审发现）。
  */
 export function useSplitWorkspaceBusy(): boolean {
   const sessionId = useChatStore((s) => s.sessionId)
   const slidesSessions = useComposerModeStore((s) => s.slidesSessions)
   const proposal = useProposalWorkspace()
-  return proposal || (sessionId !== null && slidesSessions[sessionId] === true)
+  const writing = useWritingWorkspace()
+  return (
+    proposal || writing || (sessionId !== null && slidesSessions[sessionId] === true)
+  )
 }
 
 /**
@@ -91,8 +106,12 @@ export function useSplitWorkspaceBusy(): boolean {
  * adapter 的 add() 在 assistant-ui runtime 层跑，没有 hook 环境）。判定
  * 逻辑必须与上面的 hook 逐项同步：proposal 半边内联的是
  * useProposalWorkspace 的展开（active + 前台会话匹配 + workspaceOpen，
- * 见 stores/proposal.ts），slides 半边同源。只做一次性读取不订阅——
- * 调用方都是「此刻要不要开面板」的瞬时决策，不需要响应后续变化。
+ * 见 stores/proposal.ts），slides 半边同源，写作半边内联的是
+ * useWritingWorkspace 的展开（store.source !== null && store.revealed，见
+ * stores/writing.ts；**revealed 这一项不能漏**——写作右栏在拿到第一节正文前
+ * 并不占屏幕，此时判 busy 会让表格卡片白白降级去系统应用打开）。
+ * 只做一次性读取不订阅——调用方都是「此刻要不要开面板」的瞬时决策，不需要
+ * 响应后续变化。
  */
 export function splitWorkspaceBusyNow(): boolean {
   const chatSid = useChatStore.getState().sessionId
@@ -100,5 +119,9 @@ export function splitWorkspaceBusyNow(): boolean {
   const proposalBusy =
     p.active && p.sessionId !== null && p.sessionId === chatSid && p.workspaceOpen
   const slidesSessions = useComposerModeStore.getState().slidesSessions
-  return proposalBusy || (chatSid !== null && slidesSessions[chatSid] === true)
+  const w = useWritingStore.getState()
+  const writingBusy = w.source !== null && w.revealed
+  return (
+    proposalBusy || writingBusy || (chatSid !== null && slidesSessions[chatSid] === true)
+  )
 }

@@ -3,6 +3,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode
@@ -18,6 +19,11 @@ import { toKbAssetUrl } from '../../lib/kbAssetUrl'
 import { isLocalAssetPath, safeDecodeUri } from '../../lib/localAssetPath'
 import { renderMermaid } from '../../lib/mermaidRender'
 import { toProposalAssetUrl } from '../../lib/proposalAssetUrl'
+import {
+  isWritingAssetSrc,
+  resolveRelativeAssetPath,
+  toWritingAssetUrl
+} from '../../lib/writingAssetUrl'
 import {
   isEmbeddableImagePath,
   normalizeImageMarkdown
@@ -72,7 +78,10 @@ const originLabel = {
   uploaded: '用户上传'
 } as const
 
-const components: Components = {
+// img 覆写单独抽成工厂函数（见下方 createImgComponent）：它是三个 tag renderer 里
+// 唯一需要读 assetBaseDir prop 的一个，其余都是纯静态 JSX、不随 props 变化，没必要
+// 为了这一个 key 把整个 components 表都改造成 per-render 构造。
+const baseComponents: Omit<Components, 'img'> = {
   p: ({ children }) => (
     <p className="mb-3 last:mb-0 text-[14px] leading-relaxed text-foreground">
       {children}
@@ -199,68 +208,6 @@ const components: Components = {
     </a>
   ),
 
-  // KB 本地图经 kbasset:// 协议加载，草稿产出图（改图/文生图/上传）经 proposalasset:// 协议加载
-  // （绝对路径直接当 <img src> 会被当相对 URL、加载失败）。先试 kbasset，未命中再试 proposalasset，
-  // 两者路径特征互斥、链式判定零歧义。
-  img: ({ src, alt }) => {
-    if (typeof src === 'string') {
-      // react-markdown 会把 src 百分号编码（空格→%20、CJK→%E…，见 localAssetPath.ts 注释），
-      // 而下游所有逻辑（协议转换/接地角标/data-raw-src 点图手术）都假设拿到的是 markdown 里的
-      // 原始字节。本地资产路径在此解码一次还原；外链 http 图保持原 src 不动（解码外链会改变
-      // 语义，如 query 里的合法 %26）。
-      const decoded = safeDecodeUri(src)
-      const path = isLocalAssetPath(decoded) ? decoded : src
-      const kbUrl = toKbAssetUrl(path)
-      const resolved = kbUrl === path ? toProposalAssetUrl(path) : kbUrl
-      // 本地资产图（KB 或产出图）若非 docx 可嵌格式（webp/svg…），导出 Word 会降级为文字占位；
-      // 预览此处同步降级，避免「预览有图、成品 Word 没图」的静默不一致——与 proposalDocx.
-      // imageParagraphs 共用同一个 isEmbeddableImagePath 谓词。仅对 URL 被改写的本地
-      // 资产图（resolved !== path）生效，不影响外链图。
-      if (resolved !== path && !isEmbeddableImagePath(path)) {
-        const caption = (alt && alt.trim()) || path.slice(path.lastIndexOf('/') + 1)
-        return (
-          <span className="my-2 inline-block text-[13px] text-neutral-400">
-            [图：{caption}]
-          </span>
-        )
-      }
-      // data-raw-src：保留 markdown 里的原始（未转协议、已还原编码）绝对路径，供编辑态点图
-      // 工具栏反查 sourcePath——react-markdown 解析时已剥掉 <> 包裹与 " title" 后缀，
-      // 加上面的 safeDecodeUri 还原百分号编码后，值与 shared/proposal.parseImages 抽出的 path
-      // 精确一致（不解码则 macOS 含空格路径三处全断），点图无需再自行正则解析。
-      // 仅当 URL 被实际改写（resolved !== path，即本地 kb/草稿资产）才挂 data-raw-src——外链
-      // http 图不改写，若仍挂上会让工具栏误以为它可点「改图」，点了却拿不到本地文件。
-      const imgEl = (
-        <img
-          src={resolved}
-          alt={alt ?? ''}
-          {...(resolved !== path ? { 'data-raw-src': path } : {})}
-          className="my-2 max-h-[70vh] w-auto max-w-full rounded"
-        />
-      )
-      // 产出图来源角标：纯渲染态提示，不进 markdown、不进 docx（导出侧直读绝对路径原文，
-      // 天然不含角标）。仅对草稿产出图生效——deriveImageOrigin 对 KB 图/外链图恒返回 null。
-      const origin = deriveImageOrigin(path)
-      if (!origin) return imgEl
-      return (
-        <span className="relative inline-block">
-          {imgEl}
-          <span className="absolute right-1 top-1 rounded bg-black/60 px-1 text-[10px] text-white">
-            {originLabel[origin]}
-          </span>
-        </span>
-      )
-    }
-    // 非 string 的 src（罕见，react-markdown 类型上允许 undefined）原样透传给 <img>。
-    return (
-      <img
-        src={src as string | undefined}
-        alt={alt ?? ''}
-        className="my-2 max-h-[70vh] w-auto max-w-full rounded"
-      />
-    )
-  },
-
   // Tables live in a horizontal scroll shell so wide tables stay
   // usable inside the narrow chat bubble. `table-auto` lets the browser
   // size columns from content, and `[overflow-wrap:anywhere]` on cells
@@ -378,6 +325,129 @@ const components: Components = {
       >
         {highlighted}
       </CodeBlockCard>
+    )
+  }
+}
+
+/* ─────────────── img override（KB / 提案产出图 / 写作项目配图） ─────────────── */
+
+/**
+ * img 覆写是工厂函数而非静态表项（唯一一个）：它是三条本地资产链里需要读
+ * assetBaseDir 的那个，而 assetBaseDir 是 AssistantMarkdown 的 props，只有
+ * 每次渲染时才知道值。调用方（见 AssistantMarkdownImpl）用 useMemo 按
+ * assetBaseDir 重新构造，其余 baseComponents 表项保持模块级单例不变。
+ *
+ * 为什么不让 AssistantMarkdown 自己去 store 里取写作项目路径，而要调用方
+ * 显式传 assetBaseDir：这是个被聊天气泡、OutlinePanel、ProposalPaper、
+ * WrittenFilesPanel 等多处 feature 共用的纯展示组件，反向 import 某个 feature
+ * 的 store（写作项目路径只有 writing feature 的 store 知道）会把依赖方向拧成
+ * 环——纯展示组件不该知道「谁在用我」。可选 prop 让调用方自己决定要不要喂
+ * 基准目录，其余调用点不传，行为逐字不变（这是硬要求，见下方 resolved 分支）。
+ *
+ * KB 本地图经 kbasset:// 协议加载，草稿产出图（改图/文生图/上传）经 proposalasset:// 协议加载，
+ * 写作项目配图经 writingasset:// 协议加载（三者都是绝对路径直接当 <img src> 会被当相对 URL、
+ * 加载失败）。先试 kbasset，未命中再试 proposalasset，再未命中试 writingasset——三者路径特征
+ * 互斥（见 writingAssetUrl.ts 头注释），链式判定零歧义。
+ */
+function createImgComponent(assetBaseDir?: string): NonNullable<Components['img']> {
+  return ({ src, alt }) => {
+    if (typeof src === 'string') {
+      // react-markdown 会把 src 百分号编码（空格→%20、CJK→%E…，见 localAssetPath.ts 注释），
+      // 而下游所有逻辑（协议转换/接地角标/data-raw-src 点图手术）都假设拿到的是 markdown 里的
+      // 原始字节。本地资产路径在此解码一次还原；外链 http 图保持原 src 不动（解码外链会改变
+      // 语义，如 query 里的合法 %26）。
+      const decoded = safeDecodeUri(src)
+      // 写作正文里的图路径恒为相对路径（正文分节文件在 <项目>/drafts/、图在 <项目>/images/，
+      // 是兄弟目录，见 writingAssetUrl.ts 的 resolveRelativeAssetPath 头注释）。isLocalAssetPath
+      // 只认绝对路径，相对路径必须先对 assetBaseDir 解析成绝对路径，才能喂给下面的 kb →
+      // proposal → writing 链——这一步必须在解码之后（相对路径本身也可能含 CJK/空格）、
+      // 链式判定之前。assetBaseDir 未传时 resolveRelativeAssetPath 原样返回 decoded，
+      // isRelative 分支不生效，下面这行退化为原有的 `isLocalAssetPath(decoded) ? decoded : src`
+      // ——未传 assetBaseDir 时行为逐字不变，这是硬要求。
+      //
+      // 2026-08-03 code review CONFIRMED（Important 1）：else 分支此前只判 isLocalAssetPath
+      // （kb ‖ proposal），写作资产不在其中——于是聊天气泡里模型直接写绝对写作路径
+      // （`![](/Users/k/…/images/gen-1.png)`，没有走 assetBaseDir 相对路径这条道）时，path
+      // 落到 `: src`，也就是 react-markdown **编码后**的串；接着 toWritingAssetUrl 会对它
+      // 再 encodeURIComponent 一次，main 侧 decode 一次后仍是半编码状态，越过白名单但
+      // existsSync 找不到文件——404、图空白、控制台无线索（含空格/CJK 路径必现）。
+      // isWritingAssetSrc 早就导出了却一直没人调用，本就是为这个位置准备的：并进这里的
+      // 判定，让写作资产也走「先解码、再判定」这同一扇门，和 kb/proposal 两类资产共用
+      // 同一条解码保证，不再各走各的。
+      const isRelativeSrc = decoded.startsWith('./') || decoded.startsWith('../')
+      const path =
+        isRelativeSrc && assetBaseDir
+          ? resolveRelativeAssetPath(assetBaseDir, decoded)
+          : isLocalAssetPath(decoded) || isWritingAssetSrc(decoded)
+            ? decoded
+            : src
+      const kbUrl = toKbAssetUrl(path)
+      // 三种本地资产的路径特征互斥（见 writingAssetUrl.ts 头注释），链式尝试零歧义：
+      // KB 图 → 提案产出图 → 写作项目配图。任一命中即停。
+      const resolved =
+        kbUrl !== path
+          ? kbUrl
+          : (() => {
+              const proposalUrl = toProposalAssetUrl(path)
+              return proposalUrl !== path ? proposalUrl : toWritingAssetUrl(path)
+            })()
+      // 本地资产图（KB 或产出图）若非 docx 可嵌格式（webp/svg…），导出 Word 会降级为文字占位；
+      // 预览此处同步降级，避免「预览有图、成品 Word 没图」的静默不一致——与 proposalDocx.
+      // imageParagraphs 共用同一个 isEmbeddableImagePath 谓词。仅对 URL 被改写的本地
+      // 资产图（resolved !== path）生效，不影响外链图。
+      //
+      // 2026-08-04 code review：写作项目配图不再豁免这条降级约束——2026-08-03 那条豁免的
+      // 理由是「写作预览眼下压根没有 docx/PDF 导出这条路径」，本次改动正是把写作的 docx/PDF
+      // 导出接上了（见 WritingDocPanel.tsx exportDocx/exportPdf），旧理由已经不成立：
+      // 豁免继续留着的话，用户在 `<项目>/images/` 放一张 fig.webp 并在正文引用，预览显示
+      // 真图（writingasset:// 协议放行 webp），导出却因 isEmbeddableImagePath 判定 webp
+      // 不可嵌而降级成灰字「[图：fig.webp]」——同一个不变量的第二处「预览有图、导出没图」
+      // 破口（第一处是相对路径解析边界，见 resolveRelativeAssetPath 头注释）。去掉豁免后
+      // webp/svg/bmp 在预览与导出两侧现在都统一走 isEmbeddableImagePath 降级为文字占位，
+      // 「预览=导出」逐字节一致——AI 自动出图走 embeddableExtFor() 恒产出可嵌格式，不受影响，
+      // 只有用户手放的非规范格式图片会在预览里也提前看到降级提示。
+      if (resolved !== path && !isEmbeddableImagePath(path)) {
+        const caption = (alt && alt.trim()) || path.slice(path.lastIndexOf('/') + 1)
+        return (
+          <span className="my-2 inline-block text-[13px] text-neutral-400">
+            [图：{caption}]
+          </span>
+        )
+      }
+      // data-raw-src：保留 markdown 里的原始（未转协议、已还原编码）绝对路径，供编辑态点图
+      // 工具栏反查 sourcePath——react-markdown 解析时已剥掉 <> 包裹与 " title" 后缀，
+      // 加上面的 safeDecodeUri 还原百分号编码后，值与 shared/proposal.parseImages 抽出的 path
+      // 精确一致（不解码则 macOS 含空格路径三处全断），点图无需再自行正则解析。
+      // 仅当 URL 被实际改写（resolved !== path，即本地 kb/草稿/写作资产）才挂 data-raw-src——
+      // 外链 http 图不改写，若仍挂上会让工具栏误以为它可点「改图」，点了却拿不到本地文件。
+      const imgEl = (
+        <img
+          src={resolved}
+          alt={alt ?? ''}
+          {...(resolved !== path ? { 'data-raw-src': path } : {})}
+          className="my-2 max-h-[70vh] w-auto max-w-full rounded"
+        />
+      )
+      // 产出图来源角标：纯渲染态提示，不进 markdown、不进 docx（导出侧直读绝对路径原文，
+      // 天然不含角标）。仅对草稿产出图生效——deriveImageOrigin 对 KB 图/外链图/写作配图恒返回 null。
+      const origin = deriveImageOrigin(path)
+      if (!origin) return imgEl
+      return (
+        <span className="relative inline-block">
+          {imgEl}
+          <span className="absolute right-1 top-1 rounded bg-black/60 px-1 text-[10px] text-white">
+            {originLabel[origin]}
+          </span>
+        </span>
+      )
+    }
+    // 非 string 的 src（罕见，react-markdown 类型上允许 undefined）原样透传给 <img>。
+    return (
+      <img
+        src={src as string | undefined}
+        alt={alt ?? ''}
+        className="my-2 max-h-[70vh] w-auto max-w-full rounded"
+      />
     )
   }
 }
@@ -756,21 +826,43 @@ function splitCitationText(value: string): unknown[] | null {
 
 // defaultUrlTransform 会把 win32 盘符路径（C:\… / C:/…）当未知协议清空成 ''，
 // 图片 src 直接消失、点图链全断——Windows 是 CI 出包目标，不能靠它兜。本地资产路径（KB 图/
-// 草稿产出图，特征前缀足够收敛）跳过 sanitize 原样放行；其余 URL 照走默认，保住
-// javascript:/data: 注入防护。判定前先解码：sanitize 收到的是 normalizeUri 编码后的串。
+// 草稿产出图/写作项目配图，特征前缀足够收敛）跳过 sanitize 原样放行；其余 URL 照走默认，
+// 保住 javascript:/data: 注入防护。判定前先解码：sanitize 收到的是 normalizeUri 编码后的串。
+//
+// 2026-08-03 code review CONFIRMED（Important 2 失败场景的后半段）：这里此前只判
+// isLocalAssetPath（kb ‖ proposal），写作资产不在其中——一张聊天气泡里的绝对写作路径若
+// 恰好是 win32 形态（`C:\Users\k\稿子\images\a.png`），会在这一步就被 defaultUrlTransform
+// 当成未知协议整体清空成空串，img 组件连 src prop 都收不到，isWritingAssetSrc 加得再对也
+// 救不回来——这一层要先放行才轮得到 img 覆写里的链式判定。补 isWritingAssetSrc 分支堵上。
 function assetAwareUrlTransform(url: string): string {
-  if (isLocalAssetPath(safeDecodeUri(url))) return url
+  const decoded = safeDecodeUri(url)
+  if (isLocalAssetPath(decoded) || isWritingAssetSrc(decoded)) return url
   return defaultUrlTransform(url)
 }
 
 function AssistantMarkdownImpl({
   text,
   // 编辑态（ProposalPaper）传 true：高亮段末来源标注。聊天气泡不传 → 走默认，无任何 span 注入。
-  highlightCitations = false
+  highlightCitations = false,
+  // 写作预览（WritingPaper）传 `<项目>/drafts`：正文里的相对图路径（`../images/x.png`）要靠它
+  // 才能解析成绝对路径、进 kb → proposal → writing 那条协议链。可选 prop，其余调用点
+  // （聊天气泡/OutlinePanel/ProposalPaper/WrittenFilesPanel…）不传 → undefined，img 覆写里
+  // isRelativeSrc 分支不生效，行为与加这个 prop 之前逐字一致。取「注入基准目录」而非让
+  // AssistantMarkdown 自己反查写作项目 store：见 createImgComponent 头注释的依赖方向说明。
+  assetBaseDir
 }: {
   text: string
   highlightCitations?: boolean
+  assetBaseDir?: string
 }): React.JSX.Element {
+  // img 覆写是唯一读 assetBaseDir 的表项，其余 baseComponents 保持模块级单例；只有
+  // assetBaseDir 实际变化（多数调用点恒为 undefined 或恒为同一字符串）才重新构造整张表，
+  // 避免流式重渲染时把 <ReactMarkdown components> 的引用打成每次都变（那会让它没法跳过
+  // 未变化子树的 diff）。
+  const components = useMemo<Components>(
+    () => ({ ...baseComponents, img: createImgComponent(assetBaseDir) }),
+    [assetBaseDir]
+  )
   // tracking-normal cancels the global -0.022em Apple tracking that
   // :root sets for SF Pro. That negative tracking is tuned for Latin
   // glyphs (which carry side-bearing); CJK ideographs are full-width

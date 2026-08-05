@@ -35,6 +35,7 @@ import type { ProposalKind } from '../../shared/proposal'
 import type { MermaidImage } from '../../shared/ipc-channels'
 import { FUSION_HEADER_BANNER, FUSION_COVER_LOGO } from '../../shared/proposalBrand'
 import { stripGenImageDirectives } from '../../shared/proposalGenImage'
+import { resolveWritingAssetPath } from './writingExportPure'
 import {
   CN_SIZE_PT,
   FONT_DOCX,
@@ -221,6 +222,10 @@ interface WalkEnv {
   // 预渲的 mermaid 位图（mermaid 源码 trim → PNG buffer + 像素尺寸）。renderer 渲 SVG → main
   // 用 sharp 转 PNG 后填入。case 'code' 的 mermaid 分支据此居中嵌图；缺省 / 查不到 → 降级文字。
   mermaidImages?: ReadonlyMap<string, { data: Buffer; width: number; height: number }>
+  // 写作专用：正文相对图路径（`../images/x.png`）的解析基准目录（节文件所在目录，见
+  // writingExportPure.ts 的 resolveWritingAssetPath 头注释）。方案文档的图恒为绝对路径，
+  // 不需要它，此字段缺省 → 图片分支跳过解析、img.url 原样使用（方案调用行为不变）。
+  assetBaseDir?: string
 }
 
 // 在 inline 节点层剥掉标题最前面那段手打章节号（配合 HEADING_REF 自动编号，避免叠号）。
@@ -456,7 +461,12 @@ function blockToDocx(node: RootContent, env: WalkEnv, ctx?: BlockContext): Array
           if (img.type === 'image') {
             // 接地闸门：本图路径在未接地全集里 → imageParagraphs 降级为占位（详见其注释）。
             const isUngrounded = env.ungroundedImagePaths?.has(img.url) ?? false
-            out.push(...imageParagraphs(img.alt ?? '', img.url, maxWidthPx, maxHeightPx, isUngrounded))
+            // 写作正文里的图恒为相对路径（`../images/x.png`），必须先解析成绝对路径才能
+            // readFileSync 读到——env.assetBaseDir 缺省（方案文档 / 未传）时原样返回 img.url，
+            // 不影响方案侧行为。解析失败（越界 / 非法）也原样返回相对串，下面 readFileSync
+            // 找不到文件、按既有降级路径变成文字占位，不抛错。
+            const resolvedUrl = resolveWritingAssetPath(env.assetBaseDir, img.url)
+            out.push(...imageParagraphs(img.alt ?? '', resolvedUrl, maxWidthPx, maxHeightPx, isUngrounded))
           }
         }
         return out
@@ -1035,14 +1045,18 @@ function buildSectionChildren(
   style: ProposalStyleConfig,
   bodyFirstLine: number,
   ungroundedImagePaths?: ReadonlySet<string>,
-  mermaidImages?: ReadonlyMap<string, { data: Buffer; width: number; height: number }>
+  mermaidImages?: ReadonlyMap<string, { data: Buffer; width: number; height: number }>,
+  assetBaseDir?: string,
+  // 见 markdownToDocxBuffer 同名参数注释。缺省 true = 方案行为。
+  chapterChrome: boolean = true
 ): Array<Paragraph | Table> {
   const env: WalkEnv = {
     walk: { titleConsumed: group.kind !== 'cover' },
     bodyFirstLine,
     imgMarginTwips: MARGIN_TWIPS[style.margin],
     ungroundedImagePaths,
-    mermaidImages
+    mermaidImages,
+    assetBaseDir
   }
   const out: Array<Paragraph | Table> = []
 
@@ -1080,10 +1094,13 @@ function buildSectionChildren(
   // 正文节：传 headingNumbering，让 ##/###/#### 章节标题自动挂层级编号（与目录对齐）。
   // 章节分页：每个 ## 章节大标题另起一页（首章除外），在其前插一个独立 PageBreak 段落
   // （详见 chapterPageBreakIndices 注释——为何用独立段落而非样式级 pageBreakBefore）。
-  const pageBreakBefore = chapterPageBreakIndices(group.nodes)
+  //
+  // 两者都受 chapterChrome 管（缺省 true = 方案行为不变）：写作体裁传 false，标题不编号、
+  // 不分页——理由见 markdownToDocxBuffer 的同名参数注释。
+  const pageBreakBefore = chapterChrome ? chapterPageBreakIndices(group.nodes) : new Set<number>()
   group.nodes.forEach((node, i) => {
     if (pageBreakBefore.has(i)) out.push(new Paragraph({ children: [new PageBreak()] }))
-    out.push(...blockToDocx(node, env, { headingNumbering: true }))
+    out.push(...blockToDocx(node, env, { headingNumbering: chapterChrome }))
   })
   return out.length ? out : [new Paragraph({ children: [new TextRun('')] })]
 }
@@ -1121,7 +1138,19 @@ export async function markdownToDocxBuffer(
   ungroundedImagePaths?: ReadonlySet<string>,
   // 预渲 mermaid 图（mermaid 源码 trim→PNG base64+尺寸）。mermaid 只能在 renderer 渲，main 直接
   // 嵌入其 PNG（renderer canvas 栅格，故无需 sharp、中文字体也正确）。省略 → mermaid 块降级文字。
-  mermaidImages?: Record<string, MermaidImage>
+  mermaidImages?: Record<string, MermaidImage>,
+  // 写作专用：正文相对图路径的解析基准目录（见 WalkEnv.assetBaseDir 注释）。方案文档不传，
+  // 图片分支跳过解析、行为不变。
+  assetBaseDir?: string,
+  // 「章节装饰」总开关：`##` 标题自动挂层级编号 + 每章另起一页。**缺省 true = 方案行为逐字不变**。
+  //
+  // 这两件事是方案文档的体裁约定（编号与目录的 1/1.1/1.1.1 对齐、一章一页便于打印装订），
+  // 写作复用本模块时曾原样继承，2026-08-05 真机走查抓到后果：一篇公众号文案的标题被编号成
+  // 「1 每天写日报…」，与正文自带的「一、二、三」撞成双重编号；600 字被拆成 3 页、大半空白。
+  // 故收成一个显式开关由调用方声明体裁意图，而不是在本模块里猜「这是不是写作」——
+  // assetBaseDir 有没有值不能兼职当判据（写作 single 模式恒不传它，会被误判成方案，
+  // 与 PROPOSAL_RENDER 里 `kind` 那处踩过的同一个坑）。
+  chapterChrome: boolean = true
 ): Promise<Buffer> {
   // base64 PNG → Buffer，建 code→{data,尺寸} map 供 case 'code' 的 mermaid 分支同步查表嵌图。
   const mermaidImageMap = decodeMermaidImages(mermaidImages)
@@ -1145,7 +1174,15 @@ export async function markdownToDocxBuffer(
   // 封面/目录节不挂页码页脚；正文节挂「— N —」页脚。
   const groups = groupBySectionMarks(tree.children)
   const sections: ISectionOptions[] = groups.map((group) => {
-    const children = buildSectionChildren(group, style, bodyFirstLine, ungroundedImagePaths, mermaidImageMap)
+    const children = buildSectionChildren(
+      group,
+      style,
+      bodyFirstLine,
+      ungroundedImagePaths,
+      mermaidImageMap,
+      assetBaseDir,
+      chapterChrome
+    )
     const safeChildren = children.length
       ? children
       : [new Paragraph({ children: [new TextRun('')] })]

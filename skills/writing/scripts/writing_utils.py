@@ -20,6 +20,11 @@ _CLOSING_CHARS = "」』”’）)】》"
 
 _FENCE = re.compile(r"^\s*```")
 
+# 图片语法。前导 ! 是与普通链接 [文字](url) 的唯一区别，不能省——
+# 省了会把正文里的链接文字也一起吃掉。alt 允许为空（![](x.png)）。
+# 路径部分用 [^)]* 而非 \S+：markdown 允许 `![图](路径 "标题")` 带标题后缀。
+_IMAGE_SYNTAX = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+
 
 @dataclass
 class Hit:
@@ -90,6 +95,10 @@ def strip_markdown(text: str) -> str:
             continue
         if stripped.startswith(">"):
             stripped = stripped.lstrip("> ").strip()
+        # 剥图片语法：图说（alt）不是正文，是配图说明；路径更不是。
+        # 剥完若整行变空，交给下游 split_paragraphs 丢掉即可（它本来就跳空行），
+        # 这里不显式 continue —— 少一条分支，也保住 char_count 的现有行为。
+        stripped = _IMAGE_SYNTAX.sub("", stripped).strip()
         out.append(stripped)
     return "\n".join(out)
 

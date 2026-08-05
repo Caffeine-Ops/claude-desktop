@@ -199,6 +199,135 @@ describe('markdownToDocxBuffer 嵌图（产出图 proposal-drafts 路径，防�
   })
 })
 
+// task-7：写作导出复用同一条 imageParagraphs 读图路径，但写作正文里的图恒为相对路径
+// （`../images/x.png`，正文节文件在 <项目>/drafts/、图在 <项目>/images/，兄弟目录）——
+// 第 5 个参数 assetBaseDir 就是喂给这条路径的「节文件所在目录」，见 WalkEnv.assetBaseDir
+// 与 resolveWritingAssetPath（writingExportPure.ts）头注释。
+describe('markdownToDocxBuffer 嵌图（写作相对路径，assetBaseDir）', () => {
+  // 2026-08-04 code review M-2：此前这条只断言 `buf.length > 500`，而一份完全空的 markdown
+  // 生成的 docx 就有 20411 字节——这条断言的实际含义只有「函数没抛异常」，对「是否真的降级」
+  // 零覆盖。改成与「传了 assetBaseDir、图真嵌入」的版本比体积：降级态应显著更小（没有 media
+  // 部件），且应与「压根没提到图」的纯文字基线同一量级（< 200 字节差，同下面 webp 用例的判据）。
+  it('assetBaseDir 缺省时，相对路径图找不到文件、降级为文字占位（不抛错，且真的没嵌入）', async () => {
+    const md = '<!--proposal-section:content-->\n\n![配图](../images/gen-1.png)'
+    const withoutAssetBaseDir = await markdownToDocxBuffer(md)
+    const noImageAtAll = await markdownToDocxBuffer(
+      '<!--proposal-section:content-->\n\n占位文字，没有图。'
+    )
+    // 降级态与「压根没提到图」的纯文字基线体积接近（同为一段文字段落），证明没有 media 部件
+    // 被嵌入——而不只是「没抛异常」。
+    expect(
+      Math.abs(withoutAssetBaseDir.byteLength - noImageAtAll.byteLength)
+    ).toBeLessThan(200)
+  })
+
+  it('图片文件不存在（用户手删 images/ 里的图）：readFileSync 失败，降级为文字占位、不抛错', async () => {
+    const projectDir = join(tmpdir(), 'writing-test-proj-missing-' + Date.now())
+    const draftsDir = join(projectDir, 'drafts')
+    const imagesDir = join(projectDir, 'images')
+    mkdirSync(draftsDir, { recursive: true })
+    mkdirSync(imagesDir, { recursive: true }) // images/ 目录本身存在，但目标文件不存在
+    const md = '<!--proposal-section:content-->\n\n![配图](../images/deleted.png)'
+    const withMissingFile = await markdownToDocxBuffer(md, undefined, undefined, undefined, draftsDir)
+    const noImageAtAll = await markdownToDocxBuffer(
+      '<!--proposal-section:content-->\n\n占位文字，没有图。'
+    )
+    // 路径本身能正确解析成绝对路径（assetBaseDir 有效、images/ 目录也存在），但文件缺失——
+    // 走 imageParagraphs 的 `readFileSync` try/catch 分支降级，与「压根没提到图」同一量级，
+    // 不抛错、不中断导出。
+    expect(Math.abs(withMissingFile.byteLength - noImageAtAll.byteLength)).toBeLessThan(200)
+  })
+
+  it('传入 assetBaseDir 后，相对路径图解析成绝对路径并真嵌入 docx', async () => {
+    const PNG_100 =
+      'iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAYAAABw4pVUAAAAH0lEQVR42u3BAQ0AAADCoPdPbQ43oAAAAAAAAAAAvg0hAAABmmDh1QAAAABJRU5ErkJggg=='
+    const projectDir = join(tmpdir(), 'writing-test-proj-' + Date.now())
+    const draftsDir = join(projectDir, 'drafts')
+    const imagesDir = join(projectDir, 'images')
+    mkdirSync(draftsDir, { recursive: true })
+    mkdirSync(imagesDir, { recursive: true })
+    writeFileSync(join(imagesDir, 'gen-1.png'), Buffer.from(PNG_100, 'base64'))
+
+    const md = '<!--proposal-section:content-->\n\n![配图](../images/gen-1.png)'
+    const withBase = await markdownToDocxBuffer(md, undefined, undefined, undefined, draftsDir)
+    const withoutBase = await markdownToDocxBuffer(md)
+    // 有 assetBaseDir 时相对路径被解析、真图嵌入（体积显著更大）；没有时降级为
+    // 「[图：gen-1.png]」文字段落，两者体积差 > 200 字节的 media 部件判据同上。
+    expect(withBase.byteLength - withoutBase.byteLength).toBeGreaterThan(200)
+  })
+
+  it('同一张图被引用两次，两处都真嵌入（各自独立解析，互不影响）', async () => {
+    const PNG_100 =
+      'iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAYAAABw4pVUAAAAH0lEQVR42u3BAQ0AAADCoPdPbQ43oAAAAAAAAAAAvg0hAAABmmDh1QAAAABJRU5ErkJggg=='
+    const projectDir = join(tmpdir(), 'writing-test-proj-dup-' + Date.now())
+    const draftsDir = join(projectDir, 'drafts')
+    const imagesDir = join(projectDir, 'images')
+    mkdirSync(draftsDir, { recursive: true })
+    mkdirSync(imagesDir, { recursive: true })
+    writeFileSync(join(imagesDir, 'gen-1.png'), Buffer.from(PNG_100, 'base64'))
+
+    const mdOnce = '<!--proposal-section:content-->\n\n![配图](../images/gen-1.png)'
+    const mdTwice =
+      '<!--proposal-section:content-->\n\n![配图](../images/gen-1.png)\n\n正文分隔段。\n\n![配图2](../images/gen-1.png)'
+    const noImage = '<!--proposal-section:content-->\n\n正文分隔段。'
+    const once = await markdownToDocxBuffer(mdOnce, undefined, undefined, undefined, draftsDir)
+    const twice = await markdownToDocxBuffer(mdTwice, undefined, undefined, undefined, draftsDir)
+    const withoutAnyImage = await markdownToDocxBuffer(noImage)
+    // `docx` 库按内容对 media 部件去重（同一张图两次引用只落一份二进制、两个引用关系），
+    // 故 twice 不会是 once 的整整两倍——但两次引用都必须真解析出同一个 resolvedUrl、
+    // 都不降级：twice 比"完全没有图、只多一段正文"的基线大得多（每个引用各自新增一段
+    // ImageRun 段 + 一条 relationship，即便共享同一份 media 二进制）。
+    expect(twice.byteLength).toBeGreaterThan(withoutAnyImage.byteLength + 200)
+    expect(once.byteLength).toBeGreaterThan(withoutAnyImage.byteLength + 200)
+  })
+
+  it('.webp 相对路径图降级为文字占位，与预览侧同一谓词（isEmbeddableImagePath）', async () => {
+    const projectDir = join(tmpdir(), 'writing-test-proj-webp-' + Date.now())
+    const draftsDir = join(projectDir, 'drafts')
+    const imagesDir = join(projectDir, 'images')
+    mkdirSync(draftsDir, { recursive: true })
+    mkdirSync(imagesDir, { recursive: true })
+    // 内容是否为真 webp 不重要——isEmbeddableImagePath 只按扩展名判定，走到扩展名分支
+    // 就应直接降级，不会尝试读盘/解码。
+    writeFileSync(join(imagesDir, 'gen-1.webp'), Buffer.from('not-a-real-webp'))
+
+    const md = '<!--proposal-section:content-->\n\n![配图](../images/gen-1.webp)'
+    const withBase = await markdownToDocxBuffer(md, undefined, undefined, undefined, draftsDir)
+    const withoutImage = await markdownToDocxBuffer(
+      '<!--proposal-section:content-->\n\n占位文字，没有图。'
+    )
+    // 两者都是纯文字段落量级（降级占位 vs 无图正文），不应出现真嵌图那种 > 200 字节的跳变。
+    expect(withBase.byteLength - withoutImage.byteLength).toBeLessThan(200)
+  })
+
+  // 越界安全阀落到真实导出链路的冒烟。2026-08-04 code review M-2：此前用 `/etc/passwd` 当靶子
+  // 是重言式——它没有扩展名，isEmbeddableImagePath 本来就会拒绝，就算把越界安全阀整个删掉
+  // 这条测试也照样绿，测的其实是「无扩展名图片会降级」而不是「越界会被拦」。换成一个真实存在、
+  // 扩展名合法、只是【在越界路径上】的 png：如果安全阀失效，这张图会被真嵌入（体积跳变）；
+  // 安全阀生效则与「压根没提到图」的基线同一量级。
+  it('相对路径越界（跳出 base 父目录之外）不解析，降级为文字占位（真实存在的图也不例外）', async () => {
+    const PNG_100 =
+      'iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAYAAABw4pVUAAAAH0lEQVR42u3BAQ0AAADCoPdPbQ43oAAAAAAAAAAAvg0hAAABmmDh1QAAAABJRU5ErkJggg=='
+    // 目录结构：<root>/a/b/drafts（assetBaseDir）与 <root>/a/images（越界两层才能到达，
+    // 超出「只放一层」的安全阀），后者放一张真实存在的 png——如果安全阀被绕过，这张图会被
+    // 真嵌入；安全阀生效的话，two-levels-up 的相对路径压根不会被解析，还是原样的相对串，
+    // readFileSync 找不到文件，降级为文字占位。
+    const root = join(tmpdir(), 'writing-test-escape-' + Date.now())
+    const draftsDir = join(root, 'a', 'b', 'drafts')
+    const escapedImagesDir = join(root, 'a', 'images') // 只跳一层本该落在这里，但越界请求跳了两层
+    mkdirSync(draftsDir, { recursive: true })
+    mkdirSync(escapedImagesDir, { recursive: true })
+    writeFileSync(join(escapedImagesDir, 'x.png'), Buffer.from(PNG_100, 'base64'))
+
+    const md = '<!--proposal-section:content-->\n\n![越界](../../images/x.png)'
+    const withEscape = await markdownToDocxBuffer(md, undefined, undefined, undefined, draftsDir)
+    const noImageAtAll = await markdownToDocxBuffer(
+      '<!--proposal-section:content-->\n\n占位文字，没有图。'
+    )
+    expect(Math.abs(withEscape.byteLength - noImageAtAll.byteLength)).toBeLessThan(200)
+  })
+})
+
 // mdast 节点构造小工具：测试 stripLeadingTocHeading / splitCoverNodes 对【粗体包裹】文本的
 // 递归提取（评审发现：旧内联实现只读直接子节点的 value，strong/emphasis 包裹的文字读成空串）。
 const text = (v: string): RootContent =>
@@ -332,5 +461,43 @@ describe('markdownToDocxBuffer 剥除 genimage 指令块', () => {
     const xml = readDocxDocumentXml(Buffer.from(buf))
     expect(xml).toContain('这段正文绝不能丢')
     expect(xml).toContain('尾段')
+  })
+})
+
+// ── 章节装饰（自动编号 + 分章分页）的体裁开关 ────────────────────────────
+//
+// 2026-08-05 真机走查抓到的缺陷：写作的 Word/PDF 导出复用本模块，连带继承了方案文档专属的
+// 两个「章节装饰」——① `##` 标题自动挂层级编号（与方案目录对齐用），② 每个 `##` 另起一页。
+// 对方案是对的，对一篇公众号文案是错的：标题被编号会与正文自带的「一、二、三」撞成双重编号，
+// 每节分页会把 600 字的文案排成 3 页（大半空白）。
+//
+// 故加一个 `chapterChrome` 开关，**缺省 true = 方案行为逐字不变**（这是本仓的红线），写作侧传 false。
+// 两条用例是一对：一条钉住方案不许被改坏，一条钉住写作确实关掉了。
+describe('markdownToDocxBuffer 章节装饰开关（chapterChrome）', () => {
+  const md = [
+    '# 每天写日报，怎么越写越累',
+    '',
+    '## 一、活干完了，你还得再干一遍',
+    '',
+    '正文一。',
+    '',
+    '## 二、日报的单位是一天',
+    '',
+    '正文二。'
+  ].join('\n')
+
+  it('缺省（方案）：章节标题带自动编号，且各章另起一页', async () => {
+    const buf = await markdownToDocxBuffer(md)
+    const xml = readDocxDocumentXml(Buffer.from(buf))
+    expect(xml).toContain('<w:numPr>') // 标题挂了编号实例
+    expect(xml).toContain('w:type="page"') // 章节间插了分页符
+  })
+
+  it('chapterChrome=false（写作）：标题不编号，也不插分页符', async () => {
+    const buf = await markdownToDocxBuffer(md, undefined, undefined, undefined, undefined, false)
+    const xml = readDocxDocumentXml(Buffer.from(buf))
+    expect(xml).not.toContain('<w:numPr>')
+    expect(xml).not.toContain('w:type="page"')
+    expect(xml).toContain('活干完了') // 关掉装饰不影响正文本身
   })
 })

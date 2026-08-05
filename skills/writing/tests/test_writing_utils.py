@@ -114,3 +114,27 @@ def test_parse_spec_lock_handles_character_and_foreshadow_rows(tmp_path):
     assert "张明" in spec["人物档案"]
     assert "001" in spec["伏笔表"]
     assert spec["伏笔表"]["001"].endswith("状态:已埋未收")
+
+
+def test_strip_markdown_removes_image_syntax():
+    """图片行必须整行剥掉：图说是极短行，留着会被当成一个超短段落，
+    污染 readability 的段落长度分布与 ai_slop 的结构均匀度。"""
+    text = "正文第一段。\n\n![深夜便利店的窗](../images/gen-1.png)\n\n正文第二段。"
+    body = wu.strip_markdown(text)
+    assert "gen-1.png" not in body
+    assert "深夜便利店的窗" not in body
+    assert wu.split_paragraphs(body) == ["正文第一段。", "正文第二段。"]
+
+
+def test_strip_markdown_keeps_normal_links():
+    """普通链接 [文字](url) 不是图片，正文里的字要留下——
+    图片语法有前导 !，两者只差一个字符，正则写松了会连链接文字一起吃掉。"""
+    body = wu.strip_markdown("详见[这篇报告](https://example.com/a)的第三节。")
+    assert "这篇报告" in body
+
+
+def test_strip_markdown_removes_inline_image_keeps_sentence():
+    """图夹在句子中间（罕见）：只剥图，句子其余部分照常统计。"""
+    body = wu.strip_markdown("如下图![流程](../images/a.png)所示的三步。")
+    assert "a.png" not in body
+    assert "如下图所示的三步。" in body

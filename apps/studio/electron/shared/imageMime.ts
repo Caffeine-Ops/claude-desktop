@@ -15,7 +15,12 @@ export const IMAGE_MIME_BY_EXT: Record<string, string> = {
   '.jpeg': 'image/jpeg',
   '.gif': 'image/gif',
   '.webp': 'image/webp',
-  '.svg': 'image/svg+xml'
+  '.svg': 'image/svg+xml',
+  // bmp 在 pptasset:// / writingasset:// 的扩展名白名单里都显式放行（kbasset:// /
+  // proposalasset:// 走单根守卫、不设扩展名白名单，同样可能服务到 bmp 文件），但这张
+  // 映射表此前漏收——mimeForAssetPath 命中不到就落 fallback（application/octet-stream），
+  // 浏览器不拿它当图片解码，<img> 照样空白。2026-08-03 code review 抓到（writingasset 场景）。
+  '.bmp': 'image/bmp'
 }
 
 /** 扩展名不认识时的 fallback 由调用方定：协议服务用 octet-stream，改图源 mime 用 image/png。 */

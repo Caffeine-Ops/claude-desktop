@@ -25,9 +25,16 @@ DEFAULT_PROJECTS_DIR = SKILL_DIR / "projects"
 #   sources/  用户给的原始素材 + 转好的 Markdown
 #   analysis/ 机器提取的事实（素材摘要、文风分析、AI 味基线分）
 #   drafts/   初稿分节，一节一个文件
+#   images/   配图（AI 生成 / 用户提供）。与 drafts/ 平级，
+#             所以正文里的相对路径恒为 ../images/<文件名>
 #   reviews/  质检报告
 #   output/   定稿与各平台导出
-SUBDIRS = ("sources", "analysis", "drafts", "reviews", "output")
+SUBDIRS = ("sources", "analysis", "drafts", "images", "reviews", "output")
+
+# validate 的必需集刻意**不含 images**：它是 2026-08-03 才加的目录，
+# 此前建的项目都没有。把新目录列进必需项，会让所有老项目一夜之间被判
+# 「结构不完整」——纯粹的向后兼容伤害，零收益。新项目照常会建出来。
+REQUIRED_SUBDIRS = ("sources", "analysis", "drafts", "reviews", "output")
 
 _SLUG_RE = re.compile(r"[^a-z0-9一-鿿]+")
 
@@ -51,6 +58,7 @@ def init_project(name: str, base_dir: Path, today: str) -> Path:
             "- `sources/` 原始素材与转好的 Markdown\n"
             "- `analysis/` 机器提取的事实\n"
             "- `drafts/` 初稿分节\n"
+            "- `images/` 配图（正文里以 ../images/ 相对路径引用）\n"
             "- `reviews/` 质检报告\n"
             "- `output/` 定稿与导出\n\n"
             "`design_spec.md` 是写作方案，`spec_lock.md` 是写作契约"
@@ -65,7 +73,7 @@ def validate_project(project_dir: Path) -> list[str]:
     problems: list[str] = []
     if not project_dir.is_dir():
         return [f"项目目录不存在：{project_dir}"]
-    for sub in SUBDIRS:
+    for sub in REQUIRED_SUBDIRS:
         if not (project_dir / sub).is_dir():
             problems.append(f"缺少子目录：{sub}/")
     if not (project_dir / "spec_lock.md").exists():
@@ -105,6 +113,11 @@ def main(argv: list[str] | None = None) -> int:
         today = args.date or datetime.now().strftime("%Y%m%d")
         path = init_project(args.name, Path(args.dir), today)
         print(f"[writing] 项目已创建：{path}")
+        # 桌面端接管标记：Cowork 的写作工作区从这一行抓项目绝对路径。
+        # 同款手法见 bin/ensure-python.cmd 的 `WRITING_PY=<path>`——脚本自己报数，
+        # 免得调用方复刻 slugify 规则（中文保留、其余压下划线），两边一漂就找不到目录。
+        # 必须是最后一行且独占一行，前端按行首 `WRITING_PROJECT=` 匹配。
+        print(f"WRITING_PROJECT={path.resolve()}")
         return 0
 
     if args.cmd == "validate":

@@ -45,6 +45,9 @@ import {
   detectContentSentinelAheadOfPhase
 } from '@desktop-shared/proposal'
 import { splitBlocks } from '@desktop-shared/proposalBlocks'
+import { extractRevisionResult } from '@desktop-shared/writing'
+import { useWritingStore } from '../stores/writing'
+import { relocateTarget } from '../lib/writingRevision'
 import { triggerProposalCitationVerification } from '../lib/proposalVerification'
 import { autoFireProposalGenImages } from '../lib/proposalGenImageFire'
 import { maybeNudgeStageConfirmAfterTurn } from '../lib/proposalStageGate'
@@ -399,15 +402,17 @@ export function FusionRuntimeProvider({
   // gets a fresh `language` hint. A thin logging wrapper sits on
   // top so every lifecycle event lands in the LogsDialog.
   const lang = useI18n((s) => s.lang)
-  const dictationAdapter = useMemo(() => {
-    const inner = createOpenAIWhisperDictationAdapter({
-      language: lang
-    })
-    pushUiLog('dictation:adapter-ready', {
-      engine: 'openai-whisper',
-      language: lang
-    })
-    return wrapDictationWithLogging(inner)
+  const dictationAdapter = useMemo(
+    () => wrapDictationWithLogging(createOpenAIWhisperDictationAdapter({ language: lang })),
+    [lang]
+  )
+  // 【日志必须留在 effect 里，别挪回上面那个 useMemo】useMemo 的回调在**渲染期间**执行，
+  // 而 pushUiLog 是一次 zustand set —— 渲染 A 组件的过程中改了 B 组件（订阅日志的
+  // LogsDialog）的状态，React 会报 "Cannot update a component while rendering a different
+  // component"。副作用（写 store / 发请求 / 打日志）一律进 effect，useMemo 只许做纯计算。
+  // 依赖与上面那个 useMemo 同为 [lang]，故仍是「每次重建适配器就记一条」的原语义。
+  useEffect(() => {
+    pushUiLog('dictation:adapter-ready', { engine: 'openai-whisper', language: lang })
   }, [lang])
 
   // ── ExternalStoreRuntime wiring ─────────────────────────────────────
@@ -1751,7 +1756,16 @@ function makeSessionEventHandler(
     invalidateHistoryCache,
     maybeAbortOnTocSkip,
     syncProposalDraftFromInflight,
-    onTurnEnd: handleProposalTurnEnd,
+    onTurnEnd: (sid, messageId) => {
+      // 两套工作区各自的轮末处理。用 try/finally 而非顺序调用：proposal 那边同步抛错时
+      // （它的错误由 applyChatEventToStore 的 'end' case 兜住）写作侧的哨兵抽取仍必须执行，
+      // 否则一次 proposal 异常会让用户的改写请求永远停在「等 AI 回复」状态。
+      try {
+        handleProposalTurnEnd(sid, messageId)
+      } finally {
+        handleWritingTurnEnd(sid, messageId)
+      }
+    },
     // Unread: a reply just finished. If the user isn't currently looking
     // at this session (it's a background task, or they're on the canvas /
     // another chat), flag it unread so the rail shows a dot until they
@@ -1765,7 +1779,20 @@ function makeSessionEventHandler(
     },
     // 选区改写排队·排空（复审 B 修正）：排队改写起飞后以 'error' 失败（子进程崩溃/abort/超时）时，
     // 若不在此补排空，队列剩余项会永久停摆——与 onTurnEnd 分支对称，同款 queueMicrotask 触发下一轮。
-    onTurnError: () => {
+    onTurnError: (sid) => {
+      // 写作侧同款清尾：本轮以失败收场（子进程崩溃/abort/超时）时 'end' 不会到，
+      // 若不在此清 pendingRevision，那条改写永远停在「等 AI 回复」、写作队列里剩下的
+      // 也全部停摆（排空 effect 以 pendingRevision 为闸）。放在 proposal 排空之前，
+      // 且自带 try/catch——这里抛错会连带吞掉 proposal 的排空。
+      try {
+        const ws = useWritingStore.getState()
+        if (ws.pendingRevision && ws.sessionId === sid) {
+          ws.setPendingRevision(null)
+          ws.setConflictMsg('这轮改写没能完成（AI 中断或出错），正文未改动，可以重新发起。')
+        }
+      } catch (err) {
+        console.error('[writing-revise] 轮内失败清尾出错', err)
+      }
       queueMicrotask(() => {
         void drainRevisionQueue()
       })
@@ -1906,6 +1933,125 @@ function handleProposalTurnEnd(sid: string, messageId: string): void {
     queueMicrotask(() => {
       void drainRevisionQueue()
     })
+  }
+}
+
+/**
+ * 轮末（'end'）写作选区改写处理：本轮若是改写请求（pendingRevision 非空），从回复里抽哨兵
+ * 结果，登记成一条待用户裁决的「原文 vs 改后」对照（WritingDocPanel 渲染它）。
+ *
+ * 【没有哨兵就什么都不写】——AI 可能在反问「你想改成什么风格」，那句话不是正文，落盘会毁掉
+ * 这一节。抽不到时只清 pendingRevision 让气泡复位、队列继续排空，用户可以重发。
+ *
+ * 三道门（与 proposal 那份同源）：
+ *   1. 会话门控：只处理写作工作区绑定会话（ws.sessionId === sid）的输出，防别的 tab 串台。
+ *   2. 精确定位：按 messageId 找刚结束的那条消息，而非倒序抓「最后一条 assistant」——后者
+ *      会误抓错误占位等尾随消息，把报错当改写结果推给用户确认。
+ *   3. 只在 pendingRevision 非空时处理：普通对话轮零开销、也绝不会被误当改写。
+ *
+ * **整个函数自带 try/catch、绝不向外抛**：它在 onTurnEnd 的 finally 里跑，从 finally 里抛出
+ * 的异常会把 proposal 的原始异常整个吞掉（JS 语义：finally 的异常覆盖 try 的），排查时现场
+ * 全丢。宁可这里吞掉自己的错并打日志。
+ */
+function handleWritingTurnEnd(sid: string, messageId: string): void {
+  try {
+    const ws = useWritingStore.getState()
+    const pending = ws.pendingRevision
+    if (!pending || ws.sessionId !== sid) return
+
+    const slot = useChatStore.getState().perSession[sid]
+    const msg = slot?.messages.find((m) => m.id === messageId) as
+      | { role: string; content: Array<{ type: string; text?: string }> }
+      | undefined
+    // 消息没找到（end 早于消息入 store 的竞态）或不是 assistant：**照样清 pending**。
+    // proposal 在同一处刻意【不】记账（它最坏是少累积一次草稿，下次 end 还能补），但两边
+    // 代价不对等——写作侧 pendingRevision 同时是排空 effect 的闸，留一个永不清的 pending
+    // 会让【整个改写队列永久停摆】，且界面上没有任何解释。改写结果丢了可以重发，队列锁死
+    // 不可自愈，两害相权取轻。
+    if (!msg || msg.role !== 'assistant') {
+      console.warn('[writing-revise] 轮末找不到这条助手消息，本次改写作废（可重发）', {
+        sid,
+        messageId
+      })
+      useWritingStore.getState().setPendingRevision(null)
+      useWritingStore
+        .getState()
+        .setConflictMsg('这轮改写的回复没能读到，正文未改动，请重新发起。')
+      return
+    }
+
+    // 只取 'text' part（跳过 reasoning / tool-call）：哨兵只可能出现在正文文本里。
+    const fullText = msg.content
+      .filter((p) => p.type === 'text' && p.text)
+      .map((p) => p.text!)
+      .join('')
+    const after = extractRevisionResult(fullText)
+    const sec = ws.sections.find((s) => s.name === pending.sectionName)
+    if (after && sec) {
+      // 重定位：用户提交改写到 AI 答完之间，AI 可能又改过这一节，块序号会漂。定位依据是
+      // `pending.beforeMarkdown`（提交那一刻那几块的源码切片）——两边都是源码，逐字节相等
+      // 即可判定，不需要任何模糊/子序列判据（详见 relocateTarget 的注释）。
+      //
+      // 【重定位失败就是失败，不再有 `?? pending.range` 兜底】——旧版曾在重定位失败时退回
+      // 提交时的块序号、再靠一套模糊子序列校验放行，三轮补丁都被下一轮复审找出新的假阳性
+      // （最严重一次：职场平行段 0.923 覆盖率放行、英文 12 字母 vs 600 字母切片 66% 放行）。
+      // 假阳性的后果是**不可撤销的正文损坏**：卡面显示错块 → 用户看不出（相似段落）→
+      // 点应用 → 相邻段落被整块覆盖。现在的判据是源码逐字节相等，找不到就是那几块真的被
+      // AI 动过了，此时唯一安全的选择是不成卡、让用户重新选中再改一次。
+      const relocated = relocateTarget(sec.markdown, pending)
+      if (!relocated) {
+        console.warn(
+          '[writing-revise] 源码级定位没找到提交时的那几块（内容已被改写）—— 不生成对照卡',
+          { sectionName: pending.sectionName, messageId }
+        )
+        useWritingStore
+          .getState()
+          .setConflictMsg('这一节的内容已经变了，找不到你当初选中的那段了。改动未落地，请重新选中再改一次。')
+        useWritingStore.getState().setPendingRevision(null)
+        return
+      }
+      const { range, ambiguous } = relocated
+      const before = splitBlocks(sec.markdown)
+        .slice(range.start, range.end + 1)
+        .join('\n\n')
+      // range / before / baseMtimeMs 三者**必须同源同刻**取自这一个 `sec` 快照：它们共同描述
+      // 「这张对照卡是基于哪一版正文算出来的」。写盘时拿 baseMtimeMs 当乐观锁基准，锁才覆盖
+      // 整个用户裁决窗口（详见 WritingRevisionReview.baseMtimeMs 的注释——反直觉，别改）。
+      useWritingStore.getState().setReview({
+        target: { ...pending, range },
+        before,
+        after,
+        baseMtimeMs: sec.mtimeMs,
+        // 同一节里存在多段完全相同的源码、挑中的那处可能是错的——最后一道闸是用户的眼睛，
+        // 卡面要显眼地提醒他核对左侧原文（见 WritingRevisionReview.ambiguous 注释）。
+        ambiguous
+      })
+    } else if (!after) {
+      console.warn(
+        '[writing-revise] 本轮回复里没有改写哨兵——AI 可能在反问或跑题。正文保持不变，请重发改写。',
+        { sectionName: pending.sectionName, messageId }
+      )
+    } else {
+      // 拿到了改写结果、但那一节已经不在 sections 里（文件被删/改名，或刚好切了文档源）。
+      // 这条落在上面两个分支之外，不出声就只剩「点了没反应」，用户无从判断是 AI 没答还是结果丢了。
+      console.warn('[writing-revise] 拿到改写结果但目标节已不存在，结果丢弃', {
+        sectionName: pending.sectionName,
+        messageId
+      })
+      useWritingStore
+        .getState()
+        .setConflictMsg(`「${pending.sectionName}」已不在文稿里，这次改写结果没有落地。`)
+    }
+    useWritingStore.getState().setPendingRevision(null)
+  } catch (err) {
+    // 兜底：即便这里彻底失败，也必须把 pending 清掉，否则用户的改写永远卡在「等 AI 回复」，
+    // 排队的后续改写也跟着停摆（排空 effect 以 pendingRevision 为闸）。
+    console.error('[writing-revise] 轮末哨兵抽取失败', err)
+    try {
+      useWritingStore.getState().setPendingRevision(null)
+    } catch {
+      /* store 都取不到就没救了，不再套娃 */
+    }
   }
 }
 

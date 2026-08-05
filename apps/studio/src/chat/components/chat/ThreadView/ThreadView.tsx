@@ -51,6 +51,8 @@ import {
 } from './WorkflowScriptPanel'
 import { ProposalDocPanel } from '../../workspace/ProposalDocPanel'
 import { useProposalWorkspace } from '../../../stores/proposal'
+import { useWritingWorkspaceGate } from '../../../stores/writing'
+import { WritingDocPanel } from '../../workspace/WritingDocPanel'
 import { SpreadsheetPreviewPanel } from './SpreadsheetPreviewPanel'
 import { ImageEditPanel } from './ImageEditPanel'
 import {
@@ -504,8 +506,20 @@ export function ThreadView(): React.JSX.Element {
   // （激活即接管、leaveMode 即还原——Install-Plan 的原语义）。两者理论上互斥
   // （proposal 由 slash/模式激活的普通会话承载）；若同时为真，proposal 优先。
   const isProposalMode = useProposalWorkspace()
+  // 写作两栏：与 proposal 同为「实时接管」语义（有写作文档源即接管、没有即还原），
+  // 不按会话启动模式标记。三者互斥，优先级 proposal > slides > writing——proposal 由
+  // slash 显式激活、意图最强；writing 是从工具调用推导出来的，最弱。
+  //
+  // 【门控收紧成「有正文才开」（2026-07-31）】写作流水线在探测到文档源之后，还要跑几分钟
+  // 规划/spec_lock/大纲才落下第一节；旧门控一探测到就撑开右栏，用户对着一句「还没有正文」
+  // 干等，像功能卡死。现在由 useWritingWorkspaceGate 统一判定，它同时**兼数据泵**：
+  // 消息推导 → setSource → 轮询拉正文，这三件事无条件先跑（右栏关着也在拉），门只管
+  // 「拉到东西没有」。泵移出面板正是为了解开「门要有正文才开、正文要面板挂载才拉」这个环
+  // ——完整推演见该 hook 的头注释，**别把这些 effect 挪回面板里**。
+  const writingOpen = useWritingWorkspaceGate()
+  const isWritingMode = writingOpen && !isProposalMode && !isSlidesMode
   // 任一分栏模式：chat 列都收窄成固定宽度 rail（共用同一条拖拽宽度）。
-  const isSplitMode = isProposalMode || isSlidesMode
+  const isSplitMode = isProposalMode || isSlidesMode || isWritingMode
   // Workflow 脚本面板（右栏）：AI 正在写 workflow 脚本时自动弹出，或用户
   // 点了某张 Workflow 卡片的脚本入口。slides/proposal 分栏时禁用——右栏
   // 已被工作区占用，再开就是三列（chat 被夹成一线）。此 hook 只订阅稳定
@@ -859,6 +873,16 @@ export function ThreadView(): React.JSX.Element {
         <>
           <ChatColumnResizeHandle onResizeStart={onResizeStart} />
           <ProposalDocPanel />
+        </>
+      ) : null}
+
+      {/* 写作右栏：结构与 isProposalMode 同构（拖拽手柄 + 面板直接落在 ThreadView 上，
+          flex-1 长在面板自己根节点，不额外包一层 div）——三种分栏在这一点上保持一致，
+          用户在写作分栏下同样能拖动 chat 列宽度。 */}
+      {isWritingMode ? (
+        <>
+          <ChatColumnResizeHandle onResizeStart={onResizeStart} />
+          <WritingDocPanel />
         </>
       ) : null}
 

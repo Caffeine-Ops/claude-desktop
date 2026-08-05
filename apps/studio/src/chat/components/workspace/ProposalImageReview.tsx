@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ImageReview } from '../../stores/proposal'
+import type { ImageReview } from '../../lib/imageReviewTypes'
 import { toKbAssetUrl } from '../../lib/kbAssetUrl'
 import { toProposalAssetUrl } from '../../lib/proposalAssetUrl'
+import { toWritingAssetUrl } from '../../lib/writingAssetUrl'
 import { CheckIcon, TrashIcon, PencilIcon, XIcon, AlertTriangleIcon, SpinnerIcon } from './proposalIcons'
 
 // 改图/生图「先审后落地」对照卡（Task 11）。挂在 ProposalPaper 里对应节的正文之后（就地内联，
@@ -11,12 +12,23 @@ import { CheckIcon, TrashIcon, PencilIcon, XIcon, AlertTriangleIcon, SpinnerIcon
 // 本组件是纯展示 + 回调，不碰 store/IPC——落地（应用/放弃）与重新调用 IPC（重改）全由
 // ProposalPaper 处理，这里只负责渲染 review 快照与转发用户操作。
 //
-// src 解析链与 AssistantMarkdown 一致：先试 kbasset://（知识库镜像图），未命中再试
-// proposalasset://（草稿产出图/上传图）——两者是互斥的路径特征判定，链式尝试不会误判。
+// src 解析链与 AssistantMarkdown 一致：kbasset://（知识库镜像图）→
+// proposalasset://（提案草稿产出图）→ writingasset://（写作项目配图）。
+// 三者的路径特征互斥，链式尝试不会误判，所以本组件可以两个 feature 共用、
+// 不需要按场景传参决定用哪个协议。
+//
+// 与 AssistantMarkdown 的 img 覆写相比少了两步，均因为这里的 src 不是从 markdown
+// 里解析出来的：① 不需要 safeDecodeUri——review.sourcePath/resultPath 来自 IPC
+// 直接回填的绝对路径字符串，没有经过 react-markdown 的百分号编码，没有「编码/解码」
+// 这道工序；② 不需要 resolveRelativeAssetPath——这两个字段恒为 IPC 回的绝对路径
+// （即便写作正文里引用图片用的是相对路径 `../images/x.png`，那是 markdown 文本里
+// 的写法，与这里审阅卡拿到的 resultPath 是两回事，不适用相对路径解析）。
 function resolveImageSrc(src: string): string {
   const kbUrl = toKbAssetUrl(src)
   if (kbUrl !== src) return kbUrl
-  return toProposalAssetUrl(src)
+  const proposalUrl = toProposalAssetUrl(src)
+  if (proposalUrl !== src) return proposalUrl
+  return toWritingAssetUrl(src)
 }
 
 export interface ProposalImageReviewProps {
