@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'bun:test'
 import { posix, win32 } from 'node:path'
-import { sanitizeBaseName, resolveWritingAssetPath } from './writingExportPure'
+import {
+  sanitizeBaseName,
+  resolveWritingAssetPath,
+  findMissingWritingImages
+} from './writingExportPure'
 
 describe('sanitizeBaseName', () => {
   it('原样保留正常标题', () => {
@@ -203,5 +207,63 @@ describe('resolveWritingAssetPath 对相对 base 的处理——与渲染侧刻�
     expect(resolveWritingAssetPath('relative/drafts', '../images/a.png')).toBe(
       '../images/a.png'
     )
+  })
+})
+
+// ── 导出前的图片就位闸（应用侧）────────────────────────────────────────
+//
+// 2026-08-05 真机走查抓到的洞：`skills/writing/scripts/export.py` 有图片就位闸（缺图报清单、
+// 退出码 1），但**右栏那三个导出按钮走的是另一条 TypeScript 链**，那边只判「正文为空」——
+// 把 images/cover.png 挪走后点「导出 Word」，照常弹保存框、产出一份没有图的 docx，界面还报
+// 绿色「已导出」。用户拿到坏稿却看到成功提示，是最难发现的那类静默失败。
+//
+// 判据必须与嵌图那一侧【同一套】：都走 resolveWritingAssetPath，否则闸放行的图嵌图侧解析不到、
+// 或反过来闸拦住了其实能嵌的图。故本函数直接复用它，不另写一套路径规则。
+//
+// `exists` 注入而非直接 import node:fs：本文件是「零 IO」的纯逻辑模块（见文件头注释），
+// 真实存在性检查由 main 侧 handler 传 fs.existsSync 进来，测试传假表。
+describe('findMissingWritingImages', () => {
+  const BASE = '/proj/稿子/drafts'
+  // 只有这一张真的在盘上
+  const onDisk = new Set(['/proj/稿子/images/有.png'])
+  const exists = (p: string): boolean => onDisk.has(p)
+
+  it('引用了磁盘上没有的图 → 报出来，带原样 src 与解析后的绝对路径', () => {
+    const md = '正文\n\n![封面](../images/没有.png)\n'
+    expect(findMissingWritingImages(md, BASE, exists, posix)).toEqual([
+      { src: '../images/没有.png', resolved: '/proj/稿子/images/没有.png' }
+    ])
+  })
+
+  it('图在盘上 → 不报', () => {
+    const md = '![封面](../images/有.png)'
+    expect(findMissingWritingImages(md, BASE, exists, posix)).toEqual([])
+  })
+
+  it('外链（http/https/data:）不参与就位检查——不是本地文件，管不着也不该拦', () => {
+    const md = [
+      '![远程](https://example.com/a.png)',
+      '![内联](data:image/png;base64,AAAA)'
+    ].join('\n\n')
+    expect(findMissingWritingImages(md, BASE, exists, posix)).toEqual([])
+  })
+
+  it('解析不出绝对路径（single 模式没有基准目录）→ 不误报为缺失', () => {
+    // 无法验证 ≠ 缺失。这里若报缺，single 模式的每一次导出都会被闸挡死，
+    // 而那条路径本来就走「图片降级为文字占位」的既定行为（见 markdownToDocxBuffer 注释）。
+    const md = '![封面](../images/没有.png)'
+    expect(findMissingWritingImages(md, undefined, exists, posix)).toEqual([])
+  })
+
+  it('路径含空格的 <> 包裹形态也能认出来（与 normalizeImageMarkdown 的产出形态对齐）', () => {
+    const md = '![封面](<../images/我 的 图.png>)'
+    expect(findMissingWritingImages(md, BASE, exists, posix)).toEqual([
+      { src: '../images/我 的 图.png', resolved: '/proj/稿子/images/我 的 图.png' }
+    ])
+  })
+
+  it('同一张图被引用多次只报一次——清单是给人照着补图的，重复项只会让人数不清到底缺几张', () => {
+    const md = '![a](../images/没有.png)\n\n![b](../images/没有.png)'
+    expect(findMissingWritingImages(md, BASE, exists, posix)).toHaveLength(1)
   })
 })

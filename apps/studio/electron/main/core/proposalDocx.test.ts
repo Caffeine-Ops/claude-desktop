@@ -463,3 +463,41 @@ describe('markdownToDocxBuffer 剥除 genimage 指令块', () => {
     expect(xml).toContain('尾段')
   })
 })
+
+// ── 章节装饰（自动编号 + 分章分页）的体裁开关 ────────────────────────────
+//
+// 2026-08-05 真机走查抓到的缺陷：写作的 Word/PDF 导出复用本模块，连带继承了方案文档专属的
+// 两个「章节装饰」——① `##` 标题自动挂层级编号（与方案目录对齐用），② 每个 `##` 另起一页。
+// 对方案是对的，对一篇公众号文案是错的：标题被编号会与正文自带的「一、二、三」撞成双重编号，
+// 每节分页会把 600 字的文案排成 3 页（大半空白）。
+//
+// 故加一个 `chapterChrome` 开关，**缺省 true = 方案行为逐字不变**（这是本仓的红线），写作侧传 false。
+// 两条用例是一对：一条钉住方案不许被改坏，一条钉住写作确实关掉了。
+describe('markdownToDocxBuffer 章节装饰开关（chapterChrome）', () => {
+  const md = [
+    '# 每天写日报，怎么越写越累',
+    '',
+    '## 一、活干完了，你还得再干一遍',
+    '',
+    '正文一。',
+    '',
+    '## 二、日报的单位是一天',
+    '',
+    '正文二。'
+  ].join('\n')
+
+  it('缺省（方案）：章节标题带自动编号，且各章另起一页', async () => {
+    const buf = await markdownToDocxBuffer(md)
+    const xml = readDocxDocumentXml(Buffer.from(buf))
+    expect(xml).toContain('<w:numPr>') // 标题挂了编号实例
+    expect(xml).toContain('w:type="page"') // 章节间插了分页符
+  })
+
+  it('chapterChrome=false（写作）：标题不编号，也不插分页符', async () => {
+    const buf = await markdownToDocxBuffer(md, undefined, undefined, undefined, undefined, false)
+    const xml = readDocxDocumentXml(Buffer.from(buf))
+    expect(xml).not.toContain('<w:numPr>')
+    expect(xml).not.toContain('w:type="page"')
+    expect(xml).toContain('活干完了') // 关掉装饰不影响正文本身
+  })
+})

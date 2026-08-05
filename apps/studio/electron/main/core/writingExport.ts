@@ -39,7 +39,16 @@ export async function exportWritingDocx(
     defaultPath: `${sanitizeBaseName(defaultBaseName)}.docx`
   })
   if (r.canceled || !r.filePath) return { path: null }
-  const buf = await markdownToDocxBuffer(markdown, style, undefined, mermaidImages, assetBaseDir)
+  // 末位 false = 关掉「章节装饰」（标题自动编号 + 每章另起一页）：那是方案文档的体裁约定，
+  // 写作体裁套上去会双重编号、把短文案拆成一堆半空页。见 markdownToDocxBuffer 同名参数注释。
+  const buf = await markdownToDocxBuffer(
+    markdown,
+    style,
+    undefined,
+    mermaidImages,
+    assetBaseDir,
+    false
+  )
   await writeFile(r.filePath, buf)
   return { path: r.filePath }
 }

@@ -165,3 +165,59 @@ export function resolveWritingAssetPath(
   }
   return root + baseParts.join(sep)
 }
+
+/** 正文里一处「解析得出绝对路径、但磁盘上没有」的配图引用。 */
+export interface MissingWritingImage {
+  /** markdown 里原样写的 src——报给用户看的就是这个，与他在正文里看到的一致。 */
+  src: string
+  /** 解析后的绝对路径，即「该把文件放到哪」。 */
+  resolved: string
+}
+
+// 图片语法。两种目标形态都要认：裸路径 `![a](../x.png)`，以及含空格时被 `<>` 包起来的
+// `![a](<../我 的 图.png>)`——后者是 normalizeImageMarkdown 的产出形态（不补 `<>` 的话
+// remark 不把它解析成 image 节点，图会整个丢掉），闸若只认裸形态就会对含空格的图恒放行。
+// 与 proposal.ts / writingWechatCopyMsg.ts 的同类正则同一套取舍：不做 markdown AST 解析，
+// 图片语法足够简单，正则够用。
+const WRITING_IMAGE_RE = /!\[[^\]]*\]\(\s*(?:<([^>]+)>|([^)\s]+))[^)]*\)/g
+
+// 外链与内联数据：不是本地文件，就位闸管不着（也不该拦——用户把图挂在 CDN 上是合法用法）。
+const REMOTE_SRC_RE = /^(?:https?:|data:)/i
+
+/**
+ * 导出前的「图片就位闸」：扫正文里全部配图引用，返回**解析得出绝对路径、但磁盘上不存在**的那些。
+ *
+ * 与 `skills/writing/scripts/export.py` 的 `missing_images` 同职责——那条闸只护住「AI 跑脚本
+ * 导出」这一条路，右栏三个导出按钮走的是本进程这条链，2026-08-05 真机走查发现它当时没有闸：
+ * 把图挪走后导出照常成功、产出无图的 docx、界面报绿色「已导出」。
+ *
+ * 【为什么解析不出绝对路径的不算缺失】single 模式（打开单个 .md 而非项目）恒无 assetBaseDir，
+ * 相对路径解析不出来。那条路径的既定行为是「图片降级为文字占位」（见 markdownToDocxBuffer 的
+ * assetBaseDir 注释），不是错误；在这里报缺会把 single 模式的每一次导出都挡死。
+ * **无法验证 ≠ 缺失**——闸只对「能确定它该在哪、而它确实不在」的情况开火。
+ *
+ * @param exists 存在性判定，由调用方注入（main 传 `fs.existsSync`）。本模块零 IO，见文件头注释。
+ * @param pathImpl 见 resolveWritingAssetPath 同名参数——测试必须显式传，别赌跑测试的机器是什么系统。
+ */
+export function findMissingWritingImages(
+  markdown: string,
+  assetBaseDir: string | undefined,
+  exists: (absPath: string) => boolean,
+  pathImpl: Pick<PlatformPath, 'isAbsolute' | 'parse' | 'sep'> = nodePath
+): MissingWritingImage[] {
+  if (typeof markdown !== 'string' || !markdown) return []
+  const out: MissingWritingImage[] = []
+  // 同一张图被引用多次只报一次：清单是给人照着补图用的，重复项只会让人数不清到底缺几张。
+  const seen = new Set<string>()
+  for (const m of markdown.matchAll(WRITING_IMAGE_RE)) {
+    const src = (m[1] ?? m[2] ?? '').trim()
+    if (!src || REMOTE_SRC_RE.test(src)) continue
+    const resolved = resolveWritingAssetPath(assetBaseDir, src, pathImpl)
+    // 原样返回 = 没解析成（没传 base / 非相对路径 / 上跳越界）。绝对路径则照常检查。
+    if (!pathImpl.isAbsolute(resolved)) continue
+    if (seen.has(resolved)) continue
+    seen.add(resolved)
+    if (!exists(resolved)) out.push({ src, resolved })
+  }
+  return out
+}

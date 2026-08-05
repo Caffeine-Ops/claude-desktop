@@ -1090,6 +1090,15 @@ export const IPC_CHANNELS = {
    */
   WRITING_EXPORT_PDF: 'writing:export-pdf',
   /**
+   * Renderer → main. 导出前的「图片就位闸」：给正文与资产基准目录，回「解析得出绝对路径但盘上
+   * 没有」的配图清单。**必须走 main**：renderer 碰不到文件系统，存在性只有主进程能判。
+   *
+   * 独立成一条通道而不是塞进三条导出通道各判一次——三个导出入口（Word / PDF / 公众号复制）
+   * 走的是三条完全不同的链（main 直出 docx / renderer 渲 PDF / renderer 拼 HTML 进剪贴板），
+   * 塞进去要写三份同样的检查，日后判据一改就必然漏改其中一条。闸抽出来，三个入口各调一次。
+   */
+  WRITING_CHECK_IMAGES: 'writing:check-images',
+  /**
    * 写作工作区出图：按提示词生成一张配图，落进 `<项目>/images/`。
    * 与 PROPOSAL_IMAGE_GENERATE 分成两条通道而不是加参数，是因为**落点根本不同**
    * （项目目录 vs userData 草稿区），合并会让 handler 里长出一个 kind 分支，
@@ -2654,6 +2663,20 @@ export interface WritingExportResult {
   path: string | null
 }
 
+/** Payload for WRITING_CHECK_IMAGES。字段语义与 {@link WritingExportDocxPayload} 的同名字段一致。 */
+export interface WritingCheckImagesPayload {
+  markdown: string
+  assetBaseDir?: string
+}
+/**
+ * Result of WRITING_CHECK_IMAGES。`missing` 为空 = 全部就位（也包括「没有配图」和
+ * 「有配图但解析不出绝对路径、无从验证」两种情况——无法验证不算缺失，见
+ * findMissingWritingImages 头注释）。
+ */
+export interface WritingCheckImagesResult {
+  missing: Array<{ src: string; resolved: string }>
+}
+
 /** Payload for WRITING_IMAGE_GENERATE. `projectDir` 是写作项目根（含 drafts/ images/ 的那层）。 */
 export interface WritingImageGeneratePayload {
   projectDir: string
@@ -3932,6 +3955,11 @@ export interface ChatApi {
    * 这里只弹保存框、写盘。
    */
   writingExportPdf(payload: WritingExportPdfPayload): Promise<WritingExportResult>
+  /**
+   * 导出前的图片就位闸（WRITING_CHECK_IMAGES 通道注释）：三个导出入口在动手前各调一次，
+   * `missing` 非空就报清单并中止，不产出引用损坏的交付物。
+   */
+  writingCheckImages(payload: WritingCheckImagesPayload): Promise<WritingCheckImagesResult>
   /** 写作工作区出图：生成一张配图并落进项目的 images/。未配置出图 API 时抛错。 */
   writingImageGenerate(payload: WritingImageGeneratePayload): Promise<WritingImageResult>
 }

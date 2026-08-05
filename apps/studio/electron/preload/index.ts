@@ -171,6 +171,8 @@ import {
   type WritingWechatHtmlResult,
   type WritingExportDocxPayload,
   type WritingExportPdfPayload,
+  type WritingCheckImagesPayload,
+  type WritingCheckImagesResult,
   type WritingExportResult,
   type WritingImageGeneratePayload,
   type WritingImageResult
@@ -1205,6 +1207,8 @@ const chatApi: ChatApi = {
     ipcRenderer.invoke(IPC_CHANNELS.WRITING_EXPORT_DOCX, payload),
   writingExportPdf: (payload: WritingExportPdfPayload): Promise<WritingExportResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.WRITING_EXPORT_PDF, payload),
+  writingCheckImages: (payload: WritingCheckImagesPayload): Promise<WritingCheckImagesResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.WRITING_CHECK_IMAGES, payload),
   writingImageGenerate: (payload: WritingImageGeneratePayload): Promise<WritingImageResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.WRITING_IMAGE_GENERATE, payload)
 }

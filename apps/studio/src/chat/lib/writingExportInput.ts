@@ -21,3 +21,20 @@ export function deriveWritingExportBaseName(markdown: string): string {
   const h1 = H1_RE.exec(markdown)?.[1]?.trim()
   return h1 && h1.length > 0 ? h1 : '文稿'
 }
+
+/** 清单里最多列几张。多了会把提示条撑成一屏，用户反而看不清重点。 */
+const MISSING_IMAGES_PREVIEW = 3
+
+/**
+ * 图片就位闸拦下导出后的提示文案。入参是 main 侧 `findMissingWritingImages` 回来的清单
+ * （`{ src, resolved }`，这里只用 src——用户在正文里看到的就是它，报绝对路径反而对不上号）。
+ *
+ * 超过 3 张时截断，但**明说还有几张没列**：静默截断会让用户补完列出的那几张、再导出又被拦，
+ * 而提示看起来一模一样，只能靠猜。可见的截断比完整但过长的清单更有用。
+ */
+export function buildMissingImagesMsg(missing: ReadonlyArray<{ src: string }>): string {
+  const shown = missing.slice(0, MISSING_IMAGES_PREVIEW).map((m) => m.src)
+  const rest = missing.length - shown.length
+  const tail = rest > 0 ? `（另有 ${rest} 张未列出）` : ''
+  return `缺 ${missing.length} 张配图，已中止导出：${shown.join('、')}${tail}`
+}

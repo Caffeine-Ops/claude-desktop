@@ -26,7 +26,7 @@ import { sendWritingMessage } from '../../lib/sendWritingMessage'
 import { replaceBlockAt } from '../../lib/writingEdit'
 import { writingStyleFor } from '../../lib/writingGenreStyle'
 import { renderProposalPdfHtml } from '../../lib/renderProposalPdfHtml'
-import { deriveWritingExportBaseName } from '../../lib/writingExportInput'
+import { buildMissingImagesMsg, deriveWritingExportBaseName } from '../../lib/writingExportInput'
 import { buildWechatCopyMsg } from '../../lib/writingWechatCopyMsg'
 import { writingAssetBaseDir } from '../../lib/writingAssetUrl'
 import { extractMermaidBlocks, renderMermaidImageMap } from '../../lib/mermaidRender'
@@ -462,10 +462,16 @@ export function WritingDocPanel(): React.JSX.Element | null {
         useWritingStore
           .getState()
           .setConflictMsg(
+            // 【措辞不点名「AI」，2026-08-05 真机走查修】乐观锁拦的是「盘上的内容比你开始编辑
+            // 那一刻新了」，改动方**不一定是 AI**：用户拿外部编辑器（VS Code / Typora）改同一个
+            // 文件同样会撞这道锁，走查里就是这么触发的——那时根本没有 AI 在跑，却弹出「刚被 AI
+            // 改过」，把人往错误的方向指。这里拿不到、也不该去猜改动方是谁（mtime 只说变过、
+            // 不说谁改的），故只陈述事实并把两种可能都摆出来，让用户自己对号入座。
             stillHasBlock
-              ? '这一节刚被 AI 改过，你刚才编辑框里的改动没能存上（内容已刷新到最新版本）。' +
-                  '请先把编辑框里的文字复制出来，再按 Esc 关掉编辑框重新编辑。'
-              : '这一节刚被 AI 改过，你刚才编辑的这一段已经不在了，编辑框里未保存的内容无法保留。'
+              ? '这一节的内容已经变了（AI 改写过，或你在别处编辑过），你刚才编辑框里的改动没能存上' +
+                  '（内容已刷新到最新版本）。请先把编辑框里的文字复制出来，再按 Esc 关掉编辑框重新编辑。'
+              : '这一节的内容已经变了（AI 改写过，或你在别处编辑过），你刚才编辑的这一段已经不在了，' +
+                  '编辑框里未保存的内容无法保留。'
           )
         return false
       }
@@ -582,6 +588,31 @@ export function WritingDocPanel(): React.JSX.Element | null {
     return { markdown, baseName: deriveWritingExportBaseName(markdown) }
   }
 
+  /**
+   * 图片就位闸：三个导出入口在动手前各调一次，缺图就报清单并**中止**，不产出引用损坏的交付物。
+   *
+   * 2026-08-05 真机走查补上的——此前这条链一道闸都没有（闸只写在 `skills/writing/scripts/export.py`，
+   * 那是 AI 跑脚本导出的路径）：把 images/cover.png 挪走后点「导出 Word」，照常弹保存框、产出
+   * 一份没有图的 docx、还报绿色「已导出」。用户拿到坏稿却看到成功提示，是最难发现的静默失败。
+   *
+   * 返回 true = 被拦下（调用方直接 return）。**闸自身出错时放行**（catch 里返回 false）：
+   * 它是一道保护，不该反过来变成「因为闸挂了所以导不出」的新故障源。
+   */
+  async function blockedByMissingImages(markdown: string): Promise<boolean> {
+    try {
+      const { missing } = await window.chatApi.writingCheckImages({
+        markdown,
+        assetBaseDir: writingAssetBaseDir(useWritingStore.getState().source)
+      })
+      if (!missing.length) return false
+      setExportMsg({ tone: 'err', text: buildMissingImagesMsg(missing) })
+      return true
+    } catch (err) {
+      console.error('[writing-export 图片就位闸]', err)
+      return false
+    }
+  }
+
   async function exportDocx(): Promise<void> {
     if (exportingDocx) return
     const { markdown, baseName } = buildExportInput()
@@ -589,6 +620,7 @@ export function WritingDocPanel(): React.JSX.Element | null {
       setExportMsg({ tone: 'muted', text: '正文为空，无内容可导出' })
       return
     }
+    if (await blockedByMissingImages(markdown)) return
     setExportingDocx(true)
     try {
       // 与 exportPdf 同源：mermaid 只能在 renderer 渲，先扫出正文里的块、逐个渲成 SVG 再
@@ -626,6 +658,7 @@ export function WritingDocPanel(): React.JSX.Element | null {
       setExportMsg({ tone: 'muted', text: '正文为空，无内容可导出' })
       return
     }
+    if (await blockedByMissingImages(markdown)) return
     setExportingPdf(true)
     try {
       // 与 ProposalDocPanel.handleExportPdf 同源同法：mermaid 只能在 renderer 渲（main 无 DOM），
@@ -677,6 +710,9 @@ export function WritingDocPanel(): React.JSX.Element | null {
       setExportMsg({ tone: 'muted', text: '正文为空，无内容可复制' })
       return
     }
+    // 公众号复制同样过闸：粘进编辑器后配图本来就要手动上传（见 buildWechatCopyMsg 头注释），
+    // 但那条提示的前提是「图还在、你去传一下」——图都不在了还提示「手动上传」是把人往沟里带。
+    if (await blockedByMissingImages(markdown)) return
     setCopyingWechat(true)
     try {
       const r = await window.chatApi.writingWechatHtml({ markdown, styleName: 'wechat-default' })

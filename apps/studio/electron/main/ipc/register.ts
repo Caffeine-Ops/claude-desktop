@@ -178,6 +178,8 @@ import {
   type WritingWechatHtmlResult,
   type WritingExportDocxPayload,
   type WritingExportPdfPayload,
+  type WritingCheckImagesPayload,
+  type WritingCheckImagesResult,
   type WritingExportResult,
   type WritingImageGeneratePayload,
   type WritingImageResult
@@ -225,6 +227,7 @@ import {
 } from '../core/writingProject'
 import { markdownToWechatHtml, loadWechatStyle, FALLBACK_WECHAT_STYLE } from '../core/writingWechat'
 import { exportWritingDocx, saveWritingPdf } from '../core/writingExport'
+import { findMissingWritingImages } from '../core/writingExportPure'
 import {
   importBackgroundThemeFromFile,
   listBackgroundThemes,
@@ -519,6 +522,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.WRITING_WECHAT_HTML)
   ipcMain.removeHandler(IPC_CHANNELS.WRITING_EXPORT_DOCX)
   ipcMain.removeHandler(IPC_CHANNELS.WRITING_EXPORT_PDF)
+  ipcMain.removeHandler(IPC_CHANNELS.WRITING_CHECK_IMAGES)
   ipcMain.removeHandler(IPC_CHANNELS.WRITING_IMAGE_GENERATE)
   ipcMain.removeHandler(IPC_CHANNELS.BACKGROUND_THEME_IMPORT)
   ipcMain.removeHandler(IPC_CHANNELS.BACKGROUND_THEME_LIST)
@@ -2962,12 +2966,17 @@ export function registerIpcHandlers(): void {
       // 的裸调用 markdownToDocxBuffer 一致，见其头注释）。方案的两个调用点不传 kind，缺省即
       // 走原有分支，逐字节验证过不受影响。
       const ungrounded = payload?.kind === 'writing' ? undefined : collectUngroundedImagePaths(markdown)
+      // 章节装饰（标题自动编号 + 每章分页）同样按 kind 分流：方案要，写作不要。这条通道既服务
+      // 方案预览/导出，也服务写作的 PDF 导出链（WritingDocPanel.exportPdf → renderProposalPdfHtml
+      // → 本通道 → docx-preview → printToPDF），漏掉这里会出现「Word 已修好、PDF 仍双重编号」的
+      // 半修状态——两条链共用同一个 docx 引擎，开关就必须两处一起给。见 markdownToDocxBuffer 注释。
       const bytes = await markdownToDocxBuffer(
         markdown,
         payload?.style,
         ungrounded,
         payload?.mermaidImages,
-        assetBaseDir
+        assetBaseDir,
+        payload?.kind !== 'writing'
       )
       return { bytes }
     }
@@ -3534,6 +3543,22 @@ export function registerIpcHandlers(): void {
       const win = BrowserWindow.fromWebContents(event.sender)
       if (!win) return { path: null }
       return saveWritingPdf(win, payload.bytes, payload.defaultBaseName)
+    }
+  )
+
+  // 图片就位闸（WRITING_CHECK_IMAGES 通道注释）。判据全在纯函数 findMissingWritingImages 里，
+  // 这里只负责把「碰磁盘」这件事补上（existsSync）——renderer 判不了存在性，故必须过一趟 main。
+  //
+  // typeof 守卫与 assetBaseDir 的处理照抄 PROPOSAL_RENDER 那处：payload 来自 IPC，类型标注是
+  // 编译期约束不是运行期保证，畸形入参不能让整条导出 reject（那会把「缺图提示」变成「导出失败」，
+  // 用户看到的原因就错了）。
+  ipcMain.handle(
+    IPC_CHANNELS.WRITING_CHECK_IMAGES,
+    async (_event, payload: WritingCheckImagesPayload): Promise<WritingCheckImagesResult> => {
+      const markdown = typeof payload?.markdown === 'string' ? payload.markdown : ''
+      const assetBaseDir =
+        typeof payload?.assetBaseDir === 'string' ? payload.assetBaseDir : undefined
+      return { missing: findMissingWritingImages(markdown, assetBaseDir, existsSync) }
     }
   )
 
