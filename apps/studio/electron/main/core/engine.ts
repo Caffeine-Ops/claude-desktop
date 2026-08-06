@@ -2029,6 +2029,16 @@ export class ChatEngine extends EventEmitter {
               : pythonHome
                 ? { PPT_MASTER_PYTHON_HOME: pythonHome }
                 : {}),
+            // 同上，给 tender-review skill 的 bin/ensure-python.sh。刻意每个技能
+            // 一个独立变量名而不是共用一个 PYTHON_HOME：技能自包含、可被单独
+            // 打包发布，共用变量会让「只装了其中一个」的机器上出现名字对得上
+            // 但语义不属于自己的注入。不注入的后果不是报错而是**静默降级**到
+            // 系统 python（可能是 3.14 → 无 cp314 wheel → 源码编译卡死）。
+            ...(process.env.TENDER_PYTHON_HOME
+              ? {}
+              : pythonHome
+                ? { TENDER_PYTHON_HOME: pythonHome }
+                : {}),
             // local-kb skill 的 kbpath.mjs 读这个拿到知识库目录（userData/kb-local/）——
             // userData 的真实位置只有 main 侧算得出，skill 脚本是用户机器裸 node 进程，
             // 必须由此注入。尊重用户自导出的覆盖（诊断用）。
@@ -2051,6 +2061,14 @@ export class ChatEngine extends EventEmitter {
               ? {}
               : pythonHome
                 ? { PPT_MASTER_PYTHON_HOME: pythonHome }
+                : {}),
+            // 同上，tender-review skill 在 system 后端下也要能用。理由与 bundled
+            // 分支那段一致：这是 main 侧运行时路径，不是 env.json 网关密钥，
+            // 不影响 claude 的模型路由。
+            ...(process.env.TENDER_PYTHON_HOME
+              ? {}
+              : pythonHome
+                ? { TENDER_PYTHON_HOME: pythonHome }
                 : {}),
             // 同 bundled：local-kb 在 system 后端下也要能用。KB_DIR 是 main 侧运行时路径，
             // 不是 env.json 网关密钥，不影响 claude 模型路由，交给 system claude 安全。
