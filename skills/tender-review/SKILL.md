@@ -10,6 +10,29 @@ description: >-
 
 # 招标文件审标 tender-review-skill
 
+## 在 Claude Desktop 里运行（app 内必读，其它宿主可跳过）
+
+本技能随 Claude Desktop 打包分发。在 app 内运行时，Python 环境由技能自带的
+引导脚本准备，**用户不需要也不应该被要求手动装任何东西**：
+
+1. **动手前先跑一次引导**（macOS / Linux）：
+
+   ```bash
+   source bin/ensure-python.sh
+   ```
+
+   Windows：`bin\ensure-python.cmd`，读它 stdout **最后一行** 的 `TENDER_PY=<路径>`。
+
+2. **其后本文档中所有 `python scripts/xxx.py` 一律替换为 `$TENDER_PY scripts/xxx.py`。**
+   直接用 `python` 会命中用户系统里的解释器，那里没有本技能的依赖。
+
+3. **跳过下面 §-1 的环境自检**（`check_env.py`）—— 那一步的职责（检测缺什么、
+   指导用户安装）已被引导脚本完全覆盖，再跑一遍只会让用户看到「请打开终端敲
+   pip install」这类不该出现在桌面产品里的指令。
+
+> 为什么不直接改写下面的正文：本技能是 vendor 进来的上游代码，改动集中在这一段
+> 才能让上游更新时的 diff 保持干净。本地改动清单见 `UPSTREAM.md`。
+
 **审的是招标方发的招标文件,服务的是要去投标的人。**
 
 输入一份招标文件 → 产出「投标核对清单」——帮投标人在**动手写投标文件之前**,看清楚招标方的所有要求(哪些不达标会被废、哪些是评分点、要准备什么材料、哪些 ▲ 参数必须响应、哪些时间节点不能错)。
