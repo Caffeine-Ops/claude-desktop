@@ -28,3 +28,23 @@ describe('acceptForPlaceholder · 文稿组合映射（设计 §5.2）', () => {
     expect(acceptForPlaceholder('资料文件')).toBeUndefined()
   })
 })
+
+describe('acceptForPlaceholder · 招标文件（审标技能）', () => {
+  const TENDER_FORMATS = '.pdf,.doc,.docx'
+
+  it('招标 / 标书 / 投标 都映射到 pdf + word', () => {
+    expect(acceptForPlaceholder('招标文件')).toBe(TENDER_FORMATS)
+    expect(acceptForPlaceholder('标书文件')).toBe(TENDER_FORMATS)
+    expect(acceptForPlaceholder('投标文件')).toBe(TENDER_FORMATS)
+  })
+
+  it('必须含 .pdf——招标文件绝大多数是 PDF，这条专属引导规则漏了 pdf 用户就还是选不到自己的标书', () => {
+    expect(acceptForPlaceholder('招标文件')!.split(',')).toContain('.pdf')
+  })
+
+  it('不含 .txt/.md——招标文件不会是纯文本，混进来只是噪音', () => {
+    const tokens = acceptForPlaceholder('招标文件')!.split(',')
+    expect(tokens).not.toContain('.txt')
+    expect(tokens).not.toContain('.md')
+  })
+})

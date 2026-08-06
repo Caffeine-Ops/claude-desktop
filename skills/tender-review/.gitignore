@@ -1,0 +1,105 @@
+# ============================================================
+# 本仓说明（2026-08-06 事故记录 —— 不要再删这个文件）
+# ============================================================
+# 本文件随上游开源技能 tender-review-kit 整体 vendor 进本仓
+# （上游 commit 06d0409d4221ae366f25b88fdfe5ad5388b6b37b，详见同目录 UPSTREAM.md）。
+# 当时的实施计划把它当成普通构建产物忽略文件删掉了，理由是「vendor 进来后
+# 由本仓根部规则统一管辖」——这个判断是错的：本仓根 .gitignore 只有
+# `skills/**/__pycache__/` 一条，盖不住下面这些规则要挡的东西。
+#
+# 端到端走查已经实证了后果：跑完一次真实审标后，
+# `skills/tender-review/workspace/` 变成未跟踪目录，里面是标书解析产物和
+# Excel 核对清单；招标文件常含商业敏感信息，谁执行一次 `git add .` /
+# `git add -A` 就会把用户的标书内容提交进仓库历史（且几乎不可逆）。
+#
+# 所以这份文件不是「构建产物忽略」，是一道隐私护栏，跟 `.gitattributes`
+# （纯行尾规范化配置，删了无所谓）性质完全不同——恢复它，以后也不要再删。
+# ============================================================
+# 以下为上游原文，逐字保留（同步上游时以此为准做 diff，不要在这份之外自行改写规则）：
+
+# tender-review-skill · .gitignore
+# 保证开源仓库不含任何用户标书 / 运行时产物。
+
+# 运行时产物(扫过的标书会落在这里)
+workspace/
+
+# 用户标书文件(任何来路的招标文件都不进仓库)
+*.pdf
+*.docx
+*.doc
+
+# 例外:测试用的合成样本必须能进仓库,供回归测试使用
+!tests/fixtures/*.docx
+!tests/fixtures/*.pdf
+
+# Excel 输出(用户产生的核对清单不进仓库)
+*.xlsx
+
+# 决定文件 + coverage 中间产物
+_decisions_*.txt
+*.coverage.json
+*.hits.json
+*.tables.json
+*.lines.txt
+
+# 候选词(含用户标书原文片段):新默认在 workspace/<项目>.candidates.json(已随 workspace/ 整体忽略)
+# 下面是兜底:候选词文件含原文,任何位置都不进仓库
+data/candidates.json
+*.candidates.json
+
+# 用户本地词库(每个用户审标过程中积累的私有判词,不进仓库)
+# 通过 export_contribution.py 选择性贡献给开源 keywords.json
+data/local_keywords.json
+*.hits.v2.json
+*.pending_words.json
+
+# export_contribution.py 导出的临时贡献文件(本地预览用,贡献后可删)
+/contribution.md
+
+# 发布给网盘/用户的本地压缩包
+/release/
+
+# 开发期私人记录(开源仓库不带)
+OPEN_TASKS.md
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# AI 工具本地设置(含本机标书文件名/权限,不进仓库)
+.claude/settings.local.json
+
+# ============================================================
+# 本仓补充规则(2026-08-06 终审发现的护栏缝隙 —— 不属于上游原文，
+# 只在这段追加，不改动上面任何一行上游规则)
+# ============================================================
+# 下面三条是终审复查时发现、上面的上游规则盖不住的漏网口子，专门为本仓
+# （作为打包进桌面应用的技能，环境和调用方式比上游预设的更杂）补的：
+
+# 1. 上面只挡了 *.xlsx（核对清单输出），没挡 *.xls —— 招标文件本身也可能是
+#    老版 Excel 格式（.xls），同样含商业敏感信息，需要一并挡住。
+*.xls
+
+# 2. 上面的 workspace/ 只挡"落在 workspace/ 目录下"的产物。但 AI agent 写的
+#    工作区 md（内含招标文件原文摘录）文件名不受目录限制——只要不小心把
+#    <项目>.工作区.md 写到 workspace/ 之外的任意位置（比如技能根目录），
+#    上面那条规则就盖不住。这里按文件名后缀兜底，不依赖它落在哪个目录。
+*.工作区.md
+
+# 3. scripts/extract_text.py 的 --outdir 默认值其实是
+#    `<招标文件所在目录>/_extracted`（不是 workspace/，见该脚本 --outdir
+#    参数的 help 文案），CWD 不在技能目录、且调用时没显式传 --outdir 时，
+#    产物就会落进一个 workspace/ 规则完全覆盖不到的目录名。兜底挡掉。
+_extracted/
