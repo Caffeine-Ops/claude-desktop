@@ -34,7 +34,7 @@
 | 3 | 本仓已有成熟的 Python 引导模式：venv 落用户目录、三镜像源防卡死、哨兵文件秒过 | `skills/writing/bin/ensure-python.sh`（打包后 skill 目录只读，venv **绝不能**建在 skill 目录内——该文件头注释已记此约束） |
 | 4 | 主进程目前**只**注入 `PPT_MASTER_PYTHON_HOME`，其余技能的 `*_PYTHON_HOME` 均未注入 | `grep -rn "PYTHON_HOME" electron/main/` 仅命中 `engine.ts:2027/2050`、`cliDetect.ts:263`、`pptSkillInstaller.ts:332` |
 | 5 | 远端场景目录是**整表替换**内置默认表，不是逐条合并 | `stores/scenarioCatalog.ts:52` 的 `setCatalog` 直接 `set({catalog})`；`lib/scenarioCatalogDefaults.ts` 头注释亦述此意 |
-| 6 | 「【招标文件】」占位槽按现有规则会被判成只收 Word，而招标文件多为 PDF | `composer/filePlaceholderPlugin.ts:46` 的 `[/word|docx?(?![a-z])|文档/i, '.doc,.docx']` 先于 `:47` 的 pdf 规则命中「文件」二字 |
+| 6 | 「【招标文件】」占位槽在现有规则下命不中任何关键词，落进「未命中→不限制」这一档（和「资料文件」同档），没有专属格式引导——**不是**被 word 规则误判成只收 Word | `composer/filePlaceholderPlugin.ts:46` 的 word 规则 `[/word|docx?(?![a-z])|文档/i, '.doc,.docx']` 匹配的是「文档」二字，「招标文件」不含该子串也不含 word/docx，不会被它命中；实测 `acceptForPlaceholder('招标文件')` 改动前返回 `undefined` |
 | 7 | chip 注册缺失的技能会被 ScenarioRail **整条静默跳过** | `stores/scenarioCatalog.ts:76-79` 注释：「配了却看不见，最难查」 |
 | 8 | 本地 docker 后端（`sub2api-dev`，代码停在 7-22 `dbfa5f4`）**没有**场景目录接口 | `curl 127.0.0.1:8080/api/v1/client/scenario-catalog` → **404**；`origin/main` 已领先，含 11 个 scenario 相关文件 |
 | 9 | 生产后端 `https://cowork.cntcn.com` 接口存在但需管理员 token | 匿名 curl → `401 UNAUTHORIZED` |

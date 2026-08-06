@@ -481,7 +481,7 @@ cp314 wheel，pip 退化源码编译会卡死。bundled 与 system 两个后端�
 - Consumes: 现有导出 `acceptForPlaceholder(placeholderText: string): string | undefined`
 - Produces: `acceptForPlaceholder('招标文件')` 返回 `'.pdf,.doc,.docx'`。Task 5 的示例 prompt 依赖它——那些 prompt 里写的就是「【招标文件】」。
 
-**背景（为什么需要这个改动）**：现有表里 `[/word|docx?(?![a-z])|文档/i, '.doc,.docx']` 会先命中「招标文件」中的「文件」二字，用户点开选择器时自己的 **PDF 标书是灰的、选不了**——而招标文件绝大多数是 PDF。
+**背景（为什么需要这个改动）**：改动前「招标文件」命不中 `ACCEPT_BY_KEYWORD` 里任何一条——word 规则 `[/word|docx?(?![a-z])|文档/i, '.doc,.docx']` 匹配的是「文档」二字，不是「文件」，不会误伤——落进「未命中→不限制」这一档，和「资料文件」同档：选择器不做任何引导，用户面对全部格式平铺，找自己的 PDF/Word 标书要自己翻。这次改动不是"解冲突"，是照着 ppt/excel/文稿三条的先例，给审标技能补一条专属格式引导：只把 PDF 和 Word 挑出来。
 
 - [ ] **Step 1: 写失败测试**
 
