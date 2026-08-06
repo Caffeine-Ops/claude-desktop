@@ -54,10 +54,12 @@ cd /Users/kika/Desktop/project/Electron/claude-desktop
 rm -rf skills/tender-review
 cp -R /tmp/tender-src skills/tender-review
 rm -rf skills/tender-review/.git skills/tender-review/.github
-rm -f skills/tender-review/.gitignore skills/tender-review/.gitattributes
+rm -f skills/tender-review/.gitattributes
 ```
 
-删除理由（逐条）：`.git` 会形成仓库套仓库；`.github` 是上游 CI，与本仓无关；`.gitignore` / `.gitattributes` 在 vendor 后由本仓根部规则统一管辖。
+删除理由（逐条）：`.git` 会形成仓库套仓库；`.github` 是上游 CI，与本仓无关；`.gitattributes` 是纯行尾规范化配置，与本仓无关。
+
+**`.gitignore` 不删、原样留着**：它不是构建产物忽略文件，是隐私护栏——忽略 `workspace/`（扫描产物落地目录）、`*.pdf`/`*.docx`/`*.doc`（用户标书）、`*.xlsx`（产出的核对清单）等。本仓根 `.gitignore` 只有 `skills/**/__pycache__/` 一条，盖不住这些；本计划早期版本曾误判「vendor 后由本仓根部规则统一管辖」把它一并删掉，真机走查已实证后果：跑完一次审标 `workspace/` 变成未跟踪目录，`git add .` 会把含商业敏感信息的用户标书提交进仓库。
 
 **保留** `tests/`（`fixtures/sample_tender.docx` 是 Task 6 端到端验证的输入）与上游全部文档（`README.md` / `ARCHITECTURE.md` / `FOR_AI.md` / `QUICKSTART.md` / `INSTALL.md` / `CHANGELOG.md`）——它们解释了判词库与护栏的设计意图。
 
@@ -126,7 +128,7 @@ Create `skills/tender-review/UPSTREAM.md`:
 | 2 | `SKILL.md` 顶部 | 新增「在 Claude Desktop 里运行」一段 | 上游 §-1 让用户自己敲 pip install，桌面产品里不能这样 |
 | 3 | `bin/ensure-python.sh` / `.cmd` | 新增（上游没有 `bin/`） | 自动建 venv 装依赖，用户零操作 |
 
-**删除的上游文件**：`.git/`、`.github/`、`.gitignore`、`.gitattributes`。
+**删除的上游文件**：`.git/`、`.github/`、`.gitattributes`。`.gitignore` **保留**——它是隐私护栏（忽略 `workspace/`、用户标书、核对清单等），不是构建产物忽略文件，不能当成「本仓根部规则统一管辖」的对象删掉。
 
 ## 同步上游的做法
 

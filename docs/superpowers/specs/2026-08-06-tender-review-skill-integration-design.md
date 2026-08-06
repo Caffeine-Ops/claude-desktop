@@ -52,8 +52,16 @@
 
 **取舍：**
 
-- **删** `.git/`（仓库套仓库）、`.github/`（上游 CI 与本仓无关）、`.gitignore` /
-  `.gitattributes`（vendor 进来后由本仓根部的规则统一管辖）
+- **删** `.git/`（仓库套仓库）、`.github/`（上游 CI 与本仓无关）、`.gitattributes`
+  （纯行尾规范化配置，与本仓无关）
+- **留** `.gitignore`（**2026-08-06 订正**：本设计最初把它跟 `.gitattributes` 一起
+  列为删除项，理由是「vendor 后由本仓根部规则统一管辖」——这个判断是错的。它不是
+  构建产物忽略文件，是隐私护栏：忽略 `workspace/`（扫描产物落地目录）、
+  `*.pdf`/`*.docx`/`*.doc`（用户标书）、`*.xlsx`（产出的核对清单）等，本仓根
+  `.gitignore` 只有 `skills/**/__pycache__/` 一条，盖不住这些。真机走查已实证
+  后果：删掉它之后跑完一次审标，`workspace/` 变成未跟踪目录，`git add .` 会把
+  含商业敏感信息的用户标书提交进仓库。内容与上游逐字一致，只在顶部追加一段
+  本仓视角说明
 - **留** `tests/`（72KB，其中 `fixtures/sample_tender.docx` 正是本设计验证环节的输入）
 - **留** 上游全部文档（`README.md` / `ARCHITECTURE.md` / `FOR_AI.md` / `QUICKSTART.md` /
   `INSTALL.md` / `CHANGELOG.md`）——它们解释了判词库与护栏的设计意图，删掉会让以后
