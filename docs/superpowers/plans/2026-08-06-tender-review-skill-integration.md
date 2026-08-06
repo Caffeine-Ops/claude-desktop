@@ -497,7 +497,7 @@ describe('acceptForPlaceholder · 招标文件（审标技能）', () => {
     expect(acceptForPlaceholder('投标文件')).toBe(TENDER_FORMATS)
   })
 
-  it('必须含 .pdf——招标文件绝大多数是 PDF，落进 word 规则会让用户选不了自己的标书', () => {
+  it('必须含 .pdf——招标文件绝大多数是 PDF，这条专属引导规则漏了 pdf 用户就还是选不到自己的标书', () => {
     expect(acceptForPlaceholder('招标文件')!.split(',')).toContain('.pdf')
   })
 
@@ -515,7 +515,7 @@ describe('acceptForPlaceholder · 招标文件（审标技能）', () => {
 cd apps/studio && bun test src/chat/composer/filePlaceholderPlugin.test.ts
 ```
 
-Expected: FAIL。第一条断言实际得到 `'.doc,.docx'`（被 word 规则抢先命中），缺 `.pdf`。
+Expected: FAIL。第一条断言实际得到 `undefined`——「招标文件」命不中当时表里任何一条关键词（word 规则匹配的是「文档」二字，不是「文件」，不会误伤），落进「未命中→不限制」这一档，不是 `.doc,.docx`。
 
 - [ ] **Step 3: 在关键词表最前面加一条**
 
@@ -530,11 +530,17 @@ const ACCEPT_BY_KEYWORD: readonly [RegExp, string][] = [
 
 ```typescript
 const ACCEPT_BY_KEYWORD: readonly [RegExp, string][] = [
-  // 招标文件（审标技能的「【招标文件】」槽）。**必须排在最前**：下面的
-  // word 规则会先命中「招标文件」里的「文件」二字，把选择器限死成
-  // .doc/.docx，而招标文件绝大多数是 PDF——用户点开会发现自己的标书是
-  // 灰的。也刻意不复用下面的文稿组合（那条会把 .txt/.md 放进来，对招标
-  // 文件是噪音）。
+  // 招标文件（审标技能的「【招标文件】」槽）。这张表的设计意图是引导，
+  // 不是安检——参照上面「未命中任何关键词返回 undefined = 不限制」的
+  // 注释。改动前「招标文件」四个字就落在这一档：它不含「文档」二字，
+  // 也没有 word/docx 子串，不会被下面的 word 规则命中，而是和「资料
+  // 文件」一样，四个关键词都不命中、选择器不做任何引导。这条规则的
+  // 价值不是"解冲突"，是照着 ppt/excel/文稿三条的先例，给审标技能补
+  // 一条专属格式引导：招标文件绝大多数是 PDF 或 Word，把这两类挑出来。
+  // 放在表首是防御性的：今天没有其它规则会抢在它前面命中"招标/标书/
+  // 投标"，但以后若有人往表里加更宽的规则，顺序错了就会被抢跑——提前
+  // 占住表首位置。也刻意不复用下面的文稿组合（那条会把 .txt/.md 放
+  // 进来，对招标文件是噪音）。
   [/招标|标书|投标/i, '.pdf,.doc,.docx'],
   // 文稿组合映射（优化已有作品的「【文稿文件】」槽，设计 §5.2）：覆盖
 ```
@@ -561,9 +567,13 @@ Expected: 通过。
 git add apps/studio/src/chat/composer/filePlaceholderPlugin.ts apps/studio/src/chat/composer/filePlaceholderPlugin.test.ts
 git commit -m "feat(tender-review): 文件槽认招标文件，放行 PDF
 
-「招标文件」四个字原会被 word 规则先命中（含「文件」二字），选择器限死
-.doc/.docx，而招标文件绝大多数是 PDF——用户点开发现自己的标书是灰的。
-新规则必须排在表首才能抢在 word 规则之前。"
+「招标文件」四个字改动前命不中 ACCEPT_BY_KEYWORD 里任何一条（word 规则
+匹配的是「文档」二字，不是「文件」，不会误伤），落进"未命中→不限制"
+这一档，和「资料文件」同档——选择器不做任何引导，用户要自己从全部
+格式里翻出自己的 PDF/Word 标书。这次改动照着 ppt/excel/文稿三条的
+先例，给审标技能补一条专属格式引导：只把 PDF 和 Word 挑出来。放在表
+首是防御性的，防的是以后有更宽的规则加进来抢跑，不是解一个今天就
+存在的冲突。"
 ```
 
 ---
@@ -621,7 +631,7 @@ describe('内置场景目录 · 审标书', () => {
     }
   })
 
-  it('招标文件槽能选到 PDF（否则用户点开发现自己的标书是灰的）', () => {
+  it('招标文件槽能选到 PDF——这条槽此前落在"未命中任何关键词→不限制"档，没有专属格式引导，本条断言守的是 Task 4 新加的专属引导规则里含 .pdf', () => {
     expect(acceptForPlaceholder('招标文件')).toContain('.pdf')
   })
 })
@@ -798,7 +808,7 @@ Expected: Electron 窗口起来，Next dev server 在 3100。
 
 点「审标书」卡 → 确认展开四条推荐 prompt → 点「完整审标」→ 确认输入框里插入了 chip + 正文，其中「【招标文件】」渲染成虚线 pill。
 
-点那个 pill → 确认弹出的文件选择器里 **PDF 文件是可选的**（不是灰的）。这是 Task 4 的真机验证。
+点那个 pill → 确认弹出的文件选择器里 **PDF 文件是可选的**（Task 4 新加的专属格式引导规则在真机上生效，而不是停留在单元测试里）。这是 Task 4 的真机验证。
 
 - [ ] **Step 4: 喂样例标书跑全流程**
 
