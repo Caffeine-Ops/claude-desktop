@@ -23,8 +23,21 @@ description: >-
 
    Windows：`bin\ensure-python.cmd`，读它 stdout **最后一行** 的 `TENDER_PY=<路径>`。
 
-2. **其后本文档中所有 `python scripts/xxx.py` 一律替换为 `$TENDER_PY scripts/xxx.py`。**
-   直接用 `python` 会命中用户系统里的解释器，那里没有本技能的依赖。
+2. **其后所有 `python` 调用一律替换为 `$TENDER_PY`**——覆盖两个维度，缺一个都会
+   有路径漏出去：
+   - **形状**:不止本文档里 `python scripts/xxx.py` 这一种写法。`run_pipeline.py`
+     在技能根目录、不在 `scripts/` 下，字面对不上这条规则，但它**必须替换**——
+     它内部用 `subprocess.run([sys.executable] + cmd)` 派发所有子脚本（见
+     `run_pipeline.py` 第 33 行），`sys.executable` 就是启动它自己的那个解释器，
+     所以整条流水线用哪个 Python 只取决于你敲下 `run_pipeline.py` 本身时用的是
+     `python` 还是 `$TENDER_PY`——这一层不换，后面全白换。
+   - **文档**:不止本文档。`QUICKSTART.md`、`README.md`、`FOR_AI.md` 是原样
+     保留的上游文档，里面的示例命令都是裸 `python run_pipeline.py prep
+     <招标文件>`，同样要在心里替换成 `$TENDER_PY` 再执行。
+
+   直接用 `python` 会命中用户系统里的解释器，那里没有本技能的依赖——不会报错，
+   而是静默用系统 Python 跑，缺 python-docx/pypdf/openpyxl 时才在某个环节炸开,
+   排查成本远高于装依赖本身。
 
 3. **跳过下面 §-1 的环境自检**（`check_env.py`）—— 那一步的职责（检测缺什么、
    指导用户安装）已被引导脚本完全覆盖，再跑一遍只会让用户看到「请打开终端敲
