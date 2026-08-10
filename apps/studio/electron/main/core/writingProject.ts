@@ -23,10 +23,20 @@ import {
 } from '../../shared/writing'
 
 /**
- * 写作文档的磁盘访问层。三个动作：扫（轮询用，只回元信息）、读（拉正文）、
- * 写（带乐观锁）。**同步 fs 是刻意的**：三个操作都在几个小文件上，异步化换来的
- * 并发收益抵不过让 handler 变成 async 之后的错误路径复杂度（proposalDraftStore
- * 同理）。
+ * 写作文档的磁盘访问层。三个动作：扫（轮询用）、读（拉正文）、写（带乐观锁）。
+ * **同步 fs 是刻意的**：三个操作都在几个小文件上，异步化换来的并发收益抵不过让
+ * handler 变成 async 之后的错误路径复杂度（proposalDraftStore 同理）。
+ *
+ * 【scan 不再是"只回元信息"】这条描述在内容哈希改动（见 WritingFileMeta.contentHash
+ * 顶注）之前成立——scanWritingDoc 曾经只 statSync，正文交给 readWritingSections 按需拉。
+ * 现在 scanWritingDoc 为了算轮询签名要素，每节都要 readFileSync 整份内容去过 sha1，
+ * "元信息 vs 正文分离"这条设计边界已经不纯粹了：scan 仍然不回传 markdown 给调用方
+ * （UI 拿不到正文，仍要走 readWritingSections），但它内部确实读了全部文件的字节。
+ * 之所以还留着"扫描"这个名字和 IPC 边界，是因为对调用方（轮询 effect）而言接口语义
+ * 没变——只是内部实现代价从"只 stat"变成了"stat + 读 + 哈希"，量级仍然很小（见
+ * contentHash 字段顶注的实测数字与已知限制）。这条注释此前没有跟着代码改动同步更新，
+ * 一度写着与实现不符的描述——教训是"只回元信息"这类断言一旦承载了某个具体实现细节，
+ * 改实现时必须回来检查它是否还成立。
  */
 
 export type WritingScanResult =
@@ -166,16 +176,26 @@ export function scanWritingDoc(source: WritingDocSource): WritingScanResult {
 
   if (source.kind === 'single') {
     let st: ReturnType<typeof statSync>
-    let hash: string
     try {
       st = statSync(abs)
-      if (!st.isFile()) return { ok: false, dirMissing: true, error: 'Not a file.' }
-      // 读内容算哈希与上面的 stat 包在同一个 try 里：读不到（文件在这两步之间被删/改名，
-      // 或权限问题）跟「文件本就不存在」在这里是同一种降级——single 模式只有这一个文件，
-      // 没有「跳过这一个、其余照常」的余地（project 模式的逐节循环才有那个空间，见下方）。
-      hash = contentHashOf(abs)
     } catch {
       return { ok: false, dirMissing: true, error: 'Document not found.' }
+    }
+    if (!st.isFile()) return { ok: false, dirMissing: true, error: 'Not a file.' }
+    // 读内容算哈希单独一个 try、不并进上面的 stat：这一步失败（文件存在、但被杀软/其他
+    // 进程短暂锁住、或权限被中途收回）跟"文件本就不存在"是两种不同的失败，不该共用同一个
+    // dirMissing:true——UI 用 dirMissing 挑 'missing' 空态还是 'error' 提示（见
+    // useWritingPoll），'missing' 意味着"这份文档没了，别再等它"，而这里恰恰相反：文档
+    // 还在，只是这一轮碰巧读不到，多半 2 秒后自愈。回 'missing' 会让用户以为文档丢了，
+    // 比一条不那么起眼的 error 提示更容易引起不必要的恐慌/误操作（比如去手动新建同名文件）。
+    let hash: string
+    try {
+      hash = contentHashOf(abs)
+    } catch (err) {
+      return {
+        ok: false,
+        error: `Failed to read document content: ${err instanceof Error ? err.message : String(err)}`
+      }
     }
     return {
       ok: true,
