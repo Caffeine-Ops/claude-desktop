@@ -57,6 +57,8 @@
 | 10 | 「文档」二字会被 word 规则命中 → 只给 `.doc,.docx`，**PDF 选不了**；「文稿」命中组合规则 → `.txt,.md,.markdown,.docx,.pdf` | `filePlaceholderPlugin.ts:55`（文稿组合）与 `:58`（word 规则） |
 | 11 | 现有 4 个技能各建各的 venv，已在重复安装同样的库；`~/.ppt-master/venv` 实测 **255 MB** | `du -sh ~/.ppt-master/venv` |
 | 12 | 技能目录本身是纯文本，体积可忽略 | `skills/spreadsheets` 112 KB、`skills/tender-review` 612 KB（后者含 data/tests/references） |
+| 13 | 新技能**无需**在打包脚本或插件清单里登记：`skills/` 整目录拷贝，`"skills": "./"` 自动注册每个子目录 | `scripts/prebundle-daemon.mjs:140-208`（`RESOURCE_DIRS` 含 `'skills'`，无逐技能白名单）；`skills/.claude-plugin/plugin.json` |
+| 14 | 新技能**无需**改 i18n：分类 label 才回落 `scenarioCat*`，技能条目的 label 来自 skillChipRegistry；本次不加新分类 | `lib/scenarioCatalogDefaults.ts:24` 注释；`grep tender apps/studio/src/canvas/i18n/locales/en.ts` 仅命中 `contenders` 一处误配 |
 
 ## 功能清单：8 条推荐话术
 
@@ -117,24 +119,36 @@ skills/doc-convert/
 
 ```
 pypdf>=4.0.0        # PDF 合并/拆分/删页/加水印
-pdfplumber>=0.11    # PDF 抽文字与表格（依赖 pdfminer.six）
+pdfplumber>=0.11    # PDF 抽文字与表格（依赖 pdfminer.six）— PR 2 才用到
 python-docx>=1.1    # Word 读写（依赖 lxml）
 openpyxl>=3.1.0     # Excel 读写
+reportlab>=4.0.0    # docx→pdf 的纯文字兜底渲染；本仓已有先例（ppt-creator）
 Pillow>=9.0.0       # 图片处理
 ```
 
+另有 `requirements-dev.txt` 只含 `pytest>=8.0`：**用户机器上没人跑单测**，
+把 pytest 塞进主清单只是让每个用户白多下几 MB。
+
 **刻意不装 pandas**：它加上 numpy 约 84 MB，比其余所有库加起来还大，
 而唯一用得上它的「Excel ↔ CSV 互转」用 Python 内置 `csv` 模块 + openpyxl 就够了。
+
+### docx→pdf 兜底路径需要中文字体
+
+reportlab 默认字体没有 CJK 字形，不注册字体的话中文全渲染成方块。兜底路径会按
+平台探测系统字体（macOS 的 Arial Unicode / PingFang、Windows 的微软雅黑 / 宋体、
+Linux 的 Noto CJK / 文泉驿）；**一个都找不到时同样拒绝输出**——满纸方块的 PDF
+比没有 PDF 更糟。
 
 ## 体积与磁盘代价
 
 | 项目 | 增量 | 说明 |
 |---|---|---|
 | **安装包** | **+0.1 ~ 0.3 MB** | 技能目录是纯文本；Python 库不打包（事实核查 #12） |
-| **用户硬盘** | **约 +80 MB**（估算，未实测） | 首次使用时装进 `~/.doc-convert-skill/venv` |
+| **用户硬盘** | **约 +90 MB**（估算，未实测） | 首次使用时装进 `~/.doc-convert-skill/venv` |
 
 用户硬盘增量按各库常见体积估算：lxml ~20 MB、pdfminer.six ~15 MB、
-Pillow ~14 MB、pip 等 venv 基础 ~15 MB、python-docx/openpyxl/pypdf 合计 ~12 MB。
+Pillow ~14 MB、pip 等 venv 基础 ~15 MB、reportlab ~9 MB、
+python-docx/openpyxl/pypdf 合计 ~12 MB。
 **这是估算不是实测**，实施时应在装完后 `du -sh` 核实并回填本节。
 
 这是第 5 份重复的 venv（事实核查 #11）。首版接受这份浪费，理由见决策 #5。
@@ -167,8 +181,13 @@ Pillow ~14 MB、pip 等 venv 基础 ~15 MB、python-docx/openpyxl/pypdf 合计 ~
 | 4 | **新建** `public/skill-icons/doc-convert.png` | 图标切片 | chip 无图标 |
 | 5 | `src/chat/lib/scenarioCatalogDefaults.ts` | 8 条话术 + 挂进 `daily` 分类（spreadsheets 之后） | 未登录用户看不到卡片 |
 | 6 | `src/chat/lib/scenarioCatalogDefaults.test.ts` | 补测试（分类项存在、话术条数） | 后续改动无回归防线 |
-| 7 | `src/canvas/i18n/locales/en.ts` | 英文文案 | 英文界面缺文案 |
-| 8 | **生产管理台**（非代码） | 手动加一张场景卡，先读后改，图标走上传 | **已登录用户（即真实用户）看不到新卡片**（事实核查 #6/#7） |
+| 7 | **生产管理台**（非代码） | 手动加一张场景卡，先读后改，图标走上传 | **已登录用户（即真实用户）看不到新卡片**（事实核查 #6/#7） |
+
+**不需要改的地方**（已核实，避免实施时无谓改动）：
+`scripts/prebundle-daemon.mjs`（整目录拷贝，无逐技能白名单）、
+`skills/.claude-plugin/plugin.json`（`"skills": "./"` 自动注册）、
+`src/canvas/i18n/locales/*.ts`（技能条目 label 来自 chip 注册表，不走 i18n）、
+`composer/filePlaceholderPlugin.ts`（关键词表已覆盖全部 8 条话术所需格式）。
 
 ## 测试策略
 
