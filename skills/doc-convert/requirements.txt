@@ -1,0 +1,22 @@
+# doc-convert skill dependencies / 文档处理 skill 依赖
+# =====================================================
+#
+# 安装由 bin/ensure-python.sh（macOS/Linux，须 `source`）或 bin/ensure-python.cmd
+# （Windows）负责：基于 app 自带 Python 3.12 在 ~/.doc-convert-skill/venv 建虚拟
+# 环境后安装本清单。打包后的 runtime 只读，禁止直装。
+
+# PDF 页级操作：合并 / 拆分 / 删页 / 加水印（pdf_ops.py）
+pypdf>=4.0.0
+
+# Word 读写：md_to_docx.py 生成、docx_to_pdf.py 兜底路径解析正文
+python-docx>=1.1
+
+# Excel 读写（excel_csv.py 双向转换）
+openpyxl>=3.1.0
+
+# docx→pdf 的纯文字兜底渲染。本仓已有先例（skills-src/ppt-creator）。
+# 只在本机没有 LibreOffice 且用户显式同意「纯文字版」时才会被用到。
+reportlab>=4.0.0
+
+# openpyxl 嵌图与图片校验的常规伴生依赖，与 spreadsheets 技能一致
+Pillow>=9.0.0

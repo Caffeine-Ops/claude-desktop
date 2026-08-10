@@ -1,0 +1,9 @@
+# 运行时产物护栏。与 skills/tender-review/.gitignore 同源同理：
+# 这道门守的是 git 提交，发版侧另有一道（prebundle-daemon.mjs 的
+# RUNTIME_ARTIFACT_DIR_NAMES + assertNoRuntimeArtifacts 硬断言）。
+# 两条路径互相独立，缺一不可，别因为「打包那边已经拦了」就删掉这份。
+workspace/
+__pycache__/
+.pytest_cache/
+venv/
+.venv/

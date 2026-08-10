@@ -1,0 +1,5 @@
+# 仅开发/测试用，不进用户 venv 的默认安装路径——用户机器上没人跑单测，
+# 把 pytest 塞进 requirements.txt 只是让每个用户白多下几 MB。
+# 跑测试前手动装一次：
+#   "$DOC_CONVERT_PY" -m pip install -r skills/doc-convert/requirements-dev.txt
+pytest>=8.0
