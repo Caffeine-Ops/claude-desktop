@@ -144,12 +144,12 @@ Linux 的 Noto CJK / 文泉驿）；**一个都找不到时同样拒绝输出**�
 | 项目 | 增量 | 说明 |
 |---|---|---|
 | **安装包** | **+0.1 ~ 0.3 MB** | 技能目录是纯文本；Python 库不打包（事实核查 #12） |
-| **用户硬盘** | **约 +90 MB**（估算，未实测） | 首次使用时装进 `~/.doc-convert-skill/venv` |
+| **用户硬盘** | **实测 66 MB** | 首次使用时装进 `~/.doc-convert-skill/venv` |
 
-用户硬盘增量按各库常见体积估算：lxml ~20 MB、pdfminer.six ~15 MB、
-Pillow ~14 MB、pip 等 venv 基础 ~15 MB、reportlab ~9 MB、
-python-docx/openpyxl/pypdf 合计 ~12 MB。
-**这是估算不是实测**，实施时应在装完后 `du -sh` 核实并回填本节。
+实测明细（`du -sh ~/.doc-convert-skill/venv/lib/python3.12/site-packages/*`）：
+lxml 20 MB、PIL（Pillow）14 MB、pip 自身 12 MB、reportlab 8.6 MB、
+pypdf 3.7 MB、openpyxl 2.7 MB、docx（python-docx）2.6 MB，其余零散依赖
+（typing_extensions / et_xmlfile / charset_normalizer 等）合计约 2 MB。
 
 这是第 5 份重复的 venv（事实核查 #11）。首版接受这份浪费，理由见决策 #5。
 **触发合并的信号**：用户开始反馈"这软件占我十几个 G"。
