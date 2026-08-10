@@ -58,13 +58,25 @@ def test_split_by_ranges(tmp_path):
 
 
 def test_delete_pages_is_one_based(tmp_path):
+    # Minor 4 改进：用不同尺寸的页面而不是等大小空白页，能精确验证删对了具体页
+    # 这样能区分"删掉第 2、4 页"和"删掉任意两页"的实现差异
     src = tmp_path / "d.pdf"
-    _make_pdf(src, 4)
+    w = PdfWriter()
+    # 创建 4 个不同宽度的页面：宽 210, 220, 230, 240
+    for i in range(4):
+        w.add_blank_page(width=210 + i * 10, height=200)
+    with src.open("wb") as f:
+        w.write(f)
     dst = tmp_path / "d-out.pdf"
 
     pdf_ops.delete(src, dst, "2,4")
 
-    assert len(PdfReader(str(dst)).pages) == 2
+    # 删除第 2、4 页后，应该留下第 1、3 页
+    reader = PdfReader(str(dst))
+    assert len(reader.pages) == 2
+    # 精确验证：第 1 页宽度应该是 210，第 3 页宽度应该是 230
+    assert reader.pages[0].mediabox.width == 210
+    assert reader.pages[1].mediabox.width == 230
 
 
 def test_out_of_range_page_exits_with_message(tmp_path, capsys):
@@ -85,3 +97,48 @@ def test_watermark_keeps_page_count(tmp_path):
     pdf_ops.watermark(src, dst, stamp)
 
     assert len(PdfReader(str(dst)).pages) == 3
+
+
+def test_watermark_with_zero_page_stamp(tmp_path, capsys):
+    """Important 1 加固：验证 0 页水印源抛出友好错误而不是 IndexError。"""
+    src = tmp_path / "w.pdf"
+    _make_pdf(src, 3)
+    stamp = tmp_path / "stamp.pdf"
+    # 创建 0 页的 PDF（空 PDF）
+    w = PdfWriter()
+    with stamp.open("wb") as f:
+        w.write(f)
+    dst = tmp_path / "w-out.pdf"
+
+    with pytest.raises(SystemExit):
+        pdf_ops.watermark(src, dst, stamp)
+    assert "为空" in capsys.readouterr().err
+
+
+def test_encrypted_pdf_readable_error(tmp_path, capsys):
+    """Important 2 加固：验证加密 PDF 抛出友好错误而不是 FileNotDecryptedError 堆栈。"""
+    src = tmp_path / "s.pdf"
+    _make_pdf(src, 3)
+    out_dir = tmp_path / "parts"
+
+    # 创建一个加密的 PDF（用密码保护）
+    encrypted = tmp_path / "encrypted.pdf"
+    w = PdfWriter()
+    for _ in range(2):
+        w.add_blank_page(width=200, height=200)
+    w.encrypt("password")
+    with encrypted.open("wb") as f:
+        w.write(f)
+
+    with pytest.raises(SystemExit):
+        pdf_ops.split(encrypted, out_dir)
+    assert "密码保护" in capsys.readouterr().err
+
+
+def test_merge_empty_list_fails(tmp_path, capsys):
+    """Important 3 加固：验证空 merge 列表抛出错误而不是静默生成 0 页 PDF。"""
+    dst = tmp_path / "empty.pdf"
+
+    with pytest.raises(SystemExit):
+        pdf_ops.merge([], dst)
+    assert "为空" in capsys.readouterr().err

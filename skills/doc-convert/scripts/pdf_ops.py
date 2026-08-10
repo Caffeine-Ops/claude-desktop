@@ -15,6 +15,38 @@ import sys
 from pathlib import Path
 
 from pypdf import PdfReader, PdfWriter
+from pypdf.errors import FileNotDecryptedError
+
+
+def _open_reader(path: Path) -> PdfReader:
+    """打开 PDF 文件并检查加密状态。
+
+    评审后加固：如果 PDF 被加密（例如有读密码），pypdf 在访问 pages 时会抛
+    FileNotDecryptedError。统一检查和转为友好错误信息，而不是让上层 AI 看到
+    裸异常堆栈。
+
+    选择 catch FileNotDecryptedError（而非 is_encrypted 属性检查）的理由：
+    pypdf 对"有无密码"和"是否解密"的区分比较细致，直接访问会更可靠地捕捉
+    真实的操作障碍。
+    """
+    try:
+        reader = PdfReader(str(path))
+        # 主动访问 pages 以触发加密异常，如果有密码保护会在此抛出
+        _ = len(reader.pages)
+        return reader
+    except FileNotDecryptedError:
+        print(
+            f"[doc-convert] 错误：PDF 「{path}」被密码保护，本工具无法处理。"
+            "请先用阅读器去掉密码再试。",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    except Exception as e:
+        print(
+            f"[doc-convert] 错误：打开 PDF 「{path}」失败：{e}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
 
 
 def _parse_pages(spec: str, total: int) -> list[int]:
@@ -58,18 +90,24 @@ def _write(writer: PdfWriter, dst: Path) -> None:
 
 
 def merge(inputs: list[Path], dst: Path) -> None:
+    # Important 3 加固：检查空列表，防止静默生成 0 页 PDF
+    if not inputs:
+        print("[doc-convert] 错误：合并列表为空，没有文件要合并。", file=sys.stderr)
+        raise SystemExit(2)
+
     writer = PdfWriter()
     for path in inputs:
         if not path.is_file():
             print(f"[doc-convert] 错误：找不到 {path}", file=sys.stderr)
             raise SystemExit(2)
-        for page in PdfReader(str(path)).pages:
+        reader = _open_reader(path)
+        for page in reader.pages:
             writer.add_page(page)
     _write(writer, dst)
 
 
 def split(src: Path, out_dir: Path, ranges: str | None = None) -> list[Path]:
-    reader = PdfReader(str(src))
+    reader = _open_reader(src)
     total = len(reader.pages)
     out_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
@@ -98,7 +136,7 @@ def split(src: Path, out_dir: Path, ranges: str | None = None) -> list[Path]:
 
 
 def delete(src: Path, dst: Path, pages_spec: str) -> None:
-    reader = PdfReader(str(src))
+    reader = _open_reader(src)
     total = len(reader.pages)
     drop = set(_parse_pages(pages_spec, total))
     writer = PdfWriter()
@@ -118,8 +156,17 @@ def watermark(src: Path, dst: Path, stamp_pdf: Path) -> None:
     字体、字号、旋转、透明度，是一整套排版活；而用户/模型完全可以先用别的
     方式做出一张水印页再叠上来，职责更干净。
     """
-    stamp = PdfReader(str(stamp_pdf)).pages[0]
-    reader = PdfReader(str(src))
+    # Important 1 加固：检查水印源是否为 0 页，避免 IndexError
+    stamp_reader = _open_reader(stamp_pdf)
+    if len(stamp_reader.pages) == 0:
+        print(
+            f"[doc-convert] 错误：水印 PDF 「{stamp_pdf}」为空（0 页），无法提取水印。",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+    stamp = stamp_reader.pages[0]
+    reader = _open_reader(src)
     writer = PdfWriter()
     for page in reader.pages:
         page.merge_page(stamp)
