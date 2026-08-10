@@ -4,11 +4,10 @@ import {
   renameSync,
   statSync,
   unlinkSync,
-  writeFileSync,
-  type BigIntStats
+  writeFileSync
 } from 'node:fs'
 import { basename, dirname, isAbsolute, join } from 'node:path'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 
 import {
   parseImageCount,
@@ -69,6 +68,24 @@ function readTextOrNull(p: string): string | null {
   } catch {
     return null
   }
+}
+
+/**
+ * 内容的 sha1 十六进制摘要，供轮询签名比对用（见 WritingFileMeta.contentHash 顶注：
+ * 换掉了原先「纳秒精度 mtime 足够堵死等长改写撞车」的论断，那条论断在 Windows 上不成立）。
+ * **用 `node:crypto`，不是 `Bun.hash`**：这段代码跑在 Electron 打包的 main 进程里，是
+ * Electron 自带的 Node 运行时在执行，不是 bun——`Bun.hash` 在这里根本不存在。sha1 不是
+ * 安全用途（不防碰撞攻击），只是「内容变没变」的判据，选它只因为 node:crypto 自带、
+ * 不必新增依赖。
+ *
+ * **不吞异常**：读不到文件本就该让调用方按它们各自既有的降级路径处理——project 模式的
+ * 逐节循环整体包在一个 try/catch 里（见调用点），文件在 scan 途中消失（AI 正在改名/删除）
+ * 时整节跳过、下一轮轮询自会补上；single 模式读不到就是文档本身不可用，回 dirMissing。
+ * 两条路径的降级行为在这次改动前就已经是这样（针对 statSync 失败），现在只是把
+ * readFileSync 也纳入同一个 try 块，没有新引入行为分支。
+ */
+function contentHashOf(p: string): string {
+  return createHash('sha1').update(readFileSync(p)).digest('hex')
 }
 
 /**
@@ -148,16 +165,18 @@ export function scanWritingDoc(source: WritingDocSource): WritingScanResult {
   if (!abs) return { ok: false, error: 'Invalid path (expected absolute).' }
 
   if (source.kind === 'single') {
-    // { bigint: true } 把 Stats 上所有数值字段（含 mtimeMs/size）都变成 BigInt——
-    // 一次 stat 调用同时拿到毫秒精度（转回 number，兼容既有消费者）和纳秒精度
-    // （mtimeNs 转 string，供轮询签名比对用，见 WritingFileMeta.mtimeNs 顶注）。
-    let st: BigIntStats
+    let st: ReturnType<typeof statSync>
+    let hash: string
     try {
-      st = statSync(abs, { bigint: true })
+      st = statSync(abs)
+      if (!st.isFile()) return { ok: false, dirMissing: true, error: 'Not a file.' }
+      // 读内容算哈希与上面的 stat 包在同一个 try 里：读不到（文件在这两步之间被删/改名，
+      // 或权限问题）跟「文件本就不存在」在这里是同一种降级——single 模式只有这一个文件，
+      // 没有「跳过这一个、其余照常」的余地（project 模式的逐节循环才有那个空间，见下方）。
+      hash = contentHashOf(abs)
     } catch {
       return { ok: false, dirMissing: true, error: 'Document not found.' }
     }
-    if (!st.isFile()) return { ok: false, dirMissing: true, error: 'Not a file.' }
     return {
       ok: true,
       // 单文件模式没有契约可读，恒走默认档——职场快道 / 去AI化本来就不建 spec_lock。
@@ -170,9 +189,9 @@ export function scanWritingDoc(source: WritingDocSource): WritingScanResult {
       files: [
         {
           name: basename(abs),
-          mtimeMs: Number(st.mtimeMs),
-          size: Number(st.size),
-          mtimeNs: st.mtimeNs.toString()
+          mtimeMs: st.mtimeMs,
+          size: st.size,
+          contentHash: hash
         }
       ],
       // single 模式只认文档自己那一个文件（isAllowedSectionName 已把同目录其他 .md 挡在外面），
@@ -212,18 +231,20 @@ export function scanWritingDoc(source: WritingDocSource): WritingScanResult {
   const files: WritingFileMeta[] = []
   for (const name of sectionNames) {
     try {
-      // 同上：{ bigint: true } 一次拿到毫秒 + 纳秒两种精度，见 single 模式分支的注释。
-      const st = statSync(join(sectionDir(source), name), { bigint: true })
+      const p = join(sectionDir(source), name)
+      const st = statSync(p)
       if (st.isFile()) {
+        // stat 与读内容算哈希包在同一个 try 里：读不到（AI 正好在这一刻改名/重写这个文件）
+        // 与 stat 失败同等对待——跳过这一节，下一轮轮询（2s 后）自会补上，不让它拖垮整批。
         files.push({
           name,
-          mtimeMs: Number(st.mtimeMs),
-          size: Number(st.size),
-          mtimeNs: st.mtimeNs.toString()
+          mtimeMs: st.mtimeMs,
+          size: st.size,
+          contentHash: contentHashOf(p)
         })
       }
     } catch {
-      // 扫描与 stat 之间文件消失（AI 正在改名）——跳过，下一轮轮询自会补上。
+      // 扫描与 stat/读内容之间文件消失或变更（AI 正在改名/重写）——跳过，下一轮轮询自会补上。
     }
   }
   return { ok: true, genre, outlineTotal, imageStyle, imageCount, files, excluded }
