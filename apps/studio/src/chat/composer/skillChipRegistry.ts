@@ -172,6 +172,21 @@ export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
     label: '审标书',
     description: '审招标文件，产投标核对清单'
   },
+  // doc-convert — 文档处理。namespaced + 裸名双注册，理由同 ppt-creator：
+  // 技能命令有时带命名空间前缀有时不带，只注册一份会让另一种写法退化成
+  // 光秃秃的英文命令（无中文标签、无图标）。
+  {
+    match: '/claude-desktop:doc-convert',
+    image: '/skill-icons/doc-convert.png',
+    label: '文档处理',
+    description: '格式转换、提取文字、批量整理'
+  },
+  {
+    match: '/doc-convert',
+    image: '/skill-icons/doc-convert.png',
+    label: '文档处理',
+    description: '格式转换、提取文字、批量整理'
+  },
   // 代码开发场景伪命令（日常开发 / 网站开发 / Agent 应用）——ScenarioRail
   // 的二级导航标签，不是真实 CLI skill：发送时 FusionRuntimeProvider.onNew
   // 会把命令剥掉只发正文（stripScenarioSlash）。从 SCENARIO_SLASH_SPECS

@@ -155,6 +155,33 @@ const TENDER_PROMPTS: readonly ScenarioCatalogPrompt[] = [
   }
 ]
 
+const DOC_CONVERT_PROMPTS: readonly ScenarioCatalogPrompt[] = [
+  {
+    // 「【Markdown 文件】」命中 filePlaceholderPlugin 的 markdown 规则
+    // → picker 限定 .md/.markdown。
+    label: 'Markdown 转 Word',
+    text: '把【Markdown 文件】转成 Word 文档，标题层级、列表和加粗都保留。'
+  },
+  {
+    // 「【Word 文件】」命中 word 规则 → .doc/.docx。文案刻意提一句排版，
+    // 因为这条在没装 LibreOffice 的机器上会走「先问用户」的门禁分支
+    // （见 SKILL.md §2），提前把预期立在这里。
+    label: 'Word 转 PDF',
+    text: '把【Word 文件】转成 PDF，尽量保留原排版。'
+  },
+  {
+    // 「【Excel 文件】」命中 excel 规则 → .xls/.xlsx/.csv，双向都能选。
+    label: 'Excel 与 CSV 互转',
+    text: '把【Excel 文件】转成另一种格式（xlsx 转 csv 或 csv 转 xlsx），中文不要乱码。'
+  },
+  {
+    // 合并/拆分共用一条入口：用户嘴里说的都是「拆开/合起来」，
+    // 具体怎么拆由对话里问清楚，不在这里拆成两个按钮稀释列表。
+    label: 'PDF 合并拆分',
+    text: '帮我处理【PDF 文件】：【说明要做什么，例如和另一份合并、按章节拆成多个文件、删掉第 2 和第 5 页、加个水印】。'
+  }
+]
+
 const IMAGEGEN_PROMPTS: readonly ScenarioCatalogPrompt[] = [
   {
     // 【图片文件】是 filePlaceholderPlugin 的文件槽（「图片」关键词 →
@@ -319,6 +346,11 @@ export const DEFAULT_SCENARIO_CATALOG: ScenarioCatalog = {
           kind: 'skill',
           value: '/claude-desktop:spreadsheets',
           prompts: SPREADSHEETS_PROMPTS
+        },
+        {
+          kind: 'skill',
+          value: '/claude-desktop:doc-convert',
+          prompts: DOC_CONVERT_PROMPTS
         },
         {
           kind: 'skill',
