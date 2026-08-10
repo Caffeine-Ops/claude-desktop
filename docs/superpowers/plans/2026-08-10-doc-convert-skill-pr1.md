@@ -1525,7 +1525,10 @@ git commit -m "docs(doc-convert): SKILL.md 调度说明，Word 转 PDF 降级须
 
 - [ ] **Step 1: 产出图标**
 
-128×128 透明底 PNG，风格对齐现有切片（参考 `apps/studio/public/skill-icons/tender.png`，44 KB，扁平多彩、圆角、无描边）。语义：文档 + 转换箭头。
+**256×256** 透明底 PNG（RGBA），风格对齐现有切片（参考 `apps/studio/public/skill-icons/tender.png`，扁平多彩、圆角、无描边）。语义：文档 + 转换箭头。
+
+> **2026-08-10 更正**：此处原写 128×128，是写计划时只核对了文件体积没核对分辨率。
+> 实测 `skill-icons/` 下 11 张现有切片**全部是 256×256 RGBA**，新图标必须对齐。
 
 可以用 `draw` 技能生成，或用设计工具切图。放到 `apps/studio/public/skill-icons/doc-convert.png`。
 
@@ -1535,7 +1538,8 @@ Run 验证：
 ```bash
 file apps/studio/public/skill-icons/doc-convert.png
 ```
-Expected: `PNG image data, 128 x 128` 且带 alpha 通道
+Expected: `PNG image data, 256 x 256, 8-bit/color RGBA`——**RGBA 也要确认**，
+丢了 alpha 通道会变成白底方块，深色主题下很难看。
 
 - [ ] **Step 2: 注册 chip（两条）**
 
