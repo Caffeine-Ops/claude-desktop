@@ -251,43 +251,63 @@ describe('writeWritingSection · 原子写入', () => {
   })
 })
 
-describe('scanWritingDoc · mtimeNs 纳秒精度（轮询签名专用）', () => {
-  it('project 模式每个文件都带非空、可转 BigInt 的 mtimeNs，且与 mtimeMs 同源', () => {
-    const dir = makeProject({ drafts: { '1-a.md': 'a' } })
-    const r = scanWritingDoc({ kind: 'project', projectDir: dir })
-    expect(r.ok).toBe(true)
-    if (!r.ok) return
-    const f = r.files[0]
-    expect(f.mtimeNs.length).toBeGreaterThan(0)
-    expect(() => BigInt(f.mtimeNs)).not.toThrow()
-    // 纳秒换算回毫秒（整数除法截断）应与同一次 stat 得到的 mtimeMs 一致——两者出自
-    // 同一次 statSync({ bigint: true }) 调用，不是分别 stat 两次凑出来的。
-    expect(BigInt(f.mtimeNs) / 1_000_000n).toBe(BigInt(f.mtimeMs))
+describe('scanWritingDoc · contentHash（轮询签名专用，Windows 上取代了 mtimeNs）', () => {
+  // 【为什么原先这里测的是 mtimeNs】旧实现拿 statSync(..., { bigint: true }).mtimeNs 当轮询
+  // 签名要素，论断是「纳秒精度下『等长改写 + 同一纳秒写入』不可能同时成立」。CI 的 Windows
+  // 腿上这条论断被真实写入证伪：两次连续写入拿到完全相同的 mtimeNs（Windows 的文件时间源
+  // 粒度远粗于纳秒）。签名改用内容哈希（sha1，见 WritingFileMeta.contentHash 顶注）后，
+  // 「变没变」这件事不再依赖任何时间戳的分辨率，下面这条测试要能在 Windows 上一样通过。
+
+  it('project 模式每个文件都带非空的 contentHash，且同内容两次扫描结果一致', () => {
+    const dir = makeProject({ drafts: { '1-a.md': '正文内容' } })
+    const r1 = scanWritingDoc({ kind: 'project', projectDir: dir })
+    const r2 = scanWritingDoc({ kind: 'project', projectDir: dir })
+    expect(r1.ok && r2.ok).toBe(true)
+    if (!r1.ok || !r2.ok) return
+    expect(r1.files[0].contentHash.length).toBeGreaterThan(0)
+    // 内容没变，哈希必须稳定——不是每次读都重新算出不一样的东西（比如混进了随机数/时间戳）。
+    expect(r1.files[0].contentHash).toBe(r2.files[0].contentHash)
   })
 
-  it('single 模式的文件同样带 mtimeNs', () => {
+  it('single 模式的文件同样带 contentHash', () => {
     const f = join(root, '周报.md')
     writeFileSync(f, '正文')
     const r = scanWritingDoc({ kind: 'single', filePath: f })
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    expect(r.files[0].mtimeNs.length).toBeGreaterThan(0)
-    expect(() => BigInt(r.files[0].mtimeNs)).not.toThrow()
+    expect(r.files[0].contentHash.length).toBeGreaterThan(0)
   })
 
-  it('等长改写后 mtimeNs 变化，即便 mtimeMs 恰好撞车也能感知到差异', () => {
-    // 不 mock 时钟去伪造「同一毫秒」——那样会假设 Node/OS 的 stat 实现细节，脆弱且没必要。
-    // 这里只验证契约本身：两次真实写入之间，mtimeNs 至少不会不变（纳秒精度下两次独立的
-    // 系统调用几乎不可能落在同一纳秒），从而佐证「用 mtimeNs 判定变化」比「用 mtimeMs」更细。
-    const dir = makeProject({ drafts: { '1-a.md': '旧正文' } })
+  it('真正该保证的契约：等长改写后签名必须变化，不依赖任何时间戳精度', () => {
+    // 这条测试取代了原先那条测 mtimeNs 的用例——它测的是错误的东西（纳秒分辨率，一个
+    // 平台细节），真正该保证的是「等长改写 → 轮询签名（scan 结果拼出来的那三元组）一定变」。
+    // 新正文与旧正文字节长度相同（各自 3 个汉字），专门复现「等长改写」这个此前在 Windows
+    // 上漏刷的场景；断言只比较 contentHash 本身，不牵涉 mtime，所以这条测试在时间戳分辨率
+    // 粗糙的文件系统上同样成立。
+    const dir = makeProject({ drafts: { '1-a.md': '旧旧旧' } })
     const before = scanWritingDoc({ kind: 'project', projectDir: dir })
     expect(before.ok).toBe(true)
     if (!before.ok) return
-    writeFileSync(join(dir, 'drafts', '1-a.md'), '新正文')
+    writeFileSync(join(dir, 'drafts', '1-a.md'), '新新新')
     const after = scanWritingDoc({ kind: 'project', projectDir: dir })
     expect(after.ok).toBe(true)
     if (!after.ok) return
-    expect(after.files[0].mtimeNs).not.toBe(before.files[0].mtimeNs)
+    expect(after.files[0].size).toBe(before.files[0].size) // 佐证这确实是「等长」改写
+    expect(after.files[0].contentHash).not.toBe(before.files[0].contentHash)
+  })
+
+  it('single 模式等长改写后 contentHash 同样变化', () => {
+    const f = join(root, '周报.md')
+    writeFileSync(f, '旧内容')
+    const before = scanWritingDoc({ kind: 'single', filePath: f })
+    expect(before.ok).toBe(true)
+    if (!before.ok) return
+    writeFileSync(f, '新内容')
+    const after = scanWritingDoc({ kind: 'single', filePath: f })
+    expect(after.ok).toBe(true)
+    if (!after.ok) return
+    expect(after.files[0].size).toBe(before.files[0].size)
+    expect(after.files[0].contentHash).not.toBe(before.files[0].contentHash)
   })
 })
 

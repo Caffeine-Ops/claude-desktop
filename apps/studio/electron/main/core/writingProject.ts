@@ -4,11 +4,10 @@ import {
   renameSync,
   statSync,
   unlinkSync,
-  writeFileSync,
-  type BigIntStats
+  writeFileSync
 } from 'node:fs'
 import { basename, dirname, isAbsolute, join } from 'node:path'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 
 import {
   parseImageCount,
@@ -24,10 +23,20 @@ import {
 } from '../../shared/writing'
 
 /**
- * 写作文档的磁盘访问层。三个动作：扫（轮询用，只回元信息）、读（拉正文）、
- * 写（带乐观锁）。**同步 fs 是刻意的**：三个操作都在几个小文件上，异步化换来的
- * 并发收益抵不过让 handler 变成 async 之后的错误路径复杂度（proposalDraftStore
- * 同理）。
+ * 写作文档的磁盘访问层。三个动作：扫（轮询用）、读（拉正文）、写（带乐观锁）。
+ * **同步 fs 是刻意的**：三个操作都在几个小文件上，异步化换来的并发收益抵不过让
+ * handler 变成 async 之后的错误路径复杂度（proposalDraftStore 同理）。
+ *
+ * 【scan 不再是"只回元信息"】这条描述在内容哈希改动（见 WritingFileMeta.contentHash
+ * 顶注）之前成立——scanWritingDoc 曾经只 statSync，正文交给 readWritingSections 按需拉。
+ * 现在 scanWritingDoc 为了算轮询签名要素，每节都要 readFileSync 整份内容去过 sha1，
+ * "元信息 vs 正文分离"这条设计边界已经不纯粹了：scan 仍然不回传 markdown 给调用方
+ * （UI 拿不到正文，仍要走 readWritingSections），但它内部确实读了全部文件的字节。
+ * 之所以还留着"扫描"这个名字和 IPC 边界，是因为对调用方（轮询 effect）而言接口语义
+ * 没变——只是内部实现代价从"只 stat"变成了"stat + 读 + 哈希"，量级仍然很小（见
+ * contentHash 字段顶注的实测数字与已知限制）。这条注释此前没有跟着代码改动同步更新，
+ * 一度写着与实现不符的描述——教训是"只回元信息"这类断言一旦承载了某个具体实现细节，
+ * 改实现时必须回来检查它是否还成立。
  */
 
 export type WritingScanResult =
@@ -69,6 +78,24 @@ function readTextOrNull(p: string): string | null {
   } catch {
     return null
   }
+}
+
+/**
+ * 内容的 sha1 十六进制摘要，供轮询签名比对用（见 WritingFileMeta.contentHash 顶注：
+ * 换掉了原先「纳秒精度 mtime 足够堵死等长改写撞车」的论断，那条论断在 Windows 上不成立）。
+ * **用 `node:crypto`，不是 `Bun.hash`**：这段代码跑在 Electron 打包的 main 进程里，是
+ * Electron 自带的 Node 运行时在执行，不是 bun——`Bun.hash` 在这里根本不存在。sha1 不是
+ * 安全用途（不防碰撞攻击），只是「内容变没变」的判据，选它只因为 node:crypto 自带、
+ * 不必新增依赖。
+ *
+ * **不吞异常**：读不到文件本就该让调用方按它们各自既有的降级路径处理——project 模式的
+ * 逐节循环整体包在一个 try/catch 里（见调用点），文件在 scan 途中消失（AI 正在改名/删除）
+ * 时整节跳过、下一轮轮询自会补上；single 模式读不到就是文档本身不可用，回 dirMissing。
+ * 两条路径的降级行为在这次改动前就已经是这样（针对 statSync 失败），现在只是把
+ * readFileSync 也纳入同一个 try 块，没有新引入行为分支。
+ */
+function contentHashOf(p: string): string {
+  return createHash('sha1').update(readFileSync(p)).digest('hex')
 }
 
 /**
@@ -148,16 +175,28 @@ export function scanWritingDoc(source: WritingDocSource): WritingScanResult {
   if (!abs) return { ok: false, error: 'Invalid path (expected absolute).' }
 
   if (source.kind === 'single') {
-    // { bigint: true } 把 Stats 上所有数值字段（含 mtimeMs/size）都变成 BigInt——
-    // 一次 stat 调用同时拿到毫秒精度（转回 number，兼容既有消费者）和纳秒精度
-    // （mtimeNs 转 string，供轮询签名比对用，见 WritingFileMeta.mtimeNs 顶注）。
-    let st: BigIntStats
+    let st: ReturnType<typeof statSync>
     try {
-      st = statSync(abs, { bigint: true })
+      st = statSync(abs)
     } catch {
       return { ok: false, dirMissing: true, error: 'Document not found.' }
     }
     if (!st.isFile()) return { ok: false, dirMissing: true, error: 'Not a file.' }
+    // 读内容算哈希单独一个 try、不并进上面的 stat：这一步失败（文件存在、但被杀软/其他
+    // 进程短暂锁住、或权限被中途收回）跟"文件本就不存在"是两种不同的失败，不该共用同一个
+    // dirMissing:true——UI 用 dirMissing 挑 'missing' 空态还是 'error' 提示（见
+    // useWritingPoll），'missing' 意味着"这份文档没了，别再等它"，而这里恰恰相反：文档
+    // 还在，只是这一轮碰巧读不到，多半 2 秒后自愈。回 'missing' 会让用户以为文档丢了，
+    // 比一条不那么起眼的 error 提示更容易引起不必要的恐慌/误操作（比如去手动新建同名文件）。
+    let hash: string
+    try {
+      hash = contentHashOf(abs)
+    } catch (err) {
+      return {
+        ok: false,
+        error: `Failed to read document content: ${err instanceof Error ? err.message : String(err)}`
+      }
+    }
     return {
       ok: true,
       // 单文件模式没有契约可读，恒走默认档——职场快道 / 去AI化本来就不建 spec_lock。
@@ -170,9 +209,9 @@ export function scanWritingDoc(source: WritingDocSource): WritingScanResult {
       files: [
         {
           name: basename(abs),
-          mtimeMs: Number(st.mtimeMs),
-          size: Number(st.size),
-          mtimeNs: st.mtimeNs.toString()
+          mtimeMs: st.mtimeMs,
+          size: st.size,
+          contentHash: hash
         }
       ],
       // single 模式只认文档自己那一个文件（isAllowedSectionName 已把同目录其他 .md 挡在外面），
@@ -212,18 +251,20 @@ export function scanWritingDoc(source: WritingDocSource): WritingScanResult {
   const files: WritingFileMeta[] = []
   for (const name of sectionNames) {
     try {
-      // 同上：{ bigint: true } 一次拿到毫秒 + 纳秒两种精度，见 single 模式分支的注释。
-      const st = statSync(join(sectionDir(source), name), { bigint: true })
+      const p = join(sectionDir(source), name)
+      const st = statSync(p)
       if (st.isFile()) {
+        // stat 与读内容算哈希包在同一个 try 里：读不到（AI 正好在这一刻改名/重写这个文件）
+        // 与 stat 失败同等对待——跳过这一节，下一轮轮询（2s 后）自会补上，不让它拖垮整批。
         files.push({
           name,
-          mtimeMs: Number(st.mtimeMs),
-          size: Number(st.size),
-          mtimeNs: st.mtimeNs.toString()
+          mtimeMs: st.mtimeMs,
+          size: st.size,
+          contentHash: contentHashOf(p)
         })
       }
     } catch {
-      // 扫描与 stat 之间文件消失（AI 正在改名）——跳过，下一轮轮询自会补上。
+      // 扫描与 stat/读内容之间文件消失或变更（AI 正在改名/重写）——跳过，下一轮轮询自会补上。
     }
   }
   return { ok: true, genre, outlineTotal, imageStyle, imageCount, files, excluded }
