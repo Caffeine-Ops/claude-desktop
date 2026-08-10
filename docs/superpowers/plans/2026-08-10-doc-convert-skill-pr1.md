@@ -1048,6 +1048,20 @@ git add skills/doc-convert/scripts/pdf_ops.py skills/doc-convert/tests/test_pdf_
 git commit -m "feat(doc-convert): PDF 合并/拆分/删页/加水印，页码统一 1 起闭区间"
 ```
 
+> **2026-08-10 执行期修订（本任务评审后）**：上面的代码经评审发现 4 处缺陷，
+> **均源自本计划给出的原始代码而非转写失误**，人类伙伴裁决全部修复。因此
+> `pdf_ops.py` 的最终形态比上面多三处护栏、测试多三条：
+> ① `watermark` 遇 0 页水印源、② 四个函数遇加密 PDF、③ `merge([])` 空输入——
+> 三者原本都抛裸 Python 异常或静默产出空 PDF 并报"已生成"，现统一转成
+> `[doc-convert] 错误：…` + 非零退出（与文件里其它错误分支同风格）；
+> ④ `test_delete_pages_is_one_based` 原用等大空白页，只能证明「删对了页数」
+> 不能证明「删对了页」，已改为每页尺寸不同后断言剩余页宽度。
+> **以 git 里的实际代码为准**，上面的代码块是修订前的原始计划。
+>
+> 为什么值得修：①②③ 同属「崩溃时给出的是程序员看的堆栈，而不是能转达给
+> 用户的话」，与 Task 6 SKILL.md 里「不要吞掉脚本的报错，原样转达给用户」
+> 的纪律直接打架——一段 Python 堆栈转达给用户等于没转达。
+
 ---
 
 ### Task 5: Word → PDF（LibreOffice 优先 + 纯文字兜底门禁）
@@ -1717,6 +1731,25 @@ except SystemExit as e:
 PY
 ```
 Expected: 打印「门禁生效，退出码 4」，且 `/tmp/dc-test.pdf` **不存在**
+
+- [ ] **Step 5b: 验证 LibreOffice 保真路径真的能转（Task 5 评审补充）**
+
+Task 5 的 4 条自动化测试全部把 `find_soffice` mock 成 `None`——只测了兜底路径，
+**保真路径一行测试都没覆盖**。不给它写自动化测试是刻意的：真调 LibreOffice 会让
+测试依赖本机装没装它，换台机器就飘。所以这一条放在真机走查里手工验一次。
+
+本机已装 LibreOffice。准备一份**含表格和中文标题**的 `.docx`（表格是关键——
+它正是纯文字兜底会丢掉、而保真路径应该保住的东西），然后：
+
+```bash
+source skills/doc-convert/bin/ensure-python.sh
+"$DOC_CONVERT_PY" skills/doc-convert/scripts/docx_to_pdf.py <你的.docx> -o /tmp/dc-real.pdf
+```
+
+- [ ] 输出末行是「（保留原排版）」而不是「（纯文字版…）」
+- [ ] 打开 `/tmp/dc-real.pdf`，**表格还在**、中文不是方块、排版与 Word 里看到的一致
+- [ ] 产物落在 `-o` 指定的路径上（验证 soffice 产物改名逻辑：soffice 只认输出目录、
+      文件名按输入名生成，脚本要把它改名到目标路径）
 
 - [ ] **Step 6: 确认没有运行时产物混进技能目录**
 
