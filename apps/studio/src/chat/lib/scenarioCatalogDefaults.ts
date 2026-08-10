@@ -130,6 +130,31 @@ const PROPOSAL_PROMPTS: readonly ScenarioCatalogPrompt[] = [
   }
 ]
 
+const TENDER_PROMPTS: readonly ScenarioCatalogPrompt[] = [
+  {
+    // 「【招标文件】」是 filePlaceholderPlugin 的文件槽（「招标」关键词 →
+    // picker 限定 .pdf/.doc/.docx，见 ACCEPT_BY_KEYWORD 表首那条）。四条
+    // prompt 刻意从「全量」到「单项」递进：第一条是主路径，后三条对应技能
+    // 内部三条独立的判断线，让已经知道自己要查什么的老手直接切进去。
+    label: '完整审标',
+    text: '帮我审这份【招标文件】：把废标项、评分项、要准备的证明材料、▲ 标识参数、时间节点和合同条款要点全部列出来，每条带原文出处，最后出一份 Excel 核对清单。'
+  },
+  {
+    label: '只看废标点',
+    text: '帮我看这份【招标文件】里所有会导致废标的条款：资格门槛、实质性要求、投标文件递交规格（形式/份数/封装），每条带原文出处，一条都别漏。'
+  },
+  {
+    label: '只看评分项',
+    text: '帮我梳理这份【招标文件】的评分规则：价格分怎么算、商务分和技术分各有哪些得分点、每项多少分、要提交什么才能拿到分，每条带原文出处。'
+  },
+  {
+    // 合同条款是「中标后约束」，与废标项（递交时雷区）是两类独立清单——
+    // 很多投标人不看合同，单独给一条入口让想看的人直达。
+    label: '合同条款要点',
+    text: '帮我看这份【招标文件】里的合同条款：付款方式、质保期、违约责任、验收标准这些中标后才生效的约束，每条带原文出处。'
+  }
+]
+
 const IMAGEGEN_PROMPTS: readonly ScenarioCatalogPrompt[] = [
   {
     // 【图片文件】是 filePlaceholderPlugin 的文件槽（「图片」关键词 →
@@ -299,6 +324,11 @@ export const DEFAULT_SCENARIO_CATALOG: ScenarioCatalog = {
           kind: 'skill',
           value: '/claude-desktop:proposal-writer',
           prompts: PROPOSAL_PROMPTS
+        },
+        {
+          kind: 'skill',
+          value: '/claude-desktop:tender-review',
+          prompts: TENDER_PROMPTS
         }
       ]
     },

@@ -156,6 +156,22 @@ export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
       description: '起草文档、方案与报告'
     })
   ),
+  // tender-review — 审标书。namespaced + 裸名双注册，理由同 ppt-creator。
+  // 与 proposal-writer（写方案）是同一条业务链的上下游：先审标看清招标方的
+  // 规则，再写标产出方案。但两者集成深度不同——写方案走客户端拦截 + 方案模式
+  // 工作台，审标是普通 skill，命令原样发给 CLI 不拦截。
+  {
+    match: '/claude-desktop:tender-review',
+    image: '/skill-icons/tender.png',
+    label: '审标书',
+    description: '审招标文件，产投标核对清单'
+  },
+  {
+    match: '/tender-review',
+    image: '/skill-icons/tender.png',
+    label: '审标书',
+    description: '审招标文件，产投标核对清单'
+  },
   // 代码开发场景伪命令（日常开发 / 网站开发 / Agent 应用）——ScenarioRail
   // 的二级导航标签，不是真实 CLI skill：发送时 FusionRuntimeProvider.onNew
   // 会把命令剥掉只发正文（stripScenarioSlash）。从 SCENARIO_SLASH_SPECS

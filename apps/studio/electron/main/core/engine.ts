@@ -1788,10 +1788,12 @@ export class ChatEngine extends EventEmitter {
     // are baked into the child at spawn — skills installed mid-session only
     // appear in NEW sessions (the market UI says so on install success).
     const coworkPluginEntries = resolveCoworkPluginEntries()
-    // Standalone Python home for the ppt-creator skill's bootstrap. Injected as
-    // PPT_MASTER_PYTHON_HOME into BOTH backends' child env (see the env: block
-    // below) so `bin/ensure-python.sh` can build its venv off this interpreter
-    // instead of blindly trying the machine's bare python3. Bundled/downloaded
+    // Standalone Python home, originally for the ppt-creator skill's bootstrap
+    // but now shared by every skill with the same "own venv, don't touch the
+    // machine's bare python3" bootstrap pattern — injected as BOTH
+    // PPT_MASTER_PYTHON_HOME and TENDER_PYTHON_HOME into BOTH backends' child
+    // env (see the env: block below) so each skill's `bin/ensure-python.sh`
+    // can build its venv off this interpreter. Bundled/downloaded
     // runtime wins when present (pinned 3.12); otherwise falls back to a
     // detected system 3.11/3.12 (see resolveEffectivePythonHome in cliDetect —
     // same "one source of truth" discipline as isCliAvailable). null when
@@ -2029,6 +2031,16 @@ export class ChatEngine extends EventEmitter {
               : pythonHome
                 ? { PPT_MASTER_PYTHON_HOME: pythonHome }
                 : {}),
+            // 同上，给 tender-review skill 的 bin/ensure-python.sh。刻意每个技能
+            // 一个独立变量名而不是共用一个 PYTHON_HOME：技能自包含、可被单独
+            // 打包发布，共用变量会让「只装了其中一个」的机器上出现名字对得上
+            // 但语义不属于自己的注入。不注入的后果不是报错而是**静默降级**到
+            // 系统 python（可能是 3.14 → 无 cp314 wheel → 源码编译卡死）。
+            ...(process.env.TENDER_PYTHON_HOME
+              ? {}
+              : pythonHome
+                ? { TENDER_PYTHON_HOME: pythonHome }
+                : {}),
             // local-kb skill 的 kbpath.mjs 读这个拿到知识库目录（userData/kb-local/）——
             // userData 的真实位置只有 main 侧算得出，skill 脚本是用户机器裸 node 进程，
             // 必须由此注入。尊重用户自导出的覆盖（诊断用）。
@@ -2051,6 +2063,14 @@ export class ChatEngine extends EventEmitter {
               ? {}
               : pythonHome
                 ? { PPT_MASTER_PYTHON_HOME: pythonHome }
+                : {}),
+            // 同上，tender-review skill 在 system 后端下也要能用。理由与 bundled
+            // 分支那段一致：这是 main 侧运行时路径，不是 env.json 网关密钥，
+            // 不影响 claude 的模型路由。
+            ...(process.env.TENDER_PYTHON_HOME
+              ? {}
+              : pythonHome
+                ? { TENDER_PYTHON_HOME: pythonHome }
                 : {}),
             // 同 bundled：local-kb 在 system 后端下也要能用。KB_DIR 是 main 侧运行时路径，
             // 不是 env.json 网关密钥，不影响 claude 模型路由，交给 system claude 安全。

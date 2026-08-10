@@ -146,15 +146,122 @@ const RESOURCE_DIRS = [
   'prompt-templates',
   'plugins'
 ]
+
+// 运行时产物目录名——skill 本机跑起来之后才出现的东西（用户数据/生成产物/
+// 字节码缓存），不是随仓库发布的源码。按**目录名**而不是扩展名排除：
+// - workspace/、projects/ 是 tender-review 招标复核、ppt-master PPT 生成等
+//   skill 在真实使用中往里写的工作文件，可能装着用户上传机密文档的逐行全文/
+//   摘录（本机现在就有 skills/tender-review/workspace/ 是这种）；按扩展名过滤
+//   永远猜不全（用户能塞任何格式：.xlsx/.docx/.pdf/纯文本……），按目录名一刀切
+//   才兜得住，且不会误伤将来新增的合法资源文件。
+// - __pycache__/、.pytest_cache/、venv/、.venv/ 是 Python 工具链自己生成的
+//   字节码缓存/虚拟环境，纯体积浪费，没有发布价值。
+// 根 .gitignore（第 34-42 行）早把同一批目录标记为「skill 运行时产物，非源码」，
+// 但那份 gitignore 只守 git 提交、不守这里的 cpSync——不单独排除的话，构建机上
+// 任何一次跑过 skill 留下的产物会原样进 prebundled/，再被 package.json 的
+// extraResources 整个打进 dmg/nsis，随公开的 GitHub Release 发出去：这是用户
+// 机密泄露，不是省几十 KB 体积的事。对全部 RESOURCE_DIRS 生效，不只 skills——
+// 运行时产物出现在哪个资源目录里都不该进包。
+const RUNTIME_ARTIFACT_DIR_NAMES = new Set([
+  'workspace',
+  'projects',
+  '__pycache__',
+  '.pytest_cache',
+  'venv',
+  '.venv'
+])
+
+/**
+ * cpSync 的 filter：按路径中的目录名分段匹配，命中即整棵子树跳过（filter 对
+ * 目录返回 false 时 cpSync 根本不递归进去，子文件不会被逐个问一遍）。
+ *
+ * 匹配范围刻意限定在「相对资源目录根的路径」而不是绝对路径——如果直接对
+ * cpSync 传进来的绝对 src 做分段匹配，repoRoot 之上的目录名（比如某个开发者
+ * 习惯把仓库放在 ~/workspace/ 或 ~/projects/ 下）会被误判命中，导致整个资源目录
+ * 都被跳过复制。只看资源根以下的相对路径就不会有这个问题。
+ */
+function makeRuntimeArtifactFilter(resourceRoot, resourceDirName) {
+  return (source) => {
+    const rel = relative(resourceRoot, source)
+    if (rel === '') return true // 资源目录根自身
+    const segments = rel.split(/[\\/]/)
+    if (segments.some((seg) => RUNTIME_ARTIFACT_DIR_NAMES.has(seg))) {
+      console.log(`[prebundle] 排除运行时产物：${join(resourceDirName, rel)}`)
+      return false
+    }
+    return true
+  }
+}
+
 for (const dir of RESOURCE_DIRS) {
   const src = join(repoRoot, dir)
   if (!existsSync(src)) {
     console.warn(`[prebundle] resource dir missing, skipping: ${dir}`)
     continue
   }
-  cpSync(src, join(out, dir), { recursive: true, dereference: true })
+  cpSync(src, join(out, dir), {
+    recursive: true,
+    dereference: true,
+    filter: makeRuntimeArtifactFilter(src, dir)
+  })
   console.log(`[prebundle] copied resource dir: ${dir}`)
 }
+
+/**
+ * 运行时产物残留断言（与 afterPack.cjs 的 assertLocalesSurvived 同一类硬拦，
+ * 写法与语气照抄它）。
+ *
+ * 为什么必须有：上面的 filter 是这条防线唯一的守门人，一旦写错（目录名拼错、
+ * 逻辑写反、cpSync 未来版本改了 filter 的调用时机……）后果是「复制看起来完全
+ * 正常、日志一条报错都没有」——跟 CLAUDE.md 里 electronLanguages 拼错导致
+ * Windows locales 被清空那次事故（v0.0.43~0.0.45 三个版本装完打不开）是同一种
+ * 失败模式：**这类裁剪永远静默，列错了跟「本来就没有产物」长得一模一样**。
+ * 所以拷贝完之后必须真的扫一遍 prebundled/ 产物树，确认排除名单里的目录一个
+ * 都不剩；不符合预期就 throw 让构建 exit 非 0，绝不能让漏网的用户机密文档
+ * 静默流入安装包。
+ */
+function assertNoRuntimeArtifacts(root, resourceDirs) {
+  const leaked = []
+  const walk = (dir) => {
+    let entries
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of entries) {
+      if (!e.isDirectory()) continue
+      const p = join(dir, e.name)
+      if (RUNTIME_ARTIFACT_DIR_NAMES.has(e.name)) {
+        leaked.push(p) // 命中的子树本身就是问题，不用再往下探
+        continue
+      }
+      walk(p)
+    }
+  }
+  for (const dir of resourceDirs) {
+    const dirRoot = join(root, dir)
+    if (existsSync(dirRoot)) walk(dirRoot)
+  }
+  if (leaked.length > 0) {
+    throw new Error(
+      `[prebundle] 发现 ${leaked.length} 个运行时产物目录残留在 prebundled/ 里，构建已中止：\n` +
+        leaked.map((p) => `  - ${relative(root, p)}`).join('\n') +
+        '\n\n' +
+        '  这些目录本该被 cpSync 的 filter 排除（workspace/projects/__pycache__/' +
+        '.pytest_cache/venv/.venv 均属 skill 运行时产物，可能含用户上传文档的全文/摘录）。\n' +
+        '  出现残留多半是 filter 逻辑被改动或绕过，或 RUNTIME_ARTIFACT_DIR_NAMES 漏列了新出现的' +
+        '产物目录名。\n' +
+        '  为什么必须硬失败：这些目录一旦进包会随 dmg/nsis 原样发进公开的 GitHub Release——' +
+        '是用户机密泄露，不是体积问题，绝不能静默放过。'
+    )
+  }
+  console.log(
+    '[prebundle] 运行时产物排除断言通过（workspace/projects/__pycache__/.pytest_cache/venv/.venv 均未残留）'
+  )
+}
+
+assertNoRuntimeArtifacts(out, RESOURCE_DIRS)
 
 // ── 图片量化（2026-07-30）────────────────────────────────────────────────────
 // RESOURCE_DIRS 里的示例插图/截图原本是无损直出 PNG，124 张共 64M，占安装包的
