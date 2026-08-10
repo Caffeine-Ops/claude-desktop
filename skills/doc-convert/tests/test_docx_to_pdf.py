@@ -24,9 +24,10 @@ def test_refuses_textonly_without_explicit_flag(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(docx_to_pdf, "find_soffice", lambda: None)
     src = tmp_path / "a.docx"
     _make_docx(src)
+    dst = tmp_path / "a.pdf"
 
     with pytest.raises(SystemExit) as e:
-        docx_to_pdf.convert(src, tmp_path / "a.pdf", allow_textonly=False)
+        docx_to_pdf.convert(src, dst, allow_textonly=False)
 
     assert e.value.code != 0
     err = capsys.readouterr().err
@@ -34,6 +35,8 @@ def test_refuses_textonly_without_explicit_flag(tmp_path, monkeypatch, capsys):
     assert "LibreOffice" in err
     assert "--allow-textonly" in err
     assert "排版" in err
+    # 门禁的承诺：拒绝时不产出任何文件
+    assert not dst.exists()
 
 
 def test_textonly_path_produces_pdf_when_allowed(tmp_path, monkeypatch):
@@ -65,3 +68,22 @@ def test_textonly_refuses_when_no_cjk_font(tmp_path, monkeypatch, capsys):
 def test_find_cjk_font_returns_existing_file_or_none():
     font = docx_to_pdf.find_cjk_font()
     assert font is None or font.is_file()
+
+
+def test_empty_paragraph_document_refuses_textonly(tmp_path, monkeypatch, capsys):
+    # 空段落文档（只有换行没有文字）应该被拒绝，不能静默产出空白 PDF
+    monkeypatch.setattr(docx_to_pdf, "find_soffice", lambda: None)
+    src = tmp_path / "d.docx"
+    doc = Document()
+    doc.add_paragraph("")  # 纯空段落
+    doc.add_paragraph("")
+    doc.add_paragraph("")
+    doc.save(str(src))
+    dst = tmp_path / "d.pdf"
+
+    with pytest.raises(SystemExit):
+        docx_to_pdf.convert(src, dst, allow_textonly=True)
+
+    # 拒绝时不产出文件
+    assert not dst.exists()
+    assert "没有可提取的文字" in capsys.readouterr().err

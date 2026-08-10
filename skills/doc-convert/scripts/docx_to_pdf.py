@@ -110,18 +110,20 @@ def _convert_textonly(src: Path, dst: Path) -> None:
     )
 
     flow = []
+    has_text = False  # 用来判断是否有实际文字，不能用 flow 的真假——全是 Spacer 的文档会误判
     for para in Document(str(src)).paragraphs:
         text = para.text.strip()
         if not text:
             flow.append(Spacer(1, 6))
             continue
+        has_text = True  # 找到了至少一个有内容的段落
         style = head if para.style.name.startswith("Heading") else body
         # reportlab 的 Paragraph 会解析类 HTML 标记，正文里的 & < > 必须转义
         safe = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         flow.append(Paragraph(safe, style))
         flow.append(Spacer(1, 4))
 
-    if not flow:
+    if not has_text:
         print("[doc-convert] 错误：文档里没有可提取的文字。", file=sys.stderr)
         raise SystemExit(3)
 
