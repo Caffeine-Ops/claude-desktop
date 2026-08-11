@@ -83,3 +83,76 @@ def test_cli_partial_failure_still_succeeds(tmp_path):
     manifest = json.loads(proc.stdout)
     assert len(manifest["items"]) == 1
     assert manifest["failed"][0]["source"] == "bad.jpg"
+
+
+def test_heic_error_message_contains_original_text(tmp_path):
+    """Critical 1 回归测试：HEIC 错误消息要保留原文中文标点和「最兼容」。"""
+    # 模拟 HEIC 文件
+    heic_file = tmp_path / "photo.heic"
+    heic_file.write_bytes(b"not a real heic")
+
+    # prepare_one 会报错，错误消息应含「最兼容」
+    with pytest.raises(img_prep.PrepError) as exc_info:
+        img_prep.prepare_one(heic_file, tmp_path / "out")
+
+    error_msg = str(exc_info.value)
+    assert "最兼容" in error_msg, f"Expected '最兼容' in error message, got: {error_msg}"
+
+
+def test_save_failure_raises_prep_error_not_system_error(tmp_path):
+    """Critical 2 回归测试：写盘失败时抛 PrepError 而不是 IsADirectoryError。"""
+    src = _png(tmp_path / "test.png", size=(500, 500))
+    # 把 outdir 占用成一个文件（而不是目录），导致 mkdir 或 save 失败
+    outdir = tmp_path / "notadir"
+    outdir.write_text("I am a file, not a directory")
+
+    # prepare_one 应该抛 PrepError，不是 IsADirectoryError
+    with pytest.raises(img_prep.PrepError):
+        img_prep.prepare_one(src, outdir)
+
+
+def test_save_failure_cli_no_traceback(tmp_path):
+    """Critical 2 回归测试：CLI 层面写盘失败也要格式化成中文错误，不泄漏堆栈。"""
+    src = _png(tmp_path / "test.png", size=(500, 500))
+    outdir = tmp_path / "notadir"
+    outdir.write_text("I am a file, not a directory")
+
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPTS / "img_prep.py"), str(src), "-d", str(str(outdir))],
+        capture_output=True, text=True,
+    )
+
+    # 应该失败
+    assert proc.returncode != 0, f"Expected non-zero exit code, stderr: {proc.stderr}"
+    # 错误消息格式化，没有堆栈
+    assert "[doc-convert] 错误：" in proc.stderr
+    assert "Traceback" not in proc.stderr, f"Python traceback leaked: {proc.stderr}"
+    assert "IsADirectoryError" not in proc.stderr
+
+
+def test_heic_sips_tmp_cleaned_up_on_image_open_failure(tmp_path, monkeypatch):
+    """Important 3 回归测试：sips 成功但 Pillow 打不开时，tmp 文件要清理。"""
+    # 模拟 HEIC 文件
+    heic_file = tmp_path / "photo.heic"
+    heic_file.write_bytes(b"not a real heic")
+    outdir = tmp_path / "out"
+
+    # 模拟 _sips_convert 成功生成了一个"tmp"文件，但该文件无法被 Pillow 打开
+    def mock_sips_convert(src, dst):
+        # 生成一个 sips tmp 文件，但内容是垃圾数据
+        dst.write_bytes(b"not a real jpeg")
+        return True
+
+    def mock_heif_ready():
+        return False
+
+    monkeypatch.setattr(img_prep, "_sips_convert", mock_sips_convert)
+    monkeypatch.setattr(img_prep, "_heif_ready", mock_heif_ready)
+
+    # prepare_one 会因为 Image.open 失败而抛 PrepError
+    with pytest.raises(img_prep.PrepError):
+        img_prep.prepare_one(heic_file, outdir)
+
+    # 重要：sips tmp 文件应该被清理掉
+    tmp_files = list(outdir.glob("*.sips-tmp.jpg"))
+    assert len(tmp_files) == 0, f"Expected no sips tmp files, but found: {tmp_files}"
