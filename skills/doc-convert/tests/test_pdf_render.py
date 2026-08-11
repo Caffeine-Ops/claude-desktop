@@ -93,3 +93,64 @@ def test_save_failure_is_reported_in_chinese_via_cli(tmp_path):
     assert proc.returncode != 0
     assert "[doc-convert] 错误：" in proc.stderr
     assert "Traceback" not in proc.stderr
+
+
+def test_open_document_reports_password_protection_in_chinese(tmp_path, capsys):
+    """评审 Important 1：加密探测要靠 pypdfium2 的 err_code 类型化信号，
+    不是靠猜英文措辞——用 pypdf 现造一份真正带密码的 PDF 来验证。"""
+    from pypdf import PdfReader, PdfWriter
+
+    src = _pdf(tmp_path / "i.pdf", pages=1)
+    reader = PdfReader(str(src))
+    writer = PdfWriter()
+    for page in reader.pages:
+        writer.add_page(page)
+    writer.encrypt(user_password="secret")
+    enc = tmp_path / "enc.pdf"
+    with enc.open("wb") as f:
+        writer.write(f)
+
+    with pytest.raises(SystemExit):
+        pdf_render.open_document(enc)
+    err = capsys.readouterr().err
+    assert "密码保护" in err
+
+
+def test_main_wraps_unexpected_exception_from_render(tmp_path, monkeypatch, capsys):
+    """评审 Important 2：main() 的兜底 except Exception 之前零覆盖——
+    render() 内部的 _die() 抛 SystemExit，根本到不了外层的 except Exception。
+    这里让 render 抛一个普通异常，专门测外层兜底本身。"""
+    src = _pdf(tmp_path / "j.pdf", pages=1)
+
+    def _boom(*a, **kw):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(pdf_render, "render", _boom)
+    with pytest.raises(SystemExit):
+        pdf_render.main([str(src), "-d", str(tmp_path / "out")])
+    err = capsys.readouterr().err
+    assert "[doc-convert] 错误：" in err
+    assert "Traceback" not in err
+
+
+def test_render_cleans_up_partial_files_on_mid_batch_failure(tmp_path, monkeypatch):
+    """评审顺手项：多页渲染中途失败必须清理已写出的部分文件，不能留半成品
+    目录——用户/模型看到一半的 PNG 容易误判成「已经渲完了」。"""
+    from PIL import Image
+
+    src = _pdf(tmp_path / "k.pdf", pages=3)
+    outdir = tmp_path / "png"
+    orig_save = Image.Image.save
+    calls = {"n": 0}
+
+    def _flaky_save(self, fp, *a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise OSError("disk full")
+        return orig_save(self, fp, *a, **kw)
+
+    monkeypatch.setattr(Image.Image, "save", _flaky_save)
+    with pytest.raises(SystemExit):
+        pdf_render.render(src, [1, 2, 3], outdir, pdf_render.SCALE_DEFAULT)
+    # 前两页已经落盘，第三页失败——清理逻辑要把前两页也删掉，不留半成品。
+    assert list(outdir.glob("*.png")) == []

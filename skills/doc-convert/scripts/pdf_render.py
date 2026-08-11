@@ -60,13 +60,24 @@ def parse_pages(spec: str, total: int) -> list[int]:
 
 
 def open_document(src: Path):
-    """打开 PDF，加密/损坏都转成中文报错。措辞与 pdf_ops.py 对齐。"""
+    """打开 PDF，加密/损坏都转成中文报错。措辞与 pdf_ops.py 对齐。
+
+    评审后加固：优先用 pypdfium2.PdfiumError.err_code 判断是不是密码保护——
+    这是官方文档化的类型化信号（FPDF_ERR_PASSWORD == 4），跟 pdf_ops.py 那边
+    catch FileNotDecryptedError 是同一路数，都是「认类型不认措辞」。原来只靠
+    str(e).lower() 里找 "password"/"encrypt"：库一升级改了英文文案，加密 PDF
+    就会滑进「文件可能已损坏」的通用分支——不是崩溃，是诊断答非所问，还没有
+    任何测试能发现这种劣化。字符串匹配保留做兜底（双保险），只防极旧版本
+    pypdfium2 还没有 err_code 属性的场景，不再是主判据。
+    """
     import pypdfium2
     try:
         return pypdfium2.PdfDocument(str(src))
     except Exception as e:
+        err_code = getattr(e, "err_code", None)
+        password_code = getattr(pypdfium2.raw, "FPDF_ERR_PASSWORD", 4)
         low = str(e).lower()
-        if "password" in low or "encrypt" in low:
+        if err_code == password_code or "password" in low or "encrypt" in low:
             _die(f"PDF「{src.name}」被密码保护，本工具无法处理。请先用阅读器去掉密码再试。")
         _die(f"打开 PDF「{src.name}」失败，文件可能已损坏。请确认后重试。")
 
@@ -82,12 +93,21 @@ def render(src: Path, pages: list[int], outdir: Path, scale: float) -> list[Path
     doc = open_document(src)
     written: list[Path] = []
     for p in pages:
-        bitmap = doc[p - 1].render(scale=scale)
         dst = outdir / f"page-{p:04d}.png"
         try:
+            bitmap = doc[p - 1].render(scale=scale)
             bitmap.to_pil().save(dst)
         except Exception:
-            _die(f"写入图片 {dst} 失败，请检查目标目录权限或磁盘空间。")
+            # 评审后加固：多页渲染中途失败（比如渲到第 3 页时磁盘写满）如果
+            # 不清理，outdir 里会留下前几页「看起来完整」的 PNG，但整批其实
+            # 是残缺的——用户/模型看到一半文件容易误判成「已经渲完了」。这
+            # 撞在本技能头号纪律上：宁可不产出，也不产出一份看起来正常实则
+            # 有缺陷的东西（同 pdf_ops.py split 的两阶段写盘加固同源）。所以
+            # 失败时先把本次已写出的文件全部删掉，再报错，并在消息里说明。
+            for done in written:
+                done.unlink(missing_ok=True)
+            _die(f"写入第 {p} 页图片失败，已清理本次产生的 {len(written)} 个部分文件。"
+                 f"请检查目标目录权限或磁盘空间。")
         written.append(dst)
     return written
 
