@@ -104,10 +104,20 @@ def render(src: Path, pages: list[int], outdir: Path, scale: float) -> list[Path
             # 撞在本技能头号纪律上：宁可不产出，也不产出一份看起来正常实则
             # 有缺陷的东西（同 pdf_ops.py split 的两阶段写盘加固同源）。所以
             # 失败时先把本次已写出的文件全部删掉，再报错，并在消息里说明。
+            #
+            # 二次评审加固：光删 written 里的还不够——written 只收「保存成功」
+            # 的页，当前正在失败的这一页自己的 dst 不在里面。PIL 的 save() 是
+            # 直接打开目标路径写，不是先写临时文件再 rename，磁盘写满时会先
+            # 落几个字节再抛异常，留下一个几十字节的半成品 page-NNNN.png——
+            # 这正是「失败页自己」，比 written 里的旧页更容易被误当成正常产物
+            # （文件名格式一模一样）。所以 dst 要单独补删一次；不用 written
+            # 兜底是因为它压根没被 append 进去。
             for done in written:
                 done.unlink(missing_ok=True)
+            dst.unlink(missing_ok=True)
             _die(f"写入第 {p} 页图片失败，已清理本次产生的 {len(written)} 个部分文件。"
-                 f"请检查目标目录权限或磁盘空间。")
+                 f"请检查目标目录权限或磁盘空间；如果反复在同一页失败，也可能是"
+                 f"这一页本身内容有问题（PDF 渲染出错），可以先跳过这一页。")
         written.append(dst)
     return written
 

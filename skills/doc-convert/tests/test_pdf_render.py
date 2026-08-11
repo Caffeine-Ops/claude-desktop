@@ -154,3 +154,31 @@ def test_render_cleans_up_partial_files_on_mid_batch_failure(tmp_path, monkeypat
         pdf_render.render(src, [1, 2, 3], outdir, pdf_render.SCALE_DEFAULT)
     # 前两页已经落盘，第三页失败——清理逻辑要把前两页也删掉，不留半成品。
     assert list(outdir.glob("*.png")) == []
+
+
+def test_render_removes_failed_pages_own_partial_file(tmp_path, monkeypatch):
+    """二次评审加固：清理不能只删 written 列表里「已成功保存」的页，还要删
+    「当前正在失败的这一页自己」写出的半成品。PIL 的 save() 是直接打开目标
+    路径写、不是先写临时文件再 rename，真实磁盘写满时会先落几个字节再抛
+    异常，遗留一个几十字节的假 PNG——这个文件从没被 append 进 written，
+    旧的清理逻辑漏掉了它。同时验证：清理不会误删目录里预置的无关旧文件。"""
+    from PIL import Image
+
+    src = _pdf(tmp_path / "l.pdf", pages=1)
+    outdir = tmp_path / "png"
+    outdir.mkdir(parents=True)
+    stale = outdir / "page-0009.png"
+    stale.write_bytes(b"pretend-old-png")
+
+    def _flaky_save(self, fp, *a, **kw):
+        # 模拟磁盘写满：save() 先把目标文件打开并写入了几个字节，再抛异常。
+        Path(fp).write_bytes(b"\x89PNG\r\n\x1a\nPARTIAL")
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(Image.Image, "save", _flaky_save)
+    with pytest.raises(SystemExit):
+        pdf_render.render(src, [1], outdir, pdf_render.SCALE_DEFAULT)
+
+    assert not (outdir / "page-0001.png").exists()
+    assert stale.exists()
+    assert stale.read_bytes() == b"pretend-old-png"
