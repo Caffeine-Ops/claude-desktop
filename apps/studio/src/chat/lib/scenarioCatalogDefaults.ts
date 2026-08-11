@@ -157,6 +157,31 @@ const TENDER_PROMPTS: readonly ScenarioCatalogPrompt[] = [
 
 const DOC_CONVERT_PROMPTS: readonly ScenarioCatalogPrompt[] = [
   {
+    // 「【图片文件】」命中 filePlaceholderPlugin 的 image 规则 → image/*。
+    // 文案里点一句「看不清的别猜」，是把技能的反幻觉纪律前置到用户预期里：
+    // 用户看到空格子时才知道那是设计而不是 bug。
+    label: '图片提取文字',
+    text: '把【图片文件】里的文字提取出来，排版结构尽量保留，看不清的地方标出来别猜。'
+  },
+  {
+    // 「【PDF 文件】」命中 pdf 规则 → .pdf。刻意提「能直接算」——
+    // 数字必须写成真数值是这条能力和「截个图自己抄」的分界线。
+    label: 'PDF 表格转 Excel',
+    text: '把【PDF 文件】里的表格提取成 Excel，数字要能直接参与计算。'
+  },
+  {
+    // 「【票据图片】」——「票据」二字不含 台账/表格，不会被前面的 excel 规则
+    // 抢跑，落到 image 规则 → image/*（2026-08-11 逐条核对过匹配顺序）。
+    label: '票据批量转台账',
+    text: '把这些【票据图片】整理成一张 Excel 台账，日期、金额、开票方分列。'
+  },
+  {
+    // 槽必须是「文稿文件」不能是「文档文件」：后者命中 word 规则只给
+    // .doc/.docx，PDF 选不了，而 PDF 正是这个场景的主力格式（总设计事实核查 #10）。
+    label: '长文档提炼',
+    text: '帮我提炼【文稿文件】的要点，先问我要摘要、大纲还是完整 Markdown。'
+  },
+  {
     // 「【Markdown 文件】」命中 filePlaceholderPlugin 的 markdown 规则
     // → picker 限定 .md/.markdown。
     label: 'Markdown 转 Word',

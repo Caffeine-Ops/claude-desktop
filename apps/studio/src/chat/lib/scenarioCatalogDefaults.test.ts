@@ -51,9 +51,23 @@ describe('内置场景目录 · 文档处理', () => {
     expect(docIdx).toBe(sheetsIdx + 1)
   })
 
-  it('PR1 首版恰好 4 条话术（B 类纯脚本），A 类 4 条属 PR2', () => {
+  it('八条话术：A 类 4 条（走模型）+ B 类 4 条（走脚本）', () => {
     const item = allSkillItems().find((i) => i.value === DOC_CONVERT_VALUE)
-    expect(item?.prompts?.length).toBe(4)
+    expect(item?.prompts?.length).toBe(8)
+  })
+
+  it('A 类 4 条排在 B 类之前', () => {
+    // 列表前几条决定用户对这个技能的第一印象：先看到「AI 真正打得过传统
+    // 工具」的那几条，而不是到处都有的「PDF 转 Word」。顺序即产品叙事，
+    // 同上面「文档处理紧跟处理表格之后」那条断言的立场。
+    const item = allSkillItems().find((i) => i.value === DOC_CONVERT_VALUE)
+    const labels = (item?.prompts ?? []).map((p) => p.label)
+    expect(labels.slice(0, 4)).toEqual([
+      '图片提取文字',
+      'PDF 表格转 Excel',
+      '票据批量转台账',
+      '长文档提炼'
+    ])
   })
 
   it('每条话术的文件槽都能选到它真正需要的格式', () => {
@@ -63,6 +77,12 @@ describe('内置场景目录 · 文档处理', () => {
     expect(acceptForPlaceholder('Word 文件')).toContain('.docx')
     expect(acceptForPlaceholder('Excel 文件')).toContain('.csv')
     expect(acceptForPlaceholder('PDF 文件')).toContain('.pdf')
+    // A 类新增的三个槽。「文稿文件」这条尤其要守：写成「文档文件」会被 word
+    // 规则抢先命中，只给 .doc/.docx，PDF 反而选不了——而 PDF 正是长文档提炼
+    // 的主力格式。
+    expect(acceptForPlaceholder('图片文件')).toBe('image/*')
+    expect(acceptForPlaceholder('票据图片')).toBe('image/*')
+    expect(acceptForPlaceholder('文稿文件')).toContain('.pdf')
   })
 })
 

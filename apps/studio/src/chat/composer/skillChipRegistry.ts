@@ -179,13 +179,13 @@ export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
     match: '/claude-desktop:doc-convert',
     image: '/skill-icons/doc-convert.png',
     label: '文档处理',
-    description: '格式转换、PDF 页面操作'
+    description: '提取文字、表格台账、格式转换'
   },
   {
     match: '/doc-convert',
     image: '/skill-icons/doc-convert.png',
     label: '文档处理',
-    description: '格式转换、PDF 页面操作'
+    description: '提取文字、表格台账、格式转换'
   },
   // 代码开发场景伪命令（日常开发 / 网站开发 / Agent 应用）——ScenarioRail
   // 的二级导航标签，不是真实 CLI skill：发送时 FusionRuntimeProvider.onNew
