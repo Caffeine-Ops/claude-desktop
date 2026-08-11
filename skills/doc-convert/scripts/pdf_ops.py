@@ -129,8 +129,7 @@ def split(src: Path, out_dir: Path, ranges: str | None = None) -> list[Path]:
     # 「拒绝时不产出文件」的纪律不一致（merge/delete/docx_to_pdf 都做到了，这里
     # 漏了）。改成两阶段：先把所有区间都校验一遍（_parse_pages 内部越界即
     # SystemExit），全部通过了再开始写，任何一个区间有问题就整体不落盘。
-    chunks = [c for c in ranges.split(",")]
-    all_pages = [_parse_pages(chunk, total) for chunk in chunks]
+    all_pages = [_parse_pages(chunk, total) for chunk in ranges.split(",")]
 
     for idx, pages in enumerate(all_pages, start=1):
         writer = PdfWriter()

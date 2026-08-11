@@ -127,7 +127,7 @@ source ${SKILL_DIR}/bin/ensure-python.sh
 ```python
 import sys
 sys.path.insert(0, "${SKILL_DIR}/scripts")
-from docx_to_pdf import find_cjk_font, _CJK_FONT_CANDIDATES
+from docx_to_pdf import find_cjk_font
 
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
@@ -141,10 +141,10 @@ if font_path is None:
     raise SystemExit("本机找不到中文字体，拒绝生成水印页")
 
 FONT_NAME = "WatermarkCJK"
-# .ttc 是字体集合，必须传 subfontIndex 指定取第几个；.ttf 直接注册不用传该参数
-idx = next(i for p, i in _CJK_FONT_CANDIDATES if __import__("pathlib").Path(p) == font_path)
+# .ttc 是字体集合，注册时要指定取第几个；我们要的都是第一个，直接传 0。
+# .ttf 是单个字体，不用传这个参数。
 if font_path.suffix.lower() == ".ttc":
-    pdfmetrics.registerFont(TTFont(FONT_NAME, str(font_path), subfontIndex=idx))
+    pdfmetrics.registerFont(TTFont(FONT_NAME, str(font_path), subfontIndex=0))
 else:
     pdfmetrics.registerFont(TTFont(FONT_NAME, str(font_path)))
 

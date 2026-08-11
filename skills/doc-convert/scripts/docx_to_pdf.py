@@ -33,19 +33,21 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
-# 候选中文字体，按「几乎一定存在」排在前面。.ttc 是字体集合，reportlab 需要
-# subfontIndex 指定取其中第几个；.ttf 直接用。
-_CJK_FONT_CANDIDATES: list[tuple[str, int]] = [
+# 候选中文字体路径。原来这里是 (路径, subfontIndex) 的二元组，但 7 个候选的
+# index 全是 0，配套的「按路径反查 index」写法（next(i for p, i in ...)）纯属
+# 仪式，还埋了一个生产路径不可达的 StopIteration。.ttc 是字体集合，注册时
+# 需要 subfontIndex 指定取第几个——我们要的都是集合里的第一个，直接传 0。
+_CJK_FONT_CANDIDATES: list[str] = [
     # macOS
-    ("/System/Library/Fonts/Supplemental/Arial Unicode.ttf", 0),
-    ("/System/Library/Fonts/PingFang.ttc", 0),
-    ("/System/Library/Fonts/Hiragino Sans GB.ttc", 0),
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
     # Windows
-    ("C:/Windows/Fonts/msyh.ttc", 0),
-    ("C:/Windows/Fonts/simsun.ttc", 0),
+    "C:/Windows/Fonts/msyh.ttc",
+    "C:/Windows/Fonts/simsun.ttc",
     # Linux
-    ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 0),
-    ("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc", 0),
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
 ]
 
 _FONT_NAME = "DocConvertCJK"
@@ -65,7 +67,7 @@ def find_soffice() -> str | None:
 
 def find_cjk_font() -> Path | None:
     """找一个能显示中文的字体文件；没有返回 None。"""
-    for path, _idx in _CJK_FONT_CANDIDATES:
+    for path in _CJK_FONT_CANDIDATES:
         p = Path(path)
         if p.is_file():
             return p
@@ -118,9 +120,9 @@ def _convert_textonly(src: Path, dst: Path) -> None:
         )
         raise SystemExit(3)
 
-    idx = next(i for p, i in _CJK_FONT_CANDIDATES if Path(p) == font_path)
+    # .ttc 是字体集合，注册时要指定取第几个；候选表里我们要的都是第一个。
     if font_path.suffix.lower() == ".ttc":
-        pdfmetrics.registerFont(TTFont(_FONT_NAME, str(font_path), subfontIndex=idx))
+        pdfmetrics.registerFont(TTFont(_FONT_NAME, str(font_path), subfontIndex=0))
     else:
         pdfmetrics.registerFont(TTFont(_FONT_NAME, str(font_path)))
 
