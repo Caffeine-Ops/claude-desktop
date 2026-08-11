@@ -168,9 +168,16 @@ def watermark(src: Path, dst: Path, stamp_pdf: Path) -> None:
     stamp = stamp_reader.pages[0]
     reader = _open_reader(src)
     writer = PdfWriter()
+
+    # pypdf 7.0 弃用警告修复：改用「先附着到 writer 再合并」而不是「在未附着页上直接
+    # merge_page」。官方文档指出后者"已被证明不可靠"——即使现在能用，未来也易出问题。
+    # 此改动方案：遍历源页时先添加到 writer，再对 writer 中的页做 merge_page，确保
+    # 页面已正确绑定到 writer。这样既规避弃用警告、也提高了操作可靠性。
     for page in reader.pages:
-        page.merge_page(stamp)
         writer.add_page(page)
+        # 获取刚添加的页（writer 中的最后一页），对它做叠加
+        writer.pages[-1].merge_page(stamp)
+
     _write(writer, dst)
 
 

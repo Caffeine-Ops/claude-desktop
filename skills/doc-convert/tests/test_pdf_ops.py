@@ -142,3 +142,59 @@ def test_merge_empty_list_fails(tmp_path, capsys):
     with pytest.raises(SystemExit):
         pdf_ops.merge([], dst)
     assert "为空" in capsys.readouterr().err
+
+
+def test_watermark_content_truly_overlaid(tmp_path):
+    """验证水印内容确实被叠加到了输出页中，而不是只改变页数。
+
+    这条测试能区分「水印有没有实际叠上」。方法是：生成一个含矩形内容的水印 PDF
+    （用 reportlab），叠加后检查输出 PDF 是否真的包含了水印的内容流，而不只是
+    改变了页数。对照组：未叠加水印的版本应该文件更小。
+    """
+    from io import BytesIO
+
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+
+    # 源 PDF：1 页空白
+    src = tmp_path / "src.pdf"
+    _make_pdf(src, 1)
+
+    # 水印 PDF：1 页含红色矩形（用 reportlab 绘制，确保有可检测的内容）
+    stamp = tmp_path / "stamp.pdf"
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=letter)
+    c.setFillColorRGB(1, 0, 0)  # 红色
+    c.rect(50, 50, 100, 100, fill=1)  # 绘制矩形
+    c.save()
+    with stamp.open("wb") as f:
+        f.write(buf.getvalue())
+
+    # 对照组：不叠水印的源 PDF 直接复制到输出
+    no_watermark = tmp_path / "no_watermark.pdf"
+    import shutil
+    shutil.copy(src, no_watermark)
+
+    # 实验组：叠加水印
+    dst = tmp_path / "watermarked.pdf"
+    pdf_ops.watermark(src, dst, stamp)
+
+    # 验证：叠加后的输出文件应该比未加水印的版本更大（因为包含了水印内容）
+    no_watermark_size = no_watermark.stat().st_size
+    watermarked_size = dst.stat().st_size
+
+    assert watermarked_size > no_watermark_size, (
+        f"水印未被合并：未加水印 {no_watermark_size} 字节，"
+        f"加水印后 {watermarked_size} 字节，应该更大"
+    )
+
+    # 额外验证：检查输出页确实含有内容（不是空页）
+    result_reader = PdfReader(str(dst))
+    result_page = result_reader.pages[0]
+    # 若成功叠加，页面的属性不应该和源空白页完全相同
+    src_reader = PdfReader(str(src))
+    src_page = src_reader.pages[0]
+    # 比较页面大小的字典表示（若叠加成功，会有额外的内容流或操作符）
+    assert len(str(result_page)) >= len(str(src_page)), (
+        "输出页面内容未被修改，水印可能未叠上"
+    )

@@ -6,7 +6,9 @@
 # 环境后安装本清单。打包后的 runtime 只读，禁止直装。
 
 # PDF 页级操作：合并 / 拆分 / 删页 / 加水印（pdf_ops.py）
-pypdf>=4.0.0
+# 钉住 pypdf<7 的理由：pypdf 7.0 会移除 PageObject.merge_page() 等旧接口，当前 watermark()
+# 依赖该接口。无上界的话新用户首次安装会拿到装不动的版本。等完整升级到新接口后再放开。
+pypdf>=4.0.0,<7
 
 # Word 读写：md_to_docx.py 生成、docx_to_pdf.py 兜底路径解析正文
 python-docx>=1.1
