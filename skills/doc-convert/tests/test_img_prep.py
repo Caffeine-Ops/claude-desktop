@@ -98,6 +98,16 @@ def test_heic_error_message_contains_original_text(tmp_path):
     error_msg = str(exc_info.value)
     assert "最兼容" in error_msg, f"Expected '最兼容' in error message, got: {error_msg}"
 
+    # 反绕行测试：直接读源码文本，断言原文字面量真的写在代码里，而不是
+    # 靠 chr() 之类的间接手段拼出来的。以后谁想绕开这个约束会被这条断
+    # 言当场拦住——它不是在测运行结果，是在测源码的写法本身。
+    source_text = (
+        Path(img_prep.__file__).read_text(encoding="utf-8")
+    )
+    assert (
+        "（iPhone 相册「共享 → 存储到文件」时选“最兼容”即可）。" in source_text
+    ), "HEIC 错误文案必须以字面量形式出现在源码中，不能用 chr() 等方式绕行"
+
 
 def test_save_failure_raises_prep_error_not_system_error(tmp_path):
     """Critical 2 回归测试：写盘失败时抛 PrepError 而不是 IsADirectoryError。"""
@@ -156,3 +166,54 @@ def test_heic_sips_tmp_cleaned_up_on_image_open_failure(tmp_path, monkeypatch):
     # 重要：sips tmp 文件应该被清理掉
     tmp_files = list(outdir.glob("*.sips-tmp.jpg"))
     assert len(tmp_files) == 0, f"Expected no sips tmp files, but found: {tmp_files}"
+
+
+def test_convert_or_resize_failure_does_not_abort_batch(tmp_path, monkeypatch, capsys):
+    """回归测试：convert/resize 阶段抛出的异常必须转成 PrepError 被
+    main() 的批量循环吃掉、记进 failed[]，而不是绕过 `except PrepError`
+    直接冒到 main() 最外层的兜底 except——那样一张坏图会提前结束整批，
+    同批里排在它后面的好图就一张也出不来了，违反「单张坏图不拖垮整批」
+    的核心契约。
+
+    用一个能被 Image.open + load() 正常打开、但 convert() 会抛异常的
+    伪图片对象模拟"图片数据部分损坏"的场景（比如截断的调色板）。
+    """
+    good = _png(tmp_path / "good.png", size=(500, 500))
+    bad = _png(tmp_path / "bad.png", size=(500, 500))
+    outdir = tmp_path / "out"
+
+    real_open = img_prep.Image.open
+
+    class _OpensButConvertBoom:
+        """load() 正常放行，convert() 抛异常——模拟能打开但处理不了的图。"""
+
+        def __init__(self, real_img):
+            self._real_img = real_img
+
+        def load(self):
+            return self._real_img.load()
+
+        def convert(self, mode):
+            raise OSError("模拟的调色板数据损坏")
+
+    def fake_open(path):
+        img = real_open(path)
+        if Path(path).name == "bad.png":
+            return _OpensButConvertBoom(img)
+        return img
+
+    monkeypatch.setattr(img_prep.Image, "open", fake_open)
+
+    rc = img_prep.main([str(good), str(bad), "-d", str(outdir)])
+    captured = capsys.readouterr()
+
+    # 整批仍然成功退出（exit 0），不是被坏图拖垮的非零退出
+    assert rc == 0, f"Expected exit 0, got {rc}. stderr: {captured.err}"
+
+    manifest = json.loads(captured.out)
+    assert manifest["failed"][0]["source"] == "bad.png"
+    assert len(manifest["items"]) == 1
+    assert manifest["items"][0]["source"] == "good.png"
+
+    # 同批的好图照常产出
+    assert (outdir / "good.jpg").is_file()

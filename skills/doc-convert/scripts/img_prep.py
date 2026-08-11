@@ -2,10 +2,6 @@
 # -*- coding: utf-8 -*-
 """img_prep.py — 把用户丢进来的图片规格化成模型能读的 JPG。
 
-注意：本文件中使用中文弯引号"（U+201C/U+201D）和直角引号「」（U+300C/U+300D）
-但这些字符在字符串字面量中可能导致 Python 词法分析错误，所以用 chr() 定义。
-
-
 为什么需要这一步（两个都不是可选项）：
   1. iPhone 拍的照片默认是 HEIC，而模型读图只认 PNG/JPG 这类常见格式。
      「拍张照 → 提字」「拍一堆发票 → 出台账」正是本技能的门面场景，
@@ -34,12 +30,6 @@ from PIL import Image
 
 MAX_EDGE_DEFAULT = 1600  # 略高于模型内部约 1568px 的长边上限，留一点余量
 HEIC_SUFFIXES = {".heic", ".heif"}
-
-# 中文排版用的特殊引号，避免在字符串字面量中引起词法错误
-_LEFT_CURLY_QUOTE = chr(0x201c)   # "
-_RIGHT_CURLY_QUOTE = chr(0x201d)  # "
-_LEFT_ANGLE_QUOTE = chr(0x300c)   # 「
-_RIGHT_ANGLE_QUOTE = chr(0x300d)  # 」
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -99,11 +89,11 @@ def prepare_one(src: Path, outdir: Path, max_edge: int = MAX_EDGE_DEFAULT) -> Pa
         if src.suffix.lower() in HEIC_SUFFIXES and not _heif_ready():
             tmp = outdir / (src.stem + ".sips-tmp.jpg")
             if not _sips_convert(src, tmp):
-                msg = (f"{src.name} 是 HEIC 格式，本机没有可用的解码器。"
-                       "请先把它导出成 JPG 或 PNG 再试"
-                       f"（iPhone 相册{_LEFT_ANGLE_QUOTE}共享 → 存储到文件{_RIGHT_ANGLE_QUOTE}"
-                       f"时选{_LEFT_CURLY_QUOTE}最兼容{_RIGHT_CURLY_QUOTE}即可）。")
-                raise PrepError(msg)
+                raise PrepError(
+                    f"{src.name} 是 HEIC 格式，本机没有可用的解码器。"
+                    "请先把它导出成 JPG 或 PNG 再试"
+                    "（iPhone 相册「共享 → 存储到文件」时选“最兼容”即可）。"
+                )
             work = tmp
 
         try:
@@ -114,12 +104,19 @@ def prepare_one(src: Path, outdir: Path, max_edge: int = MAX_EDGE_DEFAULT) -> Pa
                 f"{src.name} 打不开，可能不是图片文件或已损坏。请确认后重试。"
             )
 
-        img = img.convert("RGB")
-        w, h = img.size
-        if max(w, h) > max_edge:
-            scale = max_edge / max(w, h)
-            img = img.resize(
-                (max(1, round(w * scale)), max(1, round(h * scale))), Image.LANCZOS
+        try:
+            img = img.convert("RGB")
+            w, h = img.size
+            if max(w, h) > max_edge:
+                scale = max_edge / max(w, h)
+                img = img.resize(
+                    (max(1, round(w * scale)), max(1, round(h * scale))), Image.LANCZOS
+                )
+        except Exception:
+            # 能被 Image.open + load() 打开，不代表 convert/resize 一定能扛住
+            # （例如截断的调色板数据）——同样只拖垮这一张，不拖垮整批
+            raise PrepError(
+                f"{src.name} 处理失败，图片数据可能已损坏。请确认后重试。"
             )
 
         try:
