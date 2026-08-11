@@ -24,11 +24,16 @@ set "SKILL_ROOT=%~dp0.."
 set "REQ=%SKILL_ROOT%\requirements.txt"
 set "VENV_PY=%DOC_CONVERT_VENV_DIR%\Scripts\python.exe"
 
-REM 1. 已就绪 -> 直接输出
+REM 1. 已就绪 -> 直接输出。哨兵存的是 requirements.txt 的副本而非空文件，
+REM 理由与 ensure-python.sh 第 29 行的注释逐行对应：空文件回答不了「装的是不是
+REM 现在这份清单」，加依赖后老用户会秒过且永远装不上新库。
 if exist "%VENV_PY%" if exist "%DOC_CONVERT_VENV_DIR%\.deps-ok" (
-  echo [doc-convert] Python 就绪：%VENV_PY%
-  echo DOC_CONVERT_PY=%VENV_PY%
-  exit /b 0
+  fc /b "%REQ%" "%DOC_CONVERT_VENV_DIR%\.deps-ok" >nul 2>&1
+  if not errorlevel 1 (
+    echo [doc-convert] Python 就绪：%VENV_PY%
+    echo DOC_CONVERT_PY=%VENV_PY%
+    exit /b 0
+  )
 )
 
 REM 2. 选 base 解释器
@@ -101,7 +106,7 @@ if not defined DOC_CONVERT_DEPS_OK (
   echo [doc-convert] 错误：清华/阿里/官方三个源均安装失败。检查网络后重跑本脚本。
   exit /b 1
 )
-break > "%DOC_CONVERT_VENV_DIR%\.deps-ok"
+copy /y "%REQ%" "%DOC_CONVERT_VENV_DIR%\.deps-ok" >nul
 echo [doc-convert] Python 就绪：%VENV_PY%
 echo DOC_CONVERT_PY=%VENV_PY%
 exit /b 0

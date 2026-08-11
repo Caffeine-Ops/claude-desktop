@@ -26,9 +26,15 @@
 DOC_CONVERT_VENV_DIR="${DOC_CONVERT_VENV_DIR:-$HOME/.doc-convert-skill/venv}"
 __dc_req="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)/requirements.txt"
 
-# ── 1. 已就绪：venv 存在 + 依赖装好哨兵在 → 直接导出，秒过 ──────────────
+# ── 1. 已就绪：venv 存在 + 哨兵内容与当前 requirements.txt 一致 → 秒过 ──
+# 哨兵存的是 requirements.txt 的一份副本，不是空文件。理由：空文件只能回答
+# 「以前装过吗」，回答不了「装的是不是现在这份清单」。PR 2 加 pdfplumber 时
+# 踩到过——老用户 venv 里躺着 PR 1 留下的空哨兵，脚本秒过、新依赖永远装不上，
+# 脚本一 import 就是一屏英文堆栈。改成内容比对后：清单变了 → 自动补装，
+# 已装好的包 pip 会跳过，只下新增的；清单没变 → 照旧秒过。自愈，不需要
+# 用户做任何事，也不需要额外维护一个版本号。
 __dc_py="$DOC_CONVERT_VENV_DIR/bin/python"
-if [ -x "$__dc_py" ] && [ -f "$DOC_CONVERT_VENV_DIR/.deps-ok" ]; then
+if [ -x "$__dc_py" ] && cmp -s "$__dc_req" "$DOC_CONVERT_VENV_DIR/.deps-ok"; then
   export DOC_CONVERT_PY="$__dc_py"
   echo "[doc-convert] Python 就绪：$DOC_CONVERT_PY"
   unset __dc_py __dc_req
@@ -99,7 +105,7 @@ for __dc_idx in "${__dc_mirrors[@]}"; do
 done
 
 if [ "$__dc_ok" = 1 ]; then
-  : > "$DOC_CONVERT_VENV_DIR/.deps-ok"
+  cp "$__dc_req" "$DOC_CONVERT_VENV_DIR/.deps-ok"
   export DOC_CONVERT_PY="$__dc_py"
   echo "[doc-convert] Python 就绪：$DOC_CONVERT_PY"
   unset __dc_py __dc_req __dc_base __c __dc_ver __dc_mirrors __dc_idx __dc_host __dc_ok
