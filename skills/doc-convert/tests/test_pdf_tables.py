@@ -52,6 +52,28 @@ def _scanned_pdf(path: Path, tmp_path: Path) -> Path:
     return path
 
 
+def _sparse_table_pdf(path: Path) -> Path:
+    """页面整体文字层稀薄（远低于 SCANNED_CHARS_PER_PAGE 阈值），但确实画了
+    一张带线框的表格——评审实测能真实发生的组合：scanned 判定只看整页字符数，
+    跟"这页有没有表格"是两件独立的事。用来验证 scanned=True 且 tables 非空时，
+    stdout 不能再打印"抽不到表格数据"这句自相矛盾的提示（这正是脚本判断条件
+    从 `if result["scanned"]` 改成 `if not result["tables"]` 要守住的分支）。
+    """
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas
+    from reportlab.platypus import Table, TableStyle
+    c = canvas.Canvas(str(path), pagesize=A4)
+    w, h = A4
+    t = Table([["Total", "72.50"]], colWidths=[100, 100])
+    t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 1, colors.black)]))
+    t.wrapOn(c, w, h)
+    t.drawOn(c, 72, h - 150)
+    c.showPage()
+    c.save()
+    return path
+
+
 def test_numbers_are_extracted_verbatim(tmp_path):
     out = tmp_path / "t.json"
     proc = subprocess.run(
@@ -91,6 +113,46 @@ def test_scanned_pdf_exits_zero_and_flags_scanned(tmp_path):
     data = json.loads(out.read_text(encoding="utf-8"))
     assert data["scanned"] is True
     assert data["tables"] == []
+
+
+# --- 补充：stdout 提示文案的分支覆盖。评审第二轮实测发现原来的判断条件
+# `if result["scanned"]:` 会在"scanned=True 但 tables 非空"这个真实会发生的
+# 组合下打印一句和刚生成的 JSON 内容自相矛盾的话——数字明明是坐标直读的，
+# 提示却说"抽不到表格数据"。改成 `if not result["tables"]:` 后修复，但之前
+# 没有任何测试断言过这行 stdout 文案，这个分支是零覆盖的：下次有人手滑把
+# 条件改回 `if result["scanned"]:`，不会被任何测试抓到。这两条测试专门堵住
+# 这个坑，各自对应 tables 非空/为空两种情况。
+
+def test_scanned_but_tables_found_does_not_print_misleading_hint(tmp_path):
+    """scanned=True 且 tables 非空：数字仍是坐标直读、逐字准确，
+    stdout 不能再说"抽不到表格数据"——那是自相矛盾的。"""
+    out = tmp_path / "t.json"
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPTS / "pdf_tables.py"),
+         str(_sparse_table_pdf(tmp_path / "h.pdf")), "-o", str(out)],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert data["scanned"] is True
+    assert data["tables"] != []
+    assert "抽不到表格数据" not in proc.stdout
+
+
+def test_scanned_with_no_tables_still_prints_hint(tmp_path):
+    """真扫描件（纯图片页，没有文字层也没有表格）：这句提示还是必须打印，
+    它是 agent 改走看图识别路线的信号，不能因为这次改动被连带删掉。"""
+    out = tmp_path / "t.json"
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPTS / "pdf_tables.py"),
+         str(_scanned_pdf(tmp_path / "j.pdf", tmp_path)), "-o", str(out)],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert data["scanned"] is True
+    assert data["tables"] == []
+    assert "抽不到表格数据" in proc.stdout
 
 
 def test_page_filter_is_honoured(tmp_path):
