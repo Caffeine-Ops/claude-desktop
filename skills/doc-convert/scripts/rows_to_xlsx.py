@@ -62,16 +62,35 @@ def load(path: Path, headers_arg: list[str] | None) -> tuple[list[str], list[dic
             if not line:
                 continue
             try:
-                rows.append(json.loads(line))
+                obj = json.loads(line)
             except json.JSONDecodeError:
                 _die(f"中间文件第 {i} 行不是合法 JSON，可能是上次跑到一半被打断了。"
                      "删掉这一行后重试即可，前面已识别的内容不会丢。")
+            if not isinstance(obj, dict):
+                # 评审实测：某一行合法 JSON 但不是对象（比如手滑写成了
+                # [1,2,3]）会让下游 validate() 对着非 dict 做 `k in row`
+                # 之类的操作，炸出英文 TypeError/AttributeError，兜底虽然
+                # 接得住但诊断信息对用户毫无意义。这里提前用行号把问题
+                # 钉死，比让它滚到后面变成一句看不懂的英文异常有用得多。
+                _die(f"中间文件第 {i} 行不是一个对象（拿到的是 "
+                     f"{type(obj).__name__}）。每一行必须是「字段名: 值」的"
+                     "对象，请检查这一行的格式。")
+            rows.append(obj)
         return list(headers_arg), rows, {}
 
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
         _die(f"「{path.name}」不是合法的 JSON。")
+    if not isinstance(payload, dict):
+        # 评审实测：模型把 rows 数组直接当成整个文件（裸 `[{...}, {...}]`）
+        # 是很自然的手滑——顶层缺了一层 {headers, rows} 包装。不提前拦住，
+        # 下面 `payload.get("headers")` 会直接抛 AttributeError，被外层兜底
+        # 接住后吐出一句用户看不懂的英文异常，等于白兜。
+        _die(f"「{path.name}」顶层必须是一个包含 headers/rows 的对象，"
+             f"但读到的是 {type(payload).__name__}。你是不是把 rows 数组"
+             "直接当成了整个文件？请包一层：{\"headers\": [...], "
+             "\"rows\": [...]}。")
     headers = headers_arg or payload.get("headers") or []
     return list(headers), payload.get("rows") or [], payload.get("meta") or {}
 
@@ -88,11 +107,30 @@ def validate(headers: list[str], rows: list[dict], max_ratio: float) -> None:
 
     known = set(headers)
     for i, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            # 评审实测：rows 里混进一个非对象元素（比如一个裸字符串）会让
+            # 下面 `for k in row` 逐字符遍历那个字符串，报出的「表头里没有
+            # 的字段」是一堆断成单字的假信息，完全误导用户去哪查。行号
+            # 必须在这里就钉住，不能让它伪装成看似正常的「多余字段」错误。
+            _die(f"第 {i} 行不是一个对象（拿到的是 {type(row).__name__}）。"
+                 "每一行必须是「字段名: 值」的对象，请检查这一行的格式。")
         extra = [k for k in row if not k.startswith("_") and k not in known]
         if extra:
             _die(f"第 {i} 行出现了表头里没有的字段：{'、'.join(extra)}。"
                  "表头是跟用户确认过的，不能中途加列。请把它并进已有列，"
                  "或者先跟用户确认要不要加这一列。")
+        # 「_存疑」里的字段名必须落在真实表头上——这是头号不变量（看不清
+        # vs 本来没有）的另一半：如果字段名对不上（全角/半角括号、多个
+        # 尾随空格、模型在存疑里写了简称……），build() 里 `name in unc` 的
+        # 交集判断会静默找不到匹配，那一格既不染黄也不写「⚠ 无法识别」，
+        # 还不计入下面的 50% 门禁——模型明明说了「这格没看清」，用户拿到
+        # 的却是一个完全正常、没有任何标记的格子。同「偷加列」一个形状的
+        # 校验，在这里当场拦住，不能指望 build() 兜底。
+        bad = [f for f in _uncertain_fields(row) if f not in known]
+        if bad:
+            _die(f"第 {i} 行的 _存疑 里写了表头没有的字段：{'、'.join(bad)}。"
+                 "存疑标记必须落在真实存在的列上，否则那一格不会被标黄，"
+                 "用户看不出它有问题。请把字段名改成与表头完全一致。")
 
     uncertain = sum(len(_uncertain_fields(r) & known) for r in rows)
     total = len(rows) * len(headers)
@@ -103,7 +141,26 @@ def validate(headers: list[str], rows: list[dict], max_ratio: float) -> None:
              "建议把图片拍清楚些（光线充足、正对、别有折痕），或改用扫描件重试。")
 
 
+INVALID_SHEET_CHARS = set("/\\[]:*?")  # Excel 工作表名禁用的字符
+MAX_SHEET_NAME_LEN = 31  # Excel 硬限制，超过会在打开时静默截断或报错
+
+
+def _validate_sheet_name(name: str) -> None:
+    # 评审实测：`--sheet "2026/03 台账"` 这种带日期斜杠的名字，模型给得
+    # 太自然了——不提前拦，openpyxl 会抛 `ValueError: Invalid character /
+    # found in sheet title`，一句英文异常，用户不知道该改哪。
+    bad = sorted(set(name) & INVALID_SHEET_CHARS)
+    if bad:
+        _die(f"工作表名「{name}」包含 Excel 不允许的字符：{' '.join(bad)}。"
+             "Excel 表名不能含 / \\ [ ] : * ? 这几个符号，"
+             "请换一个名字（比如把 / 换成 -）。")
+    if len(name) > MAX_SHEET_NAME_LEN:
+        _die(f"工作表名「{name}」长度 {len(name)} 超过 Excel 限制的 "
+             f"{MAX_SHEET_NAME_LEN} 个字符，请换短一点的名字。")
+
+
 def build(headers: list[str], rows: list[dict], meta: dict, sheet_name: str) -> Workbook:
+    _validate_sheet_name(sheet_name)
     wb = Workbook()
     ws = wb.active
     ws.title = sheet_name
@@ -138,6 +195,13 @@ def build(headers: list[str], rows: list[dict], meta: dict, sheet_name: str) -> 
                 cell.value = v
             else:
                 cell.value = str(v)
+                if cell.data_type == "f":
+                    # openpyxl 见到以 = 开头的字符串（比如模型抽出来的原文
+                    # 恰好是 "=1+1" 这种备注）会自动把单元格当成公式。模型
+                    # 抽出来的原文必须原样呈现，不能被 Excel 求值成结果或
+                    # #NAME? 报错——这同样是「输出字符串就写成文本」这条
+                    # 契约的一部分，只是被 openpyxl 的自动判型悄悄破坏了。
+                    cell.data_type = "s"
         for d in row.get("_存疑") or []:
             review.append((str(row.get("_来源") or ""), str(d.get("字段") or ""),
                            str(d.get("原因") or "")))

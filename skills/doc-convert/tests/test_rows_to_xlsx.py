@@ -163,4 +163,134 @@ def test_main_wraps_unexpected_exception(tmp_path, monkeypatch, capsys):
     assert exc.value.code != 0
     err = capsys.readouterr().err
     assert "[doc-convert] 错误：" in err
-    assert "Traceback" not in err
+    # 注意：这里不断言 "Traceback" not in err——这个测试是进程内直接调
+    # main()，pytest 的 capsys 只会捕获 print() 写进 stderr 的内容，未捕获
+    # 的异常会被 pytest 自己的 traceback 渲染逻辑接管、根本不会进 capsys。
+    # 也就是说即便没有 except Exception 兜底，这条断言在这里也会恒真——是
+    # 装饰性的、验证不了任何东西（评审指出的 Minor）。真正跨进程、能验证
+    # 子进程 stderr 里确实没有裸 Traceback 的测试见下面
+    # test_main_wraps_unexpected_exception_in_real_subprocess。
+
+
+# --- 评审 Important 补充：以下 6 条是 Task 6 评审（2026-08-11）实测发现的
+# 边界，任务书本身没覆盖，但都落在本文件「宁可不产出，不产出看似正常实则
+# 有缺陷的文件」的职责范围内。
+
+def test_uncertain_field_not_in_headers_is_refused(tmp_path):
+    """[I-1] _存疑 里的字段名如果和表头对不上，build() 里 `name in unc` 的
+    交集判断会静默找不到匹配——那一格不染黄、不写「⚠ 无法识别」、也不计入
+    50% 门禁，模型明明说了"这格没看清"，用户拿到的却是一个完全正常的格子。
+    必须在 validate() 阶段就当场拦住，同「偷加列」一个形状。
+    """
+    src = _write_json(tmp_path / "k.json", {
+        "headers": ["项目", "金额"],
+        "rows": [{"项目": "餐饮", "金额": 1,
+                  "_存疑": [{"字段": "根本没这列", "原因": "糊"}],
+                  "_来源": "x.jpg"}],
+    })
+    out = tmp_path / "k.xlsx"
+    proc = _run(src, out)
+    assert proc.returncode != 0
+    assert proc.stderr.startswith("[doc-convert] 错误：")
+    assert "根本没这列" in proc.stderr
+    assert "表头完全一致" in proc.stderr, "错误信息要指导用户怎么自救"
+    assert not out.exists()
+
+
+def test_top_level_json_array_is_refused(tmp_path):
+    """[I-2a] 模型把 rows 数组直接当成整个文件是很自然的手滑；不提前拦，
+    payload.get("headers") 会在 list 上抛 AttributeError，被兜底接住后
+    吐出一句用户看不懂的英文异常。"""
+    src = tmp_path / "l.json"
+    src.write_text(json.dumps([{"项目": "住宿"}], ensure_ascii=False), encoding="utf-8")
+    out = tmp_path / "l.xlsx"
+    proc = _run(src, out)
+    assert proc.returncode != 0
+    assert proc.stderr.startswith("[doc-convert] 错误：")
+    assert "AttributeError" not in proc.stderr
+    assert "顶层" in proc.stderr, "错误信息要指导用户怎么自救"
+    assert not out.exists()
+
+
+def test_jsonl_line_that_is_not_an_object_is_refused(tmp_path):
+    """[I-2b] .jsonl 某一行是合法 JSON 但不是对象（比如手滑写成了数组），
+    要带着行号当场拦住，而不是让它滚到后面变成一句看不懂的英文异常。"""
+    src = tmp_path / "m.jsonl"
+    src.write_text("[1,2,3]\n", encoding="utf-8")
+    out = tmp_path / "m.xlsx"
+    proc = _run(src, out, "--headers", "项目")
+    assert proc.returncode != 0
+    assert proc.stderr.startswith("[doc-convert] 错误：")
+    assert "第 1 行" in proc.stderr
+    assert "对象" in proc.stderr, "错误信息要指导用户怎么自救"
+    assert not out.exists()
+
+
+def test_row_that_is_a_bare_string_is_refused(tmp_path):
+    """[I-2c] rows 里混进一个非对象元素（比如一个裸字符串）会让
+    `for k in row` 逐字符遍历那个字符串，报出的"多余字段"是一堆断成单字的
+    假信息，完全误导用户去哪查。必须在真正遍历字段之前先判类型。"""
+    src = _write_json(tmp_path / "n.json", {
+        "headers": ["项目"],
+        "rows": ["我不是对象"],
+    })
+    out = tmp_path / "n.xlsx"
+    proc = _run(src, out)
+    assert proc.returncode != 0
+    assert proc.stderr.startswith("[doc-convert] 错误：")
+    assert "第 1 行" in proc.stderr
+    assert "对象" in proc.stderr, "错误信息要指导用户怎么自救"
+    assert not out.exists()
+
+
+def test_sheet_name_with_illegal_character_is_refused(tmp_path):
+    """[I-3] Excel 表名禁用 / \\ [ ] : * ?，模型给一个带日期斜杠的表名
+    （如 "2026/03 台账"）太正常了。不提前拦，openpyxl 会抛英文 ValueError，
+    而且 build() 在 mkdir/save 之前跑，落盘前就该拒绝，不留半成品文件。"""
+    src = _write_json(tmp_path / "o.json", {
+        "headers": ["项目"],
+        "rows": [{"项目": "住宿"}],
+    })
+    out = tmp_path / "o.xlsx"
+    proc = _run(src, out, "--sheet", "2026/03 台账")
+    assert proc.returncode != 0
+    assert proc.stderr.startswith("[doc-convert] 错误：")
+    assert "不允许的字符" in proc.stderr, "错误信息要指导用户怎么自救"
+    assert not out.exists()
+
+
+def test_string_starting_with_equals_is_written_as_text_not_formula(tmp_path):
+    """[I-4] openpyxl 见到以 = 开头的字符串会自动当公式写入，直接违反本
+    文件 docstring 自己写的契约（"输出字符串就写成文本"）。评审已用存盘
+    往返验证过这个修法：data_type 稳定为 's'，值原样保留。"""
+    src = _write_json(tmp_path / "p.json", {
+        "headers": ["备注"],
+        "rows": [{"备注": "=1+1"}],
+    })
+    out = tmp_path / "p.xlsx"
+    assert _run(src, out).returncode == 0
+    ws = load_workbook(out).active
+    assert ws["A2"].value == "=1+1"
+    assert ws["A2"].data_type == "s"
+
+
+def test_main_wraps_unexpected_exception_in_real_subprocess(tmp_path):
+    """[Minor] test_main_wraps_unexpected_exception 的 "Traceback not in
+    err" 断言是装饰性的（见上面那条测试新加的注释）：那条测试进程内直接调
+    main()，未捕获异常根本进不了 capsys 捕获的 stderr。这里换一条真正跨
+    进程的测试，用一个 I-1~I-4 没有专门覆盖、但确实会在 build() 里炸出
+    原生 AttributeError 的输入（meta 不是对象，`meta.get("标题")` 在字符串
+    上调用），验证子进程的 stderr 里真的看不到裸 Traceback——这才是「不让
+    Python 堆栈漏到用户面前」这条全局约束真正要保证的场景。
+    """
+    src = _write_json(tmp_path / "q.json", {
+        "headers": ["项目"],
+        "meta": "不是对象",
+        "rows": [{"项目": "住宿"}],
+    })
+    out = tmp_path / "q.xlsx"
+    proc = _run(src, out)
+    assert proc.returncode != 0
+    assert "[doc-convert] 错误：" in proc.stderr
+    assert "Traceback" not in proc.stderr
+    assert not out.exists()
