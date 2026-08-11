@@ -150,14 +150,19 @@ Linux 的 Noto CJK / 文泉驿）；**一个都找不到时同样拒绝输出**�
 | 项目 | 增量 | 说明 |
 |---|---|---|
 | **安装包** | **+0.1 ~ 0.3 MB** | 技能目录是纯文本；Python 库不打包（事实核查 #12） |
-| **用户硬盘** | **mac 约 99 MB / Windows 约 111 MB** | PR 1 后为 66 MB；PR 2 加 pdfplumber（+32.9 MB，含 cryptography 13M / pdfminer 9.3M / pypdfium2 7.5M）与仅 Windows 装的 pillow-heif（+12 MB）。均为 2026-08-11 实测 |
+| **用户硬盘** | **mac 约 99 MB / Windows 约 111 MB** | PR 1 后为 66 MB；PR 2 加 pdfplumber（+32.9 MB，含 cryptography 13M / pdfminer 9.3M / pypdfium2 8.0M）与仅 Windows 装的 pillow-heif（+12 MB）。66 MB 与 +32.9 MB 为 2026-08-11 实测；pillow-heif 的 +12 MB 为推算非实测（mac 不装该依赖，走系统 sips，详见下方明细） |
 
-mac 实测明细（`du -sh ~/.doc-convert-skill/venv/lib/python3.12/site-packages/*`，
-已扣除仅测试用的 pytest 系依赖）：lxml 20 MB、PIL（Pillow）14 MB、
-cryptography 13 MB（PR 2 新增，pdfminer.six 硬依赖）、pip 自身 12 MB、
-pdfminer 9.3 MB（PR 2 新增，pdfplumber 依赖）、reportlab 8.6 MB、
-pypdfium2 全家 7.5 MB（PR 2 新增，随 pdfplumber 白赚的 PDF 渲染能力）、
-pypdf 3.7 MB、openpyxl 2.7 MB、docx（python-docx）2.6 MB，其余零散依赖
+mac 实测明细（`du -sh ~/.doc-convert-skill/venv/lib/python3.12/site-packages/*`）：
+`du -sh ~/.doc-convert-skill/venv` 读数是 **112 MB**，其中约 13 MB 是开发期额外
+装的 pytest 系依赖（`_pytest`/`pytest`/`pluggy`/`iniconfig`/`pygments` 等，来自
+`requirements-dev.txt`，仅供本仓库跑单测用，**真实用户的 venv 里不会有这些
+包**——`ensure-python.sh` 只装 `requirements.txt`）；扣除后约 **99 MB**，即
+上方表格里的数字。逐包明细（已扣除 pytest 系）：lxml 20 MB、PIL（Pillow）
+14 MB、cryptography 13 MB（PR 2 新增，pdfminer.six 硬依赖）、pip 自身
+12 MB、pdfminer 9.3 MB（PR 2 新增，pdfplumber 依赖）、reportlab 8.6 MB、
+pypdfium2 全家 8.0 MB（`pypdfium2` + `pypdfium2_raw` + `pypdfium2_cli` +
+对应 dist-info，PR 2 新增，随 pdfplumber 白赚的 PDF 渲染能力）、pypdf
+3.7 MB、openpyxl 2.7 MB、docx（python-docx）2.6 MB，其余零散依赖
 （pdfplumber 本体 / packaging / cffi / charset_normalizer / pycparser /
 typing_extensions / et_xmlfile 等）合计约 2.9 MB。Windows 在此之上另加
 仅 Windows 装的 pillow-heif（+12 MB，见上方「依赖清单」一节，此项为
