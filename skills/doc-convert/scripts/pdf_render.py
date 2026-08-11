@@ -114,8 +114,27 @@ def render(src: Path, pages: list[int], outdir: Path, scale: float) -> list[Path
             # 兜底是因为它压根没被 append 进去。
             for done in written:
                 done.unlink(missing_ok=True)
-            dst.unlink(missing_ok=True)
-            _die(f"写入第 {p} 页图片失败，已清理本次产生的 {len(written)} 个部分文件。"
+            # 计数顺手修正：dst 是失败页自己可能留下的半成品，不在 written
+            # 里（没被 append），存在与否取决于失败发生在 save() 已经写出
+            # 部分字节之后还是之前——先前的版本无条件只报 len(written)，
+            # 在 dst 确实留了半成品的场景下会比实际清理数少报 1。
+            #
+            # unlink 本身包 try：如果 dst 撞上一个同名目录（比如目标路径被
+            # 占用导致本次 save() 失败的那种场景），Path.unlink() 对目录会
+            # 抛 IsADirectoryError/PermissionError——missing_ok 只吞「文件不
+            # 存在」，吞不了这个。这个异常一旦从 except 块里逃出去，会被
+            # main() 外层兜底当成一个全新的、无关的错误，吞掉这里本该报的
+            # 具体消息（写第几页失败、清理了几个文件、可以先跳过这一页）。
+            # 清理动作本身失败不该掩盖真正的错误。
+            leftover = False
+            try:
+                if dst.exists():
+                    dst.unlink()
+                    leftover = True
+            except OSError:
+                pass  # 删不掉（如目录）就别算进「已清理」，如实少报
+            cleaned = len(written) + (1 if leftover else 0)
+            _die(f"写入第 {p} 页图片失败，已清理本次产生的 {cleaned} 个部分文件。"
                  f"请检查目标目录权限或磁盘空间；如果反复在同一页失败，也可能是"
                  f"这一页本身内容有问题（PDF 渲染出错），可以先跳过这一页。")
         written.append(dst)

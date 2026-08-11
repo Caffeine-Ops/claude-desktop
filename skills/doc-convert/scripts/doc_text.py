@@ -30,13 +30,28 @@ def _die(msg: str) -> None:
 
 
 def _extract_pdf(path: Path) -> list[str]:
+    """打开并读取 PDF，加密/损坏都转成中文报错。
+
+    评审加固（同 pdf_render.py 的 open_document、pdf_tables.py 的 _open）：
+    加密探测要靠类型判断，不能靠猜英文措辞。2026-08-11 用 pypdf 现造一份
+    真正带密码的 PDF 实测确认：pdfplumber.open() 对它抛出的是
+    pdfplumber.utils.exceptions.PdfminerException，**str(e) 是空字符串**——
+    原来那版 "password" in str(e).lower() 的字符串匹配对这个包装类从来没
+    生效过，纯靠巧合没被任何测试戳穿。真正管用的信号在 e.args[0]：pdfplumber
+    把被捕获的原始异常整个塞进 PdfminerException(e) 的构造参数，e.args[0]
+    就是那个原始异常——pdfminer 里加密相关的问题都继承自
+    pdfminer.pdfdocument.PDFEncryptionError，isinstance 判断稳。字符串匹配
+    保留做兜底，不再是主判据。
+    """
     import pdfplumber
+    from pdfminer.pdfdocument import PDFEncryptionError
     try:
         with pdfplumber.open(str(path)) as pdf:
             return [(p.extract_text() or "") for p in pdf.pages]
     except Exception as e:
+        inner = e.args[0] if e.args else None
         low = str(e).lower()
-        if "password" in low or "encrypt" in low:
+        if isinstance(inner, PDFEncryptionError) or "password" in low or "encrypt" in low:
             _die(f"PDF「{path.name}」被密码保护，本工具无法处理。请先用阅读器去掉密码再试。")
         _die(f"打开 PDF「{path.name}」失败，文件可能已损坏。请确认后重试。")
         return []  # 不可达，只为类型完整

@@ -140,3 +140,32 @@ def test_write_text_failure_gives_chinese_message_not_traceback(tmp_path, monkey
     captured = capsys.readouterr()
     assert "[doc-convert] 错误：" in captured.err
     assert "Traceback" not in captured.err
+
+
+# --- 补充：加密探测必须是类型判断，不是猜英文措辞。评审判定字符串匹配是
+# Important 级缺陷——库升级改一句措辞，加密 PDF 就会滑进「文件可能已损坏」
+# 的通用分支，答非所问。用 pypdf 现造一份真正带密码的 PDF，不能凭记忆假设
+# 异常类型。同一处缺陷在 pdf_tables.py 的 _open 里也修了，两处判断逻辑一致。
+
+def test_extract_pdf_reports_password_protection_in_chinese(tmp_path, capsys):
+    """实测：pdfplumber.open() 对加密 PDF 抛出的是
+    pdfplumber.utils.exceptions.PdfminerException，str(e) 是空的——原来的
+    字符串匹配对这个包装类从来没生效过。真正管用的信号在 e.args[0]，那是
+    被包了一层的原始异常 pdfminer.pdfdocument.PDFPasswordIncorrect，
+    继承自 PDFEncryptionError。"""
+    from pypdf import PdfReader, PdfWriter
+
+    src = _text_pdf(tmp_path / "h.pdf", pages=1)
+    reader = PdfReader(str(src))
+    writer = PdfWriter()
+    for page in reader.pages:
+        writer.add_page(page)
+    writer.encrypt(user_password="secret")
+    enc = tmp_path / "enc.pdf"
+    with enc.open("wb") as f:
+        writer.write(f)
+
+    with pytest.raises(SystemExit):
+        doc_text._extract_pdf(enc)
+    err = capsys.readouterr().err
+    assert "密码保护" in err

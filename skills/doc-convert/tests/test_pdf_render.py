@@ -93,6 +93,9 @@ def test_save_failure_is_reported_in_chinese_via_cli(tmp_path):
     assert proc.returncode != 0
     assert "[doc-convert] 错误：" in proc.stderr
     assert "Traceback" not in proc.stderr
+    # 顺手项：这条错误消息此前没有任何测试守着——只锁子串，不锁全句
+    # （同 test_img_prep.py 的 "最兼容" / test_docx_to_pdf.py 的 "关掉"）。
+    assert "跳过" in proc.stderr
 
 
 def test_open_document_reports_password_protection_in_chinese(tmp_path, capsys):
@@ -156,7 +159,7 @@ def test_render_cleans_up_partial_files_on_mid_batch_failure(tmp_path, monkeypat
     assert list(outdir.glob("*.png")) == []
 
 
-def test_render_removes_failed_pages_own_partial_file(tmp_path, monkeypatch):
+def test_render_removes_failed_pages_own_partial_file(tmp_path, monkeypatch, capsys):
     """二次评审加固：清理不能只删 written 列表里「已成功保存」的页，还要删
     「当前正在失败的这一页自己」写出的半成品。PIL 的 save() 是直接打开目标
     路径写、不是先写临时文件再 rename，真实磁盘写满时会先落几个字节再抛
@@ -182,3 +185,7 @@ def test_render_removes_failed_pages_own_partial_file(tmp_path, monkeypatch):
     assert not (outdir / "page-0001.png").exists()
     assert stale.exists()
     assert stale.read_bytes() == b"pretend-old-png"
+    # 顺手项：written 在这里是空的（失败页自己没被 append），之前的计数
+    # 只报 len(written)=0——但实际清理了 1 个文件（失败页自己的半成品）。
+    err = capsys.readouterr().err
+    assert "已清理本次产生的 1 个部分文件" in err
