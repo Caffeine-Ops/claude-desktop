@@ -63,9 +63,9 @@
 ## 功能清单：8 条推荐话术
 
 命令 `/claude-desktop:doc-convert`，chip 中文名**文档处理**，
-描述「格式转换、PDF 页面操作」（本版只有 B 类脚本能力；「提取文字」「批量整理」
-属于下方 A 类，PR 2 落地后再把描述扩回去——**这句改动是本版的最终措辞，
-不是笔误**，PR 2 的人别沿用旧描述，也别以为现在这句是暂时的占位），
+描述「提取文字、表格台账、格式转换」（PR 1 时曾临时收窄为「格式转换、PDF
+页面操作」以免 over-promise 尚未实现的 A 类；PR 2 落地后已扩回，见
+`2026-08-11-doc-convert-skill-pr2-design.md`），
 挂在 `daily` 分类，
 排在 **spreadsheets 之后、proposal-writer 之前**（与表格同属"处理已有文件"）。
 
@@ -129,11 +129,8 @@ reportlab>=4.0.0    # docx→pdf 的纯文字兜底渲染；本仓已有先例�
 Pillow>=9.0.0       # 图片处理
 ```
 
-> **PR 1 的 `requirements.txt` 刻意不装 `pdfplumber`**——本 PR 只实现 B 类脚本，
-> 用不上它，装了只是让每个用户白多下几 MB。这个取舍是对的，写在这里是提醒
-> **PR 2 落地 A 类能力（PDF 抽文字/表格）时别忘了把它加回
-> `skills/doc-convert/requirements.txt`**，上面这份清单是设计期的目标态，不是
-> PR 1 实际安装的清单。
+> `pdfplumber` 已于 PR 2 加入（PR 1 刻意未装，因为 B 类脚本用不上它）。
+> `pillow-heif` 是 PR 2 新增的，只在 Windows 安装。
 
 另有 `requirements-dev.txt` 只含 `pytest>=8.0`：**用户机器上没人跑单测**，
 把 pytest 塞进主清单只是让每个用户白多下几 MB。
@@ -153,12 +150,18 @@ Linux 的 Noto CJK / 文泉驿）；**一个都找不到时同样拒绝输出**�
 | 项目 | 增量 | 说明 |
 |---|---|---|
 | **安装包** | **+0.1 ~ 0.3 MB** | 技能目录是纯文本；Python 库不打包（事实核查 #12） |
-| **用户硬盘** | **实测 66 MB** | 首次使用时装进 `~/.doc-convert-skill/venv` |
+| **用户硬盘** | **mac 约 99 MB / Windows 约 111 MB** | PR 1 后为 66 MB；PR 2 加 pdfplumber（+32.9 MB，含 cryptography 13M / pdfminer 9.3M / pypdfium2 7.5M）与仅 Windows 装的 pillow-heif（+12 MB）。均为 2026-08-11 实测 |
 
-实测明细（`du -sh ~/.doc-convert-skill/venv/lib/python3.12/site-packages/*`）：
-lxml 20 MB、PIL（Pillow）14 MB、pip 自身 12 MB、reportlab 8.6 MB、
+mac 实测明细（`du -sh ~/.doc-convert-skill/venv/lib/python3.12/site-packages/*`，
+已扣除仅测试用的 pytest 系依赖）：lxml 20 MB、PIL（Pillow）14 MB、
+cryptography 13 MB（PR 2 新增，pdfminer.six 硬依赖）、pip 自身 12 MB、
+pdfminer 9.3 MB（PR 2 新增，pdfplumber 依赖）、reportlab 8.6 MB、
+pypdfium2 全家 7.5 MB（PR 2 新增，随 pdfplumber 白赚的 PDF 渲染能力）、
 pypdf 3.7 MB、openpyxl 2.7 MB、docx（python-docx）2.6 MB，其余零散依赖
-（typing_extensions / et_xmlfile / charset_normalizer 等）合计约 2 MB。
+（pdfplumber 本体 / packaging / cffi / charset_normalizer / pycparser /
+typing_extensions / et_xmlfile 等）合计约 2.9 MB。Windows 在此之上另加
+仅 Windows 装的 pillow-heif（+12 MB，见上方「依赖清单」一节，此项为
+推算非实测——本机是 macOS，走系统 `sips` 不装它）。
 
 这是第 5 份重复的 venv（事实核查 #11）。首版接受这份浪费，理由见决策 #5。
 **触发合并的信号**：用户开始反馈"这软件占我十几个 G"。
@@ -221,6 +224,7 @@ pypdf 3.7 MB、openpyxl 2.7 MB、docx（python-docx）2.6 MB，其余零散依�
    先把 Python 环境引导这条链路跑通，风险最大的部分先落地。
 2. **PR 2 — A 类 4 条（走模型）**：提示词要反复调、验收靠人工看效果，
    节奏本就慢，不应拖累 PR 1。
+   PR 2 的详细设计见 `2026-08-11-doc-convert-skill-pr2-design.md`。
 
 后台场景卡配置（改动清单 #8）在 PR 2 合并后统一做一次。
 
