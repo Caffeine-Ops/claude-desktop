@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""img_prep.py — 把用户丢进来的图片规格化成模型能读的 JPG。
+
+为什么需要这一步（两个都不是可选项）：
+  1. iPhone 拍的照片默认是 HEIC，而模型读图只认 PNG/JPG 这类常见格式。
+     「拍张照 → 提字」「拍一堆发票 → 出台账」正是本技能的门面场景，
+     卡在这里等于门面塌了。
+  2. 手机原图动辄 4000px 宽。模型看图前会把长边压到约 1568px，
+     多出来的像素只多花 token，一个字也不多认。先压掉是纯赚。
+
+HEIC 解码走两条路，理由见设计文档「依赖与体积」：
+  - pillow-heif 能 import 就用它（requirements.txt 里只在 Windows 装）
+  - 否则用 macOS 系统自带的 /usr/bin/sips（已实测存在）
+  - 两条都没有 → 明确报错让用户自己导出，不硬撑
+这样 mac 用户不用为 Windows 的坑多付 12 MB。
+
+单张失败抛 PrepError 而不是直接退出进程：批量场景一次几十张，
+中间夹一个非图片文件很正常，整批崩掉比漏掉一张糟得多。是否「全军覆没
+才算失败」由 main() 决定。
+"""
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+from PIL import Image
+
+MAX_EDGE_DEFAULT = 1600  # 略高于模型内部约 1568px 的长边上限，留一点余量
+HEIC_SUFFIXES = {".heic", ".heif"}
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+
+class PrepError(Exception):
+    """单张图处理失败。消息是给用户看的中文。"""
+
+
+def _die(msg: str) -> None:
+    print(f"[doc-convert] 错误：{msg}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+def _heif_ready() -> bool:
+    """pillow-heif 可用则注册进 Pillow，返回是否可用。"""
+    try:
+        import pillow_heif
+    except ImportError:
+        return False
+    pillow_heif.register_heif_opener()
+    return True
+
+
+def _sips_convert(src: Path, dst: Path) -> bool:
+    """macOS 自带 sips 转 HEIC → JPEG。成功返回 True。"""
+    sips = shutil.which("sips")
+    if not sips:
+        return False
+    try:
+        subprocess.run(
+            [sips, "-s", "format", "jpeg", str(src), "--out", str(dst)],
+            check=True, capture_output=True, timeout=60,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return False
+    return dst.is_file()
+
+
+def prepare_one(src: Path, outdir: Path, max_edge: int = MAX_EDGE_DEFAULT) -> Path:
+    """规格化一张图，返回产物路径。失败抛 PrepError（消息是中文）。"""
+    src = Path(src)
+    outdir = Path(outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    dst = outdir / (src.stem + ".jpg")
+
+    work = src
+    tmp: Path | None = None
+    if src.suffix.lower() in HEIC_SUFFIXES and not _heif_ready():
+        tmp = outdir / (src.stem + ".sips-tmp.jpg")
+        if not _sips_convert(src, tmp):
+            msg = (
+                f"{src.name} 是 HEIC 格式，本机没有可用的解码器。"
+                "请先把它导出成 JPG 或 PNG 再试。"
+                "(iPhone 相册[共享 -> 存储到文件]时选[最兼容]即可)。"
+            )
+            raise PrepError(msg)
+        work = tmp
+
+    try:
+        img = Image.open(work)
+        img.load()
+    except Exception:
+        raise PrepError(
+            f"{src.name} 打不开，可能不是图片文件或已损坏。请确认后重试。"
+        )
+
+    img = img.convert("RGB")
+    w, h = img.size
+    if max(w, h) > max_edge:
+        scale = max_edge / max(w, h)
+        img = img.resize(
+            (max(1, round(w * scale)), max(1, round(h * scale))), Image.LANCZOS
+        )
+    img.save(dst, "JPEG", quality=90)
+
+    # sips 中转文件用完就删——产物目录里不留半成品，同 PR 1 的纪律
+    if tmp is not None and tmp.is_file():
+        tmp.unlink()
+    return dst
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="把图片规格化成模型能读的 JPG")
+    ap.add_argument("inputs", nargs="+", help="输入图片，可多张")
+    ap.add_argument("-d", "--outdir", required=True, help="产物目录")
+    ap.add_argument("--max-edge", type=int, default=MAX_EDGE_DEFAULT,
+                    help=f"长边上限像素，默认 {MAX_EDGE_DEFAULT}")
+    args = ap.parse_args(argv)
+
+    outdir = Path(args.outdir)
+    items, failed = [], []
+    for raw in args.inputs:
+        src = Path(raw)
+        if not src.is_file():
+            failed.append({"source": src.name, "reason": "文件不存在"})
+            continue
+        try:
+            out = prepare_one(src, outdir, args.max_edge)
+        except PrepError as e:
+            failed.append({"source": src.name, "reason": str(e)})
+            continue
+        items.append({"source": src.name, "output": str(out)})
+
+    if not items:
+        reasons = "；".join(f["reason"] for f in failed) or "没有可处理的输入"
+        _die(f"这批图片一张也没能处理成功。{reasons}")
+
+    print(json.dumps({"outdir": str(outdir), "items": items, "failed": failed},
+                     ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
