@@ -1790,10 +1790,10 @@ export class ChatEngine extends EventEmitter {
     const coworkPluginEntries = resolveCoworkPluginEntries()
     // Standalone Python home, originally for the ppt-creator skill's bootstrap
     // but now shared by every skill with the same "own venv, don't touch the
-    // machine's bare python3" bootstrap pattern — injected as BOTH
-    // PPT_MASTER_PYTHON_HOME and TENDER_PYTHON_HOME into BOTH backends' child
-    // env (see the env: block below) so each skill's `bin/ensure-python.sh`
-    // can build its venv off this interpreter. Bundled/downloaded
+    // machine's bare python3" bootstrap pattern — injected as ALL THREE of
+    // PPT_MASTER_PYTHON_HOME, TENDER_PYTHON_HOME, and DOC_CONVERT_PYTHON_HOME
+    // into BOTH backends' child env (see the env: block below) so each skill's
+    // `bin/ensure-python.sh` can build its venv off this interpreter. Bundled/downloaded
     // runtime wins when present (pinned 3.12); otherwise falls back to a
     // detected system 3.11/3.12 (see resolveEffectivePythonHome in cliDetect —
     // same "one source of truth" discipline as isCliAvailable). null when

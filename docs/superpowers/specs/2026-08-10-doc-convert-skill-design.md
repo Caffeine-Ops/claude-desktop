@@ -36,7 +36,7 @@
 | 1 | 功能形态 | **对话式技能 chip**（同现有 4 个） | 「带 UI 的转换面板」→ 要新做一整套界面、与现有 4 个技能交互不统一、工作量数倍；「混合（对话 + 一键转换快捷区）」→ 要额外设计「哪些走脚本、哪些走模型」的分流规则与 UI |
 | 2 | 首版范围 | **A 类 4 条 + B 类 4 条 = 8 条话术** | 「只做 A 类 4 条」→ 用户搜「PDF转Word」找不到，觉得名不副实；「A+B 全 9 条」→ 低频项（图片格式转换、加水印）稀释列表，用户扫一眼看不出重点 |
 | 3 | 底层实现 | **完整技能**（脚本 + 依赖清单 + 分领域指南，对标 spreadsheets） | 「零技能，只加伪命令话术」→ 转换质量完全不受控，同一句话两次结果可能不同；「轻技能，仅 SKILL.md + 少量脚本」→ B 类确定性转换仍可能被模型现场重写 |
-| 4 | Word→PDF 保真 | **优先调本机 Office/LibreOffice，无则 Python 兜底并明确告知排版可能有出入** | 「只用 Python」→ 复杂排版静默走样，用户拿去投标才发现；「不做这条」→ 用户预期里必须有 |
+| 4 | Word→PDF 保真 | **优先调本机 LibreOffice，无则 Python 兜底并明确告知排版可能有出入** | 「只用 Python」→ 复杂排版静默走样，用户拿去投标才发现；「不做这条」→ 用户预期里必须有 |
 | 5 | venv 复用 | **各建各的，不与现有 4 个技能合并** | 「合并成共享 venv」→ 要改四个正在正常工作的引导脚本，库版本冲突会横跨四个功能，为省磁盘去动能跑的系统不划算 |
 
 ## 实施前的事实核查结果
@@ -63,7 +63,10 @@
 ## 功能清单：8 条推荐话术
 
 命令 `/claude-desktop:doc-convert`，chip 中文名**文档处理**，
-描述「格式转换、提取文字、批量整理」，挂在 `daily` 分类，
+描述「格式转换、PDF 页面操作」（本版只有 B 类脚本能力；「提取文字」「批量整理」
+属于下方 A 类，PR 2 落地后再把描述扩回去——**这句改动是本版的最终措辞，
+不是笔误**，PR 2 的人别沿用旧描述，也别以为现在这句是暂时的占位），
+挂在 `daily` 分类，
 排在 **spreadsheets 之后、proposal-writer 之前**（与表格同属"处理已有文件"）。
 
 ### A 类 · 走模型（需要理解内容）
@@ -100,7 +103,7 @@ skills/doc-convert/
 │   └── ensure-python.cmd # Windows 引导（末行打印 DOC_CONVERT_PY=<path>）
 └── scripts/
     ├── md_to_docx.py
-    ├── docx_to_pdf.py    # 先探测本机 Office/LibreOffice，无则 Python 兜底
+    ├── docx_to_pdf.py    # 先探测本机 LibreOffice，无则 Python 兜底
     ├── excel_csv.py      # 双向
     └── pdf_ops.py        # 合并/拆分/删页/加水印
 ```
@@ -125,6 +128,12 @@ openpyxl>=3.1.0     # Excel 读写
 reportlab>=4.0.0    # docx→pdf 的纯文字兜底渲染；本仓已有先例（ppt-creator）
 Pillow>=9.0.0       # 图片处理
 ```
+
+> **PR 1 的 `requirements.txt` 刻意不装 `pdfplumber`**——本 PR 只实现 B 类脚本，
+> 用不上它，装了只是让每个用户白多下几 MB。这个取舍是对的，写在这里是提醒
+> **PR 2 落地 A 类能力（PDF 抽文字/表格）时别忘了把它加回
+> `skills/doc-convert/requirements.txt`**，上面这份清单是设计期的目标态，不是
+> PR 1 实际安装的清单。
 
 另有 `requirements-dev.txt` 只含 `pytest>=8.0`：**用户机器上没人跑单测**，
 把 pytest 塞进主清单只是让每个用户白多下几 MB。
@@ -160,7 +169,10 @@ pypdf 3.7 MB、openpyxl 2.7 MB、docx（python-docx）2.6 MB，其余零散依�
 
 纯 Python 没有靠谱方案。处理方式是**降级 + 明确告知**：
 
-1. 先探测本机是否装有 LibreOffice 或 Microsoft Office，有则调用它转换（效果等同本机另存为）
+1. 先探测本机是否装有 LibreOffice，有则调用它转换（效果等同本机另存为）。**不探测
+   Microsoft Office**——实现只有 `find_soffice()`，没有任何 Office 探测逻辑；
+   2026-08-11 评审时发现本节曾错误地写过"或 Microsoft Office"，与 SKILL.md
+   的准确措辞不一致，已订正为只提 LibreOffice
 2. 没有则走 Python 兜底，**并在输出里明确告诉用户"排版可能有出入"**
 
 第 2 步的告知是硬要求。降级而不告知等于制造一个用户不知情的错误——

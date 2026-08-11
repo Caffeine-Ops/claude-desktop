@@ -14,7 +14,9 @@
 - **venv 绝不能建在 skill 目录内**——打包后该目录在 Electron resources 下只读。venv 落 `~/.doc-convert-skill/venv`。
 - **不装 pandas**：唯一用得上它的 Excel↔CSV 用内置 `csv` + openpyxl 即可，pandas+numpy 约 84 MB，比其余依赖总和还大。
 - 环境变量名 `DOC_CONVERT_PYTHON_HOME`（主进程注入）/ `DOC_CONVERT_PY`（引导脚本导出）。每个技能一个独立变量名，**不复用** `PPT_MASTER_PYTHON_HOME` / `TENDER_PYTHON_HOME`。
-- 技能命令 `/claude-desktop:doc-convert`，chip 中文名 `文档处理`，描述 `格式转换、提取文字、批量整理`。
+- 技能命令 `/claude-desktop:doc-convert`，chip 中文名 `文档处理`，描述 `格式转换、PDF 页面操作`
+  （2026-08-11 评审后改：原描述含「提取文字、批量整理」是 PR 2 才有的 A 类能力，本版没做，
+  会 over-promise 给用户，故收窄；PR 2 落地后再扩回去）。
 - 场景目录条目挂 `daily` 分类，位置在 `/claude-desktop:spreadsheets` **之后**、`/claude-desktop:proposal-writer` **之前**。
 - 注释用中文，解释「为什么这样而不是那样」，沿用仓库既有风格。
 - 项目无 ESLint，`bun run typecheck` 是唯一全局防线；`bun test` 在 `apps/studio` 下跑。
@@ -1553,15 +1555,18 @@ Expected: `PNG image data, 256 x 256, 8-bit/color RGBA`——**RGBA 也要确认
     match: '/claude-desktop:doc-convert',
     image: '/skill-icons/doc-convert.png',
     label: '文档处理',
-    description: '格式转换、提取文字、批量整理'
+    description: '格式转换、PDF 页面操作'
   },
   {
     match: '/doc-convert',
     image: '/skill-icons/doc-convert.png',
     label: '文档处理',
-    description: '格式转换、提取文字、批量整理'
+    description: '格式转换、PDF 页面操作'
   },
 ```
+
+（2026-08-11 评审后更正：以上代码块与实际实现一致，`提取文字、批量整理` 是最终合并前才发现的
+over-promise，已在 `skillChipRegistry.ts` 与本计划里一并改成 `PDF 页面操作`，见 Global Constraints 的注记。）
 
 - [ ] **Step 3: 写 4 条话术并挂进 daily 分类**
 
