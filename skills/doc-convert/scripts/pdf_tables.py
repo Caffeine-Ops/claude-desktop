@@ -125,7 +125,14 @@ def main(argv: list[str] | None = None) -> int:
             _die(f"写入 JSON 文件 {dst} 失败，请检查目标目录权限或磁盘空间。")
 
         print(f"表格 {len(result['tables'])} 张 → {dst}")
-        if result["scanned"]:
+        if not result["tables"]:
+            # 评审实测：scanned=True 但 tables 非空是真实会发生的情况（整体
+            # 文字层稀薄，但表格本身靠线框/单元格结构被正常抽出来了）。原来
+            # 只看 scanned 会在这种情况下打印「抽不到表格数据」——这句话和
+            # 刚刚生成的 JSON 内容直接矛盾，会把 agent 教去看图认一份其实已经
+            # 逐字准确抽出来的表。改成只在 tables 真的是空的时候才提示；tables
+            # 为空时 scanned 必为 True（否则上面已经 _die），所以这里不用再判
+            # scanned。
             print("提示：这份 PDF 没有文字层（扫描件），抽不到表格数据，请改走看图识别路线。")
         return 0
     except Exception as e:

@@ -21,7 +21,7 @@ description: "Use this skill for document work — converting formats (Markdown 
 ```bash
 # macOS / Linux —— 必须用 `source`（脚本要把 $DOC_CONVERT_PY 导回你的 shell）
 source ${SKILL_DIR}/bin/ensure-python.sh
-"$DOC_CONVERT_PY" -c "import pypdf, docx, openpyxl, reportlab; print('ok')"
+"$DOC_CONVERT_PY" -c "import pypdf, docx, openpyxl, reportlab, pdfplumber, pypdfium2, PIL; print('ok')"
 ```
 
 > **Windows**：改跑 `${SKILL_DIR}\bin\ensure-python.cmd`，它末行打印
@@ -47,6 +47,7 @@ source ${SKILL_DIR}/bin/ensure-python.sh
 
 ```json
 { "日期": "2026-03-01", "金额": null, "开票方": "某某科技有限公司",
+  "来源文件": "IMG_0012.jpg",
   "_存疑": [{ "字段": "金额", "原因": "折痕遮挡，只能看到 1?8.50" }],
   "_来源": "IMG_0012.jpg" }
 ```
@@ -54,6 +55,14 @@ source ${SKILL_DIR}/bin/ensure-python.sh
 **`null` 且不在 `_存疑` 里 = 票据上本来就没这项**，与「看不清」严格区分。
 把「本来就没有」也标成看不清会制造大量假警报，用户三天就学会无视所有黄格子，
 标记随之失效。
+
+⚠️ **`_来源` 和「来源文件」是两回事，别以为写了 `_来源` 就等于给表格填上了
+产地。** `_来源` 只会被 `rows_to_xlsx.py` 抄进「待核对」小表（来源 / 字段 /
+原因三列），**不会**写进任何数据列——一行如果没有任何 `_存疑`，`_来源`
+根本不会出现在任何地方，产地信息就此彻底丢失。台账/表格本身要显示"这行数据
+来自哪张图/哪一页"，必须**另外**给一个落在表头里的正常字段（就是上面例子里
+新加的 `"来源文件"`）。两者缺一不可：`_来源` 服务于人工核对存疑项，
+「来源文件」服务于表格本身的可追溯性。
 
 数值型字段用 JSON number（`128.5`）而不是字符串（`"128.5"`）——
 装配脚本据此决定写数值还是写文本，**只有真数值才能被 Excel 的 `=SUM()` 算进去**。
@@ -100,32 +109,57 @@ source ${SKILL_DIR}/bin/ensure-python.sh
 ```bash
 # 1. 抽表 + 体检（有没有文字层）
 "$DOC_CONVERT_PY" ${SKILL_DIR}/scripts/pdf_tables.py 报价单.pdf -o 表格.json
+# 只看某几页（比如报表很长，先只抽你关心的部分）：
+"$DOC_CONVERT_PY" ${SKILL_DIR}/scripts/pdf_tables.py 报价单.pdf --pages "3-4" -o 表格.json
 
 # 2. 把相关页渲染成图，供你核对
 "$DOC_CONVERT_PY" ${SKILL_DIR}/scripts/pdf_render.py 报价单.pdf --pages "3-4" -d 页图/
+# 某一页数字实在看不清，只对那一页调高渲染倍率（上限 4，别整份提高）：
+"$DOC_CONVERT_PY" ${SKILL_DIR}/scripts/pdf_render.py 报价单.pdf --pages "4" -d 页图/ --scale 4
 ```
 
-看 `表格.json` 的 `scanned` 字段分两条路：
+分流看 `表格.json` 的 `tables` 是不是空的，**不能只看 `scanned`**——
+`scanned: true` 但 `tables` 非空是真实会发生的情况（整页文字层稀薄，但表格
+本身靠线框/单元格结构被正常抽出来了），此时数字仍然是坐标直读的，不是看图认的：
 
-**`scanned: false`（有文字层）——你只准改结构，不准改数字。**
+**`tables` 非空——你只准改结构，不准改数字，跟 `scanned` 是 true 还是 false 无关。**
 脚本抽出来的数字是按坐标从文件里直接读的，逐字准确；你是看图认字，会看错小数点。
 你负责的是：合并跨页表头、把挤在一起的两张表拆开、剔除混进表里的页眉页脚行。
 **你若觉得某个数字抽错了，不许自己改，记进 `_存疑` 交给人看。**
+这时如果 `scanned` 恰好也是 true，交付仍要提醒用户"这份 PDF 整体文字层稀薄"，
+但数字本身不用重新看图核对。
 
-**`scanned: true`（扫描件）——只能看图读数**，此时全套「拿不准就留空」生效，
+**`tables` 为空（此时 `scanned` 一定是 true——不是扫描件却一张表都没有，脚本已经
+报错拒绝了，不会走到这一步）——只能看图读数**，此时全套「拿不准就留空」生效，
 并且**交付时必须显眼地告诉用户**：「这份是扫描件，数字是认出来的不是读出来的，
 请务必核对，财务用途请以原件为准。」
 
-最后装配：
+最后装配。`rows_to_xlsx.py` 的 `.json` 输入**必须自带表头**，形状是
+`{"headers": [...], "rows": [...]}`——跟 `pdf_tables.py` 输出的
+`{"tables": [...]}` 是两种形状，需要你自己转一次，不能直接把 `表格.json` 传给它：
+
+```json
+{ "headers": ["品名", "数量", "单价"],
+  "rows": [ { "品名": "Widget", "数量": 10, "单价": 5.0 } ] }
+```
 
 ```bash
 "$DOC_CONVERT_PY" ${SKILL_DIR}/scripts/rows_to_xlsx.py 整理后.json -o 表格.xlsx --sheet 明细
 ```
 
+（对比 A3：`.jsonl` 逐行追加、边跑边落盘，靠 `--headers` 给表头；
+这里的 `.json` 是一次性给一整份，表头写在文件自己的 `headers` 字段里。）
+
 ### A3. 票据批量转台账
 
 ```bash
-"$DOC_CONVERT_PY" ${SKILL_DIR}/scripts/img_prep.py 票据/*.jpg 票据/*.HEIC -d 处理后/
+# 只写目录里真有的扩展名，别把两种都写进同一条命令——
+# zsh 下通配符一个都没匹配到会直接报 "no matches found" 并拒绝执行整条命令
+# （bash 会把字面量原样传给脚本，脚本再把它当"文件不存在"记进 failed，
+# 同样是错的）。一批票据常常就是清一色一种格式，缺哪种就别写哪种。
+"$DOC_CONVERT_PY" ${SKILL_DIR}/scripts/img_prep.py 票据/*.jpg -d 处理后/
+# 这批里如果也有 HEIC，再单跑一次：
+"$DOC_CONVERT_PY" ${SKILL_DIR}/scripts/img_prep.py 票据/*.HEIC -d 处理后/
 ```
 
 **顺序不能颠倒：**
@@ -145,6 +179,11 @@ source ${SKILL_DIR}/bin/ensure-python.sh
 读 `.jsonl` **必须**带 `--headers`（各行字段可能不齐，靠首行猜会静默漏列）。
 
 某张图根本不是票据：那一行照样写进去，把情况写进 `_存疑`，**不要中断整批**。
+**`_存疑` 里的「字段」必须是表头里已有的列名**（比如挂在「摘要」列上：
+`{"字段": "摘要", "原因": "这张不是票据，是一张会议室预订单"}`）——写
+「整张图」这种表头没有的名字，`rows_to_xlsx.py` 装配时会直接报错拒绝生成，
+而且是在几十张全部认完之后才炸，返工代价很大，务必在认的时候就把字段名
+落在真实列上。
 
 ### A4. 长文档提炼
 
@@ -163,8 +202,13 @@ stdout 会给一份体检报告：`units`（页数/段数）、`chars`（字数�
 
 然后按体检报告分流：
 
-- `scanned: true` → 告诉用户这份没有文字层（扫描件），提炼不了，
-  建议改走「图片提取文字」。
+- `scanned: true` → 这份 PDF 没有文字层（扫描件），`doc_text.py` 抽不出东西。
+  **改走：先用 `pdf_render.py 年报.pdf -d 页图/` 把页渲染成 PNG，再按 A1 的
+  方式自己读图**——不要直接把 PDF 丢给 `img_prep.py`，它只吃图片格式（JPG/PNG/
+  HEIC），见不得 PDF，传进去会直接报错。
+- `scanned: false` 但 `scanned_units` 非空 → 混合型文档（大部分页有文字层，
+  个别页是插图或扫描插页）。提炼时要在覆盖范围里点名这几页没有文字层、
+  内容未覆盖，不能假装读完了全文。
 - `chars > 30000` → **必须分块逐块读**（每块约 8000 字，块间重叠约 200 字防切断
   句子），每块出小结，最后合并。
 - 其余 → 直接读取料文件。
