@@ -54,7 +54,10 @@ def test_multi_sheet_requires_explicit_choice(tmp_path):
     src = tmp_path / "c.xlsx"
     wb = Workbook()
     wb.active.title = "一月"
-    wb.create_sheet("二月")
+    # 「二月」必须写点数据——评审后加固的空表护栏（见下方
+    # test_empty_worksheet_refuses_to_export）会拒绝导出空工作表，这条测试要测
+    # 的是"多表必须指定 --sheet"这另一条护栏，两者不能用同一张空表互相踩脚
+    wb.create_sheet("二月").append(["二月数据"])
     wb.save(str(src))
 
     # 多表时静默只导第一张 = 用户丢数据还不知道。必须报错要求指定。
@@ -63,6 +66,34 @@ def test_multi_sheet_requires_explicit_choice(tmp_path):
 
     excel_csv.xlsx_to_csv(src, tmp_path / "c.csv", sheet="二月")
     assert (tmp_path / "c.csv").is_file()
+
+
+def test_empty_worksheet_refuses_to_export(tmp_path, capsys):
+    """评审后加固：空工作表不应该静默产出 0 字节 CSV 还报"已生成"。
+
+    这是四个脚本里唯一一处「静默产出空文件却报成功」，与本分支「拒绝时不产出
+    文件」的纪律不一致——改成报错退出、不落盘。
+    """
+    src = tmp_path / "empty.xlsx"
+    wb = Workbook()
+    wb.save(str(src))  # 全新工作簿，工作表里没写过任何单元格
+    dst = tmp_path / "empty.csv"
+
+    with pytest.raises(SystemExit):
+        excel_csv.xlsx_to_csv(src, dst)
+
+    assert "一行数据都没有" in capsys.readouterr().err
+    assert not dst.exists()
+
+
+def test_xls_extension_gives_actionable_message(tmp_path, capsys):
+    """.xls 是前端【Excel 文件】槽放行的旧格式，openpyxl 读不了；错误要指路。"""
+    bad = tmp_path / "old.xls"
+    bad.write_bytes(b"\xd0\xcf\x11\xe0")  # 假装是旧版二进制 xls 的文件头，内容不重要
+    with pytest.raises(SystemExit):
+        excel_csv.main([str(bad), "-o", str(tmp_path / "old.csv")])
+    err = capsys.readouterr().err
+    assert "旧格式" in err or "另存为" in err
 
 
 def test_unknown_extension_exits_with_message(tmp_path, capsys):

@@ -48,12 +48,28 @@ def xlsx_to_csv(src: Path, dst: Path, sheet: str | None = None) -> None:
             raise SystemExit(2)
         ws = wb[sheet]
 
+    # 评审后加固：先把行读进内存判断有没有数据，再决定要不要落盘。原实现是边读
+    # 边写，源表一行数据都没有时会在磁盘上留下一个 0 字节的 CSV、还打印"已生成"——
+    # 这是四个脚本里唯一一处"静默产出空文件却报成功"，跟本分支「宁可不产出，也
+    # 不产出一份看起来正常实则有缺陷的文件」的纪律不符。0 字节文件用户双击打开
+    # 会一脸问号，还以为源表本来就有数据、是转换弄丢的。
+    rows = [
+        ["" if v is None else v for v in row] for row in ws.iter_rows(values_only=True)
+    ]
+    if not rows:
+        print(
+            f"[doc-convert] 错误：{src.name}"
+            + (f" 的工作表「{ws.title}」" if sheet else "")
+            + " 里一行数据都没有，没有内容可导出。",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
     dst.parent.mkdir(parents=True, exist_ok=True)
     # newline="" 是 csv 模块的硬要求，不写会在 Windows 上多出空行
     with dst.open("w", encoding="utf-8-sig", newline="") as f:
         writer = csv.writer(f)
-        for row in ws.iter_rows(values_only=True):
-            writer.writerow(["" if v is None else v for v in row])
+        writer.writerows(rows)
 
 
 def csv_to_xlsx(src: Path, dst: Path) -> None:
@@ -84,6 +100,17 @@ def main(argv: list[str] | None = None) -> int:
         xlsx_to_csv(src, dst, args.sheet)
     elif suffix in _CSV_SUFFIXES:
         csv_to_xlsx(src, dst)
+    elif suffix == ".xls":
+        # 评审后加固：前端【Excel 文件】槽放行 .xls，但 openpyxl 只认 .xlsx/.xlsm
+        # 这种 zip 容器格式，读不了 .xls 的老二进制格式。单独分支给出"下一步该
+        # 干嘛"，而不是让它落进下面那条"只支持..."的通用提示——通用提示不会
+        # 主动告诉用户 .xls 为什么不行、该怎么办。
+        print(
+            "[doc-convert] 错误：.xls 是旧版 Excel 格式，本工具读不了"
+            "（.xls 是旧格式，请先在 Excel 里另存为 .xlsx 再试）。",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     else:
         print(
             f"[doc-convert] 错误：只支持 .xlsx / .xlsm / .csv，收到的是 {suffix or '（无扩展名）'}",

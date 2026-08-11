@@ -57,6 +57,23 @@ def test_split_by_ranges(tmp_path):
     assert len(PdfReader(str(written[1])).pages) == 2
 
 
+def test_split_by_ranges_out_of_range_leaves_no_partial_files(tmp_path):
+    """评审后加固：越界区间报错时，之前已校验通过的区间也不应该落盘。
+
+    "1-2,5-6" 里第 2 个区间越界（源文件只有 3 页）。旧实现是边解析边写，
+    第 1 个区间的 _part1.pdf 会先写盘，报错时已经是半成品。
+    """
+    src = tmp_path / "s.pdf"
+    _make_pdf(src, 3)
+    out_dir = tmp_path / "parts"
+
+    with pytest.raises(SystemExit):
+        pdf_ops.split(src, out_dir, ranges="1-2,5-6")
+
+    # 拒绝时不产出文件：目录可能被建了（mkdir 在校验前发生），但里面必须空
+    assert not out_dir.exists() or list(out_dir.iterdir()) == []
+
+
 def test_delete_pages_is_one_based(tmp_path):
     # Minor 4 改进：用不同尺寸的页面而不是等大小空白页，能精确验证删对了具体页
     # 这样能区分"删掉第 2、4 页"和"删掉任意两页"的实现差异

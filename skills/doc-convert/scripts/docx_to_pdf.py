@@ -25,6 +25,7 @@ import sys
 from pathlib import Path
 
 from docx import Document
+from docx.opc.exceptions import PackageNotFoundError
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
@@ -74,12 +75,34 @@ def find_cjk_font() -> Path | None:
 def _convert_with_soffice(soffice: str, src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     # soffice 只认「输出目录」，文件名由它按输入名决定，转完再改名到 dst
-    subprocess.run(
-        [soffice, "--headless", "--convert-to", "pdf", "--outdir", str(dst.parent), str(src)],
-        check=True,
-        capture_output=True,
-        timeout=300,
-    )
+    try:
+        subprocess.run(
+            [soffice, "--headless", "--convert-to", "pdf", "--outdir", str(dst.parent), str(src)],
+            check=True,
+            capture_output=True,
+            timeout=300,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
+        # 评审后加固：这里原本让 subprocess 的异常直接冒泡，出来的是一整屏英文
+        # Python 堆栈。最常踩这条的场景恰恰是本技能的默认主路径——本机装了
+        # LibreOffice、但用户桌面正开着它，无头模式 soffice 抢不到用户配置目录的
+        # 锁就会启动失败或卡死超时。所以这里统一收口成中文错误，并把 soffice 自己
+        # 的报错尾部带出来帮排查（stderr 可能很长，只截尾部几行，头部大多是版权信息）。
+        detail = ""
+        stderr = getattr(e, "stderr", None)
+        if stderr:
+            text = stderr.decode("utf-8", errors="replace") if isinstance(stderr, bytes) else str(stderr)
+            tail = "\n".join(text.strip().splitlines()[-5:])
+            if tail:
+                detail = f"\n  LibreOffice 报错原文（最后几行）：\n  {tail}"
+        timeout_hint = "（等待超过 300 秒仍未完成，多半是被卡住了）" if isinstance(e, subprocess.TimeoutExpired) else ""
+        print(
+            f"[doc-convert] 错误：调用 LibreOffice 转换失败{timeout_hint}。"
+            "如果你电脑上正开着 LibreOffice（或 Word），无头转换经常会因为抢不到"
+            f"配置文件锁而失败——请先把它关掉再重试。{detail}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2) from e
     produced = dst.parent / (src.stem + ".pdf")
     if produced != dst:
         produced.replace(dst)
@@ -109,9 +132,24 @@ def _convert_textonly(src: Path, dst: Path) -> None:
         "Head", parent=base["Heading1"], fontName=_FONT_NAME, fontSize=16, leading=22
     )
 
+    # 评审后加固：前端【Word 文件】槽放行 `.doc`（旧的二进制格式，不是 zip 容器）。
+    # 装了 LibreOffice 时 `.doc` 走上面那条路转得好好的；但没装 LibreOffice 又落到
+    # 这条纯文字兜底时，python-docx 拿旧格式当 zip 包打开会直接抛
+    # PackageNotFoundError，冒泡出去又是一屏英文堆栈。这里统一收口成中文提示。
+    try:
+        paragraphs = Document(str(src)).paragraphs
+    except PackageNotFoundError:
+        print(
+            f"[doc-convert] 错误：「{src.name}」不是 .docx 格式（.doc 是旧的二进制格式，"
+            "本工具的纯文字兜底路径读不了）。请先在 Word 里用「另存为」转成 .docx，"
+            "或者安装 LibreOffice 走保留排版的路径。",
+            file=sys.stderr,
+        )
+        raise SystemExit(3)
+
     flow = []
     has_text = False  # 用来判断是否有实际文字，不能用 flow 的真假——全是 Spacer 的文档会误判
-    for para in Document(str(src)).paragraphs:
+    for para in paragraphs:
         text = para.text.strip()
         if not text:
             flow.append(Spacer(1, 6))

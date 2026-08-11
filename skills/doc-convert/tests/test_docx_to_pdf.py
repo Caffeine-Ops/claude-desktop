@@ -2,6 +2,7 @@
 
 重点全在「没装 LibreOffice 时会发生什么」——那是绝大多数用户的处境。
 """
+import subprocess
 import sys
 from pathlib import Path
 
@@ -68,6 +69,70 @@ def test_textonly_refuses_when_no_cjk_font(tmp_path, monkeypatch, capsys):
 def test_find_cjk_font_returns_existing_file_or_none():
     font = docx_to_pdf.find_cjk_font()
     assert font is None or font.is_file()
+
+
+def test_soffice_failure_gives_chinese_message_not_traceback(tmp_path, monkeypatch, capsys):
+    """评审后加固：soffice 崩溃/超时不能让 CalledProcessError 堆栈冒泡出去。
+
+    最容易触发这条的场景是用户桌面正开着 LibreOffice，无头模式抢不到配置锁——
+    这恰好是本技能默认主路径（装了 LibreOffice 就走这条），所以必须给中文提示。
+    """
+    monkeypatch.setattr(docx_to_pdf, "find_soffice", lambda: "/usr/bin/fake-soffice")
+
+    def _boom(*args, **kwargs):
+        raise subprocess.CalledProcessError(
+            1, ["fake-soffice"], output=b"", stderr=b"some LibreOffice internal error\nsecond line"
+        )
+
+    monkeypatch.setattr(docx_to_pdf.subprocess, "run", _boom)
+    src = tmp_path / "a.docx"
+    _make_docx(src)
+    dst = tmp_path / "a.pdf"
+
+    with pytest.raises(SystemExit) as e:
+        docx_to_pdf.convert(src, dst, allow_textonly=False)
+
+    assert e.value.code != 0
+    err = capsys.readouterr().err
+    assert "LibreOffice" in err
+    assert "关掉" in err  # 提醒"如果正开着，先关掉再试"
+    assert not dst.exists()
+
+
+def test_soffice_timeout_gives_chinese_message(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(docx_to_pdf, "find_soffice", lambda: "/usr/bin/fake-soffice")
+
+    def _boom(*args, **kwargs):
+        raise subprocess.TimeoutExpired(["fake-soffice"], 300)
+
+    monkeypatch.setattr(docx_to_pdf.subprocess, "run", _boom)
+    src = tmp_path / "a.docx"
+    _make_docx(src)
+    dst = tmp_path / "a.pdf"
+
+    with pytest.raises(SystemExit):
+        docx_to_pdf.convert(src, dst, allow_textonly=False)
+
+    err = capsys.readouterr().err
+    assert "超时" in err or "卡住" in err
+
+
+def test_doc_legacy_format_gives_chinese_message_on_textonly_path(tmp_path, monkeypatch, capsys):
+    """评审后加固：.doc（旧二进制格式）走纯文字兜底时，python-docx 打不开会抛
+    PackageNotFoundError，不能让它冒泡成英文堆栈——必须提示用户另存为 .docx。
+    """
+    monkeypatch.setattr(docx_to_pdf, "find_soffice", lambda: None)
+    src = tmp_path / "legacy.doc"
+    # 假装是一份旧版二进制 .doc：随便写点非 zip 内容，python-docx 打不开
+    src.write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1not a real doc file")
+    dst = tmp_path / "legacy.pdf"
+
+    with pytest.raises(SystemExit):
+        docx_to_pdf.convert(src, dst, allow_textonly=True)
+
+    err = capsys.readouterr().err
+    assert "另存为" in err
+    assert not dst.exists()
 
 
 def test_empty_paragraph_document_refuses_textonly(tmp_path, monkeypatch, capsys):

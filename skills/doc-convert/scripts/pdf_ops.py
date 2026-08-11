@@ -124,8 +124,15 @@ def split(src: Path, out_dir: Path, ranges: str | None = None) -> list[Path]:
             written.append(dst)
         return written
 
-    for idx, chunk in enumerate(ranges.split(","), start=1):
-        pages = _parse_pages(chunk, total)
+    # 评审后加固：原来是「解析一个区间、写一个文件」交替进行，如果第 3 个区间才
+    # 越界，前 2 个 _partN.pdf 已经写盘了——报错退出但留下半成品文件，跟本分支
+    # 「拒绝时不产出文件」的纪律不一致（merge/delete/docx_to_pdf 都做到了，这里
+    # 漏了）。改成两阶段：先把所有区间都校验一遍（_parse_pages 内部越界即
+    # SystemExit），全部通过了再开始写，任何一个区间有问题就整体不落盘。
+    chunks = [c for c in ranges.split(",")]
+    all_pages = [_parse_pages(chunk, total) for chunk in chunks]
+
+    for idx, pages in enumerate(all_pages, start=1):
         writer = PdfWriter()
         for p in pages:
             writer.add_page(reader.pages[p - 1])
