@@ -150,7 +150,7 @@ Linux 的 Noto CJK / 文泉驿）；**一个都找不到时同样拒绝输出**�
 | 项目 | 增量 | 说明 |
 |---|---|---|
 | **安装包** | **+0.1 ~ 0.3 MB** | 技能目录是纯文本；Python 库不打包（事实核查 #12） |
-| **用户硬盘** | **mac 约 99 MB / Windows 约 111 MB** | PR 1 后为 66 MB；PR 2 加 pdfplumber（+32.9 MB，含 cryptography 13M / pdfminer 9.3M / pypdfium2 8.0M）与仅 Windows 装的 pillow-heif（+12 MB）。66 MB 与 +32.9 MB 为 2026-08-11 实测；pillow-heif 的 +12 MB 为推算非实测（mac 不装该依赖，走系统 sips，详见下方明细） |
+| **用户硬盘** | **mac 约 99 MB / Windows 约 111 MB** | PR 1 后为 66 MB；PR 2 加 pdfplumber（+32.9 MB，含 cryptography 13M / pdfminer 9.3M / pypdfium2 8.0M + 零散 2.6M）与仅 Windows 装的 pillow-heif（+12 MB）。66 MB 与 +32.9 MB（含其中 cryptography / pdfminer / pypdfium2 三项）为 2026-08-11 实测；零散 2.6M 是 32.9 减去前三项的差额倒推所得，非逐项实测；pillow-heif 的 +12 MB 同样为推算非实测（mac 不装该依赖，走系统 sips，详见下方明细） |
 
 mac 实测明细（`du -sh ~/.doc-convert-skill/venv/lib/python3.12/site-packages/*`）：
 `du -sh ~/.doc-convert-skill/venv` 读数是 **112 MB**，其中约 13 MB 是开发期额外

@@ -88,7 +88,7 @@ source skills/doc-convert/bin/ensure-python.sh
 # PDF 抽文字 / 抽表格（doc_text.py、pdf_tables.py）。
 # 附带白赚一件事：pdfplumber>=0.11 自带 pypdfium2，PDF 页面渲染成 PNG
 # （pdf_render.py）不需要再加任何依赖。2026-08-11 实测净增 32.9 MB，
-# 其中 cryptography 13M（pdfminer.six 的硬依赖）+ pdfminer 9.3M + pypdfium2 7.5M。
+# 其中 cryptography 13M（pdfminer.six 的硬依赖）+ pdfminer 9.3M + pypdfium2 8.0M。
 pdfplumber>=0.11
 
 # HEIC 解码，只在 Windows 装。iPhone 拍的照片默认是 HEIC，而模型读图只认
@@ -2411,7 +2411,7 @@ EOF
 「体积与磁盘代价」一节的表格，把「用户硬盘 实测 66 MB」那行改为：
 
 ```markdown
-| **用户硬盘** | **mac 约 99 MB / Windows 约 111 MB** | PR 1 后为 66 MB；PR 2 加 pdfplumber（+32.9 MB，含 cryptography 13M / pdfminer 9.3M / pypdfium2 7.5M）与仅 Windows 装的 pillow-heif（+12 MB）。均为 2026-08-11 实测 |
+| **用户硬盘** | **mac 约 99 MB / Windows 约 111 MB** | PR 1 后为 66 MB；PR 2 加 pdfplumber（+32.9 MB，含 cryptography 13M / pdfminer 9.3M / pypdfium2 8.0M）与仅 Windows 装的 pillow-heif（+12 MB）。均为 2026-08-11 实测 |
 ```
 
 - [ ] **Step 2: 撤掉 chip 描述那段「PR 2 别沿用」的警告**

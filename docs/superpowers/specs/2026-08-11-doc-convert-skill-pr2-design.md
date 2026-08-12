@@ -37,7 +37,7 @@
 
 | # | 事实 | 核查依据 |
 |---|---|---|
-| 1 | 加 `pdfplumber` 后 venv 净增 **32.9 MB**：cryptography 13M + pdfminer 9.3M + pypdfium2 8.0M（`pypdfium2`+`pypdfium2_raw`+`pypdfium2_cli` 全家）+ 零散 2.6M（PIL 与 pip 现有 venv 已有，不计） | 用 app 自带 python 3.12 建临时 venv 实测 `du -sh site-packages/*`；另用系统 python 3.9 独立跑一次，数字互相印证 |
+| 1 | 加 `pdfplumber` 后 venv 净增 **32.9 MB**：cryptography 13M + pdfminer 9.3M + pypdfium2 8.0M（`pypdfium2`+`pypdfium2_raw`+`pypdfium2_cli` 全家）+ 零散 2.6M（PIL 与 pip 现有 venv 已有，不计；这 2.6M 是 32.9 减去前三项的**差额倒推**所得，不是单独 `du -sh` 量出来的，本仓库纪律是实测与推算分清楚——同一份文档对 pillow-heif 的 12 MB 就明确标了「推算非实测」） | 用 app 自带 python 3.12 建临时 venv 实测 `du -sh site-packages/*`；另用系统 python 3.9 独立跑一次，数字互相印证（32.9 MB 总量与 cryptography/pdfminer/pypdfium2 三项为逐项实测，零散 2.6M 为倒推） |
 | 2 | `pdfplumber>=0.11` **自带 `pypdfium2`**，PDF 页面渲染成 PNG 不需要再加任何依赖 | 同一临时 venv 里 `pypdfium2.PdfDocument(...)[0].render(scale=2)` 直接跑通，A4 页出 PNG 37 KB |
 | 3 | pdfplumber 抽表格的数字**与源文件逐字一致**（不是识别，是按坐标读） | 用 reportlab 造带框线财务表 PDF → `extract_tables()` 返回 `1200.50 / 1310.25 / 2510.75` 等全部原值 |
 | 4 | `pillow-heif` 是 **12 MB**（不是最初估计的 5 MB），能正确注册进 Pillow | 同一 venv 实测 `du -sh pillow_heif` = 12M（macOS arm64 wheel；**Windows wheel 未实测**，装机后应复核）；`register_heif_opener()` 后 Pillow 识别 `.heic` |

@@ -21,6 +21,7 @@ HEIC 解码走两条路，理由见设计文档「依赖与体积」：
 """
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -86,6 +87,26 @@ def prepare_one(src: Path, outdir: Path, max_edge: int = MAX_EDGE_DEFAULT,
     处理后/，iPhone「共享 → 存储到文件 → 最兼容」导出的正是这种同名对，
     这条护栏因此不是理论风险。撞名时换成 `stem-2.jpg`、`stem-3.jpg`……
     保证 `items` 里的 output 与磁盘上真实存在的文件一一对应。
+
+    换名判断为什么查磁盘实况而不是只查 `used_names`（复审实测又挖出三个
+    漏网变体，其中一个会不可逆删掉用户手机里的原始照片）：
+      - 变体 A（大写扩展名，最严重）：iPhone 导出常见 `IMG_0012.JPG`，算出的
+        产物名是小写的 `IMG_0012.jpg`——字符串不相等，但 APFS 默认大小写
+        不敏感，两者其实是同一个 inode。旧版 `dst.resolve() == src.resolve()`
+        是字符串/路径比较，在这种文件系统上判定"不相等"从而放行，实测
+        exit 0、stderr 一个字都没有，原图就那么没了。
+      - 变体 B（跨两次调用）：`used_names` 只在进程内共享，SKILL.md 的 A3
+        教的是分两次调用（先 `*.jpg` 再 `*.HEIC`），第二次调用是全新进程，
+        `used_names` 是空集合，看不到上一次已经写进 outdir 的文件，会直接
+        覆盖第一次的产物。
+      - 变体 C（同 stem 兄弟文件互毁）：批量输入里另一张源文件本身就叫这个
+        名字（比如 `IMG_0012.png` 和 `IMG_0012.jpg` 一起传、`-d` 又指到它们
+        所在目录），旧版只比较"自己的 src"，看不到"别人的 src"，会把别人的
+        原图当成可覆盖的产物写坏。
+    统一解法：候选名对应的路径如果已经在磁盘上存在，用 `os.path.samefile`
+    精确区分"存在的就是我自己"（拒绝——写下去就是删了原图）还是"存在的是
+    别人"（换下一个候选名，不算事故）。`used_names` 仍然保留、只是从判断
+    依据降级成兜底加速——磁盘状态才是唯一真相源。
     """
     src = Path(src)
     outdir = Path(outdir)
@@ -100,19 +121,22 @@ def prepare_one(src: Path, outdir: Path, max_edge: int = MAX_EDGE_DEFAULT,
 
     name = src.stem + ".jpg"
     n = 2
-    while name in used_names:
+    while True:
+        dst = outdir / name
+        if name not in used_names and not dst.exists():
+            break
+        if dst.exists() and os.path.samefile(dst, src):
+            # 评审实测 Important 2 + 变体 A：这个候选名磁盘上已经有文件，
+            # 而且就是 src 自己（要么真是同一路径，要么是大小写不敏感文件
+            # 系统把不同大小写的名字解析到了同一个 inode）。写下去就是把
+            # 用户手机里的原图覆盖成缩略图，不可逆，必须直接拒绝，不能
+            # 换个名字了事——换名只对"撞到别人"有效，撞到自己无解。
+            raise PrepError(
+                f"{src.name} 的产物会覆盖它自己，请把 -d 指到另一个目录。"
+            )
+        # 撞到的是别人（另一张源文件，或上一次调用留下的产物）——换名重试
         name = f"{src.stem}-{n}.jpg"
         n += 1
-    used_names.add(name)
-    dst = outdir / name
-
-    # 评审实测 Important 2：输入是 .jpg 且 -d 就是它所在目录时 dst == src，
-    # 脚本会把用户手机里的原图就地覆盖成 1600px 缩略图——不可逆，丢的是
-    # 原始照片而不是产物。这条检查必须在真正读/写图片之前做。
-    if dst.resolve() == src.resolve():
-        raise PrepError(
-            f"{src.name} 的产物会覆盖它自己，请把 -d 指到另一个目录。"
-        )
 
     work = src
     tmp: Path | None = None
@@ -157,6 +181,12 @@ def prepare_one(src: Path, outdir: Path, max_edge: int = MAX_EDGE_DEFAULT,
                 f"{src.name} 保存失败，请检查目标目录权限或磁盘空间。"
             )
 
+        # Minor 1：这一行必须在保存成功之后才登记，不能挪到函数开头算完
+        # name 就立刻占用。旧实现在任何读写图片之前就 add(name)，一张
+        # 失败的图（比如损坏文件）也会白白烧掉一个名额——同批里唯一成功
+        # 的那张会被挤成 `stem-2.jpg`，而它本该拿到的 `stem.jpg` 却始终
+        # 空着没人用。名额只该属于真正落盘成功的产物。
+        used_names.add(name)
         return dst
     finally:
         # sips 中转文件用完就删——产物目录里不留半成品，同 PR 1 的纪律
@@ -221,8 +251,16 @@ def main(argv: list[str] | None = None) -> int:
                         seen_keys.append(key)
                         shown.append(f["reason"])
                 shown = shown[:3]
-                shown_keys = set(seen_keys[:3])
-                remaining = sum(1 for f in failed if _reason_key(f) not in shown_keys)
+                # 复审实测：旧版 `remaining` 统计的是"模板不在已展示前 3 个
+                # 里的条数"——12 个文件全是同一个原因时，唯一的模板本来就在
+                # 已展示集合里，算出来是 0，「另有 N 张同样原因」这句话根本
+                # 不会打印，用户看到的只有 1 条文案、1 个文件名，完全不知道
+                # 这批实际失败了 12 张。真正想表达的是「总数减去已经完整
+                # 展示过的条数」：每个展示出来的模板只占用 1 条名额，同模板
+                # 剩下的、以及模板本身超过前 3 个上限被砍掉的，都该算进
+                # remaining——用 `len(failed) - len(shown)` 一次性覆盖两种
+                # 情况，不用再分场景讨论。
+                remaining = len(failed) - len(shown)
                 reasons_text = "；".join(shown)
                 if remaining:
                     reasons_text += f"；另有 {remaining} 张同样原因，不逐条列出"
