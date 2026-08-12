@@ -215,3 +215,55 @@ def test_watermark_content_truly_overlaid(tmp_path):
     assert len(str(result_page)) >= len(str(src_page)), (
         "输出页面内容未被修改，水印可能未叠上"
     )
+
+
+def test_split_trailing_comma_does_not_write_empty_pdf(tmp_path):
+    """复审实测：`--ranges "1-2,"`（模型很容易多打一个尾逗号）原来会多写出一个
+    **0 页的 PDF** 还报「已生成 2 个文件」——正是 delete() 明令拒绝的那种空产物。
+    空区间按「本来就没想要这一段」跳过，不为一个多余的逗号让模型多跑一轮。
+    """
+    src = tmp_path / "s.pdf"
+    _make_pdf(src, 3)
+    out_dir = tmp_path / "parts"
+
+    written = pdf_ops.split(src, out_dir, ranges="1-2,")
+
+    assert len(written) == 1
+    assert len(PdfReader(str(written[0])).pages) == 2
+    # 目录里也不能留下多余的空文件
+    assert sorted(p.name for p in out_dir.glob("*.pdf")) == ["s_part1.pdf"]
+
+
+def test_split_all_empty_ranges_refuses(tmp_path, capsys):
+    """跳完一个区间都不剩，说明用户/模型根本没说清要什么——报错，不落盘。"""
+    src = tmp_path / "s.pdf"
+    _make_pdf(src, 3)
+    out_dir = tmp_path / "parts"
+
+    with pytest.raises(SystemExit) as e:
+        pdf_ops.split(src, out_dir, ranges=" , ")
+
+    assert e.value.code != 0
+    assert "没有任何有效区间" in capsys.readouterr().err
+    assert not list(out_dir.glob("*.pdf"))
+
+
+def test_main_wraps_write_failure_in_chinese(tmp_path, monkeypatch, capsys):
+    """main() 的兜底层：_write 直接调 open("wb")，目标只读/磁盘满时抛的是裸
+    OSError，原来会冒泡成一屏英文堆栈。
+    """
+    src = tmp_path / "s.pdf"
+    _make_pdf(src, 3)
+
+    def _boom(*a, **k):
+        raise OSError(30, "Read-only file system")
+
+    monkeypatch.setattr(pdf_ops, "_write", _boom)
+
+    with pytest.raises(SystemExit) as e:
+        pdf_ops.main(["delete", str(src), "-o", str(tmp_path / "x.pdf"), "--pages", "2"])
+
+    assert e.value.code != 0
+    err = capsys.readouterr().err
+    assert "处理过程中出错" in err
+    assert "Traceback" not in err

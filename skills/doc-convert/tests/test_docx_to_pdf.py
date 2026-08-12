@@ -117,6 +117,54 @@ def test_soffice_timeout_gives_chinese_message(tmp_path, monkeypatch, capsys):
     assert "超时" in err or "卡住" in err
 
 
+def test_soffice_silent_no_op_gives_chinese_message(tmp_path, monkeypatch, capsys):
+    """复审实测：soffice 还有一类「假成功」——退出码 0、stderr 干净，却一个
+    PDF 都没写出来（源文件扩展名是 .docx 但内容不是 Word 文档最常见）。
+    上面那个 try 包不住它（它包的是"调用失败"），原来会在紧接着的改名那步抛
+    FileNotFoundError 英文堆栈。
+    """
+    monkeypatch.setattr(docx_to_pdf, "find_soffice", lambda: "/usr/bin/fake-soffice")
+
+    class _SilentSuccess:
+        returncode = 0
+        stdout = b""
+        stderr = b""
+
+    # 装成「调用成功了」但不产出任何文件
+    monkeypatch.setattr(docx_to_pdf.subprocess, "run", lambda *a, **k: _SilentSuccess())
+    src = tmp_path / "weird.docx"
+    src.write_bytes(b"GIF89a")  # 扩展名叫 docx，内容其实是别的格式
+    dst = tmp_path / "weird.pdf"
+
+    with pytest.raises(SystemExit) as e:
+        docx_to_pdf.convert(src, dst, allow_textonly=False)
+
+    assert e.value.code != 0
+    err = capsys.readouterr().err
+    assert "没有生成 PDF" in err
+    assert "Traceback" not in err
+    assert not dst.exists()
+
+
+def test_main_wraps_unexpected_error_in_chinese(tmp_path, monkeypatch, capsys):
+    """main() 的兜底层：任何未预期异常都要变成中文，不能漏英文堆栈。"""
+    src = tmp_path / "a.docx"
+    _make_docx(src)
+
+    def _boom(*a, **k):
+        raise OSError(30, "Read-only file system")
+
+    monkeypatch.setattr(docx_to_pdf, "convert", _boom)
+
+    with pytest.raises(SystemExit) as e:
+        docx_to_pdf.main([str(src), "-o", str(tmp_path / "x.pdf")])
+
+    assert e.value.code != 0
+    err = capsys.readouterr().err
+    assert "处理过程中出错" in err
+    assert "Traceback" not in err
+
+
 def test_doc_legacy_format_gives_chinese_message_on_textonly_path(tmp_path, monkeypatch, capsys):
     """评审后加固：.doc（旧二进制格式）走纯文字兜底时，python-docx 打不开会抛
     PackageNotFoundError，不能让它冒泡成英文堆栈——必须提示用户另存为 .docx。

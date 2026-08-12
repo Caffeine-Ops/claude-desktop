@@ -133,6 +133,38 @@ def checkup(units: list[str], kind: str) -> dict:
     }
 
 
+def _resolve_text_path(outdir: Path, src: Path, body: str) -> Path:
+    """算出取料文件该叫什么，保证不会悄悄盖掉别人的产物。
+
+    复审实测（同 img_prep.prepare_one 那条护栏的同族问题）：原来的名字是
+    `src.stem + ".text.txt"`，**只取主干名、丢掉扩展名**。于是 `年报.pdf` 和
+    `年报.docx` 进同一个 --outdir 会算出同一个路径，后跑的静默盖掉先跑的，
+    exit 0 无任何提示。而 SKILL.md 的 A4 工作流恰恰教模型把多份输入都指到同一个
+    `取料/`，这不是理论风险。
+
+    两层解法：
+      1. 名字带上扩展名（`年报.pdf.text.txt` / `年报.docx.text.txt`），把最常见
+         的"同名不同格式"从根上拆开，而且同一份源文件重跑仍然落回同一个名字
+         （幂等，不会每跑一次多出一个文件）。
+      2. 仍然撞名时（两个不同目录下的同名同格式文件进同一个 outdir）比内容：
+         内容一样说明就是上一次跑同一份源留下的，直接覆盖；内容不一样才换成
+         `年报.pdf-2.text.txt` 让开——宁可多一个文件，也不让用户的取料结果
+         凭空消失。
+    """
+    base = src.name  # 带扩展名，这是与旧版唯一的区别
+    candidate = outdir / f"{base}.text.txt"
+    n = 2
+    while candidate.exists():
+        try:
+            if candidate.read_text(encoding="utf-8") == body:
+                return candidate  # 上一次跑同一份源留下的，覆盖即幂等重跑
+        except OSError:
+            pass  # 读不了就当作"内容不同"，换名让开，不冒覆盖的险
+        candidate = outdir / f"{base}-{n}.text.txt"
+        n += 1
+    return candidate
+
+
 def render_anchored(units: list[str], kind: str) -> str:
     tag = "P" if kind == "pdf" else "§"
     return "\n\n".join(f"[{tag}{i}] {u}" for i, u in enumerate(units, start=1))
@@ -161,9 +193,10 @@ def main(argv: list[str] | None = None) -> int:
             # 裸露成 Traceback——同 img_prep.py 的纪律。
             _die(f"无法创建输出目录 {outdir}，请检查目录权限或磁盘空间。")
 
-        text_file = outdir / (src.stem + ".text.txt")
+        body = render_anchored(units, kind)
+        text_file = _resolve_text_path(outdir, src, body)
         try:
-            text_file.write_text(render_anchored(units, kind), encoding="utf-8")
+            text_file.write_text(body, encoding="utf-8")
         except Exception:
             _die(f"写入文本文件 {text_file} 失败，请检查目标目录权限或磁盘空间。")
 

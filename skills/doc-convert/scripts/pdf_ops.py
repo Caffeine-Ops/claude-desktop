@@ -18,6 +18,12 @@ from pypdf import PdfReader, PdfWriter
 from pypdf.errors import FileNotDecryptedError
 
 
+def _die(msg: str) -> None:
+    """统一的中文报错出口，措辞与 doc_text.py / pdf_tables.py 等脚本对齐。"""
+    print(f"[doc-convert] 错误：{msg}", file=sys.stderr)
+    raise SystemExit(2)
+
+
 def _open_reader(path: Path) -> PdfReader:
     """打开 PDF 文件并检查加密状态。
 
@@ -129,7 +135,22 @@ def split(src: Path, out_dir: Path, ranges: str | None = None) -> list[Path]:
     # 「拒绝时不产出文件」的纪律不一致（merge/delete/docx_to_pdf 都做到了，这里
     # 漏了）。改成两阶段：先把所有区间都校验一遍（_parse_pages 内部越界即
     # SystemExit），全部通过了再开始写，任何一个区间有问题就整体不落盘。
-    all_pages = [_parse_pages(chunk, total) for chunk in ranges.split(",")]
+    #
+    # 复审实测又补一条：空区间。`--ranges "1-2,"`（模型很容易多打一个尾逗号）
+    # 会切出一个空字符串块，_parse_pages 对它返回空列表，于是下面照样写出一个
+    # **0 页的 PDF** 还打印「已生成 2 个文件」——正是 delete() 明令拒绝的那种
+    # 空产物。空块按「用户本来就没想要这一段」处理直接跳过（与 _parse_pages
+    # 内部对空 chunk 的做法一致，不为一个多余的逗号让模型多跑一轮）；但如果
+    # 跳完一个区间都不剩（`--ranges ","` 之类），那是真的没说清要什么，报错。
+    chunks = [c.strip() for c in ranges.split(",") if c.strip()]
+    if not chunks:
+        print(
+            f"[doc-convert] 错误：--ranges「{ranges}」里没有任何有效区间，"
+            '正确写法形如 "1-2,4-5"。',
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    all_pages = [_parse_pages(chunk, total) for chunk in chunks]
 
     for idx, pages in enumerate(all_pages, start=1):
         writer = PdfWriter()
@@ -188,43 +209,51 @@ def watermark(src: Path, dst: Path, stamp_pdf: Path) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="PDF 合并 / 拆分 / 删页 / 加水印")
-    sub = ap.add_subparsers(dest="cmd", required=True)
+    try:
+        ap = argparse.ArgumentParser(description="PDF 合并 / 拆分 / 删页 / 加水印")
+        sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("merge", help="按给定顺序合并多个 PDF")
-    p.add_argument("inputs", nargs="+")
-    p.add_argument("-o", "--output", required=True)
+        p = sub.add_parser("merge", help="按给定顺序合并多个 PDF")
+        p.add_argument("inputs", nargs="+")
+        p.add_argument("-o", "--output", required=True)
 
-    p = sub.add_parser("split", help="拆分 PDF（默认一页一个文件）")
-    p.add_argument("input")
-    p.add_argument("-d", "--out-dir", required=True)
-    p.add_argument("--ranges", default=None, help='如 "1-2,4-5"，每个区间一个文件')
+        p = sub.add_parser("split", help="拆分 PDF（默认一页一个文件）")
+        p.add_argument("input")
+        p.add_argument("-d", "--out-dir", required=True)
+        p.add_argument("--ranges", default=None, help='如 "1-2,4-5"，每个区间一个文件')
 
-    p = sub.add_parser("delete", help="删除指定页")
-    p.add_argument("input")
-    p.add_argument("-o", "--output", required=True)
-    p.add_argument("--pages", required=True, help='如 "2,4-6"，页码 1 起')
+        p = sub.add_parser("delete", help="删除指定页")
+        p.add_argument("input")
+        p.add_argument("-o", "--output", required=True)
+        p.add_argument("--pages", required=True, help='如 "2,4-6"，页码 1 起')
 
-    p = sub.add_parser("watermark", help="把一张水印页叠到每一页上")
-    p.add_argument("input")
-    p.add_argument("-o", "--output", required=True)
-    p.add_argument("--stamp", required=True, help="水印 PDF（取其第一页）")
+        p = sub.add_parser("watermark", help="把一张水印页叠到每一页上")
+        p.add_argument("input")
+        p.add_argument("-o", "--output", required=True)
+        p.add_argument("--stamp", required=True, help="水印 PDF（取其第一页）")
 
-    args = ap.parse_args(argv)
+        args = ap.parse_args(argv)
 
-    if args.cmd == "merge":
-        merge([Path(x) for x in args.inputs], Path(args.output))
-        print(f"[doc-convert] 已生成 {args.output}")
-    elif args.cmd == "split":
-        written = split(Path(args.input), Path(args.out_dir), args.ranges)
-        print(f"[doc-convert] 已生成 {len(written)} 个文件于 {args.out_dir}")
-    elif args.cmd == "delete":
-        delete(Path(args.input), Path(args.output), args.pages)
-        print(f"[doc-convert] 已生成 {args.output}")
-    elif args.cmd == "watermark":
-        watermark(Path(args.input), Path(args.output), Path(args.stamp))
-        print(f"[doc-convert] 已生成 {args.output}")
-    return 0
+        if args.cmd == "merge":
+            merge([Path(x) for x in args.inputs], Path(args.output))
+            print(f"[doc-convert] 已生成 {args.output}")
+        elif args.cmd == "split":
+            written = split(Path(args.input), Path(args.out_dir), args.ranges)
+            print(f"[doc-convert] 已生成 {len(written)} 个文件于 {args.out_dir}")
+        elif args.cmd == "delete":
+            delete(Path(args.input), Path(args.output), args.pages)
+            print(f"[doc-convert] 已生成 {args.output}")
+        elif args.cmd == "watermark":
+            watermark(Path(args.input), Path(args.output), Path(args.stamp))
+            print(f"[doc-convert] 已生成 {args.output}")
+        return 0
+    except Exception as e:
+        # 兜底：main() 必须有这一层。这里最现实的漏网是写盘——_write() 直接
+        # 调 open("wb")，目标目录只读 / 磁盘满时抛的是裸 OSError，冒泡出去
+        # 就是一屏英文堆栈。同 doc_text.py / pdf_tables.py 的纪律。
+        # SystemExit 继承 BaseException，主动报错退出不会被这里重新包一层。
+        _die(f"处理过程中出错：{type(e).__name__}: {e}")
+        return 2  # 不可达，只为类型完整
 
 
 if __name__ == "__main__":

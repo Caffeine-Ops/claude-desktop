@@ -272,3 +272,46 @@ def test_write_text_failure_gives_chinese_message_not_traceback(tmp_path, monkey
     err = capsys.readouterr().err
     assert "[doc-convert] 错误：" in err
     assert "Traceback" not in err
+
+
+def _mixed_pdf(path: Path, tmp_path: Path) -> Path:
+    """第 1 页有正常文字层，第 2 页只有一张图（扫描插页）。
+
+    这是「混合型文档」最常见的形态：正文是电子版，中间夹了几页扫描件。
+    """
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.pagesizes import A4
+    img = tmp_path / "insert.png"
+    Image.new("RGB", (800, 1100), (245, 245, 245)).save(img)
+    c = canvas.Canvas(str(path), pagesize=A4)
+    c.drawString(72, 720, "Plenty of real extractable text on this first page. " * 6)
+    c.showPage()
+    c.drawImage(str(img), 0, 0, width=A4[0], height=A4[1])
+    c.showPage()
+    c.save()
+    return path
+
+
+def test_scanned_hint_scoped_to_selected_pages(tmp_path, capsys):
+    """复审实测：这句提示原来无视 scanned_scope 一律说"这份 PDF"，可 scanned
+    本来就只按 --pages 选中的那几页算。`--pages "2"` 点到一页插图，就会把一份
+    第 1 页文字层完好的 PDF 通报成整份扫描件，把 agent 推去对全文走 OCR。
+    """
+    src = _mixed_pdf(tmp_path / "mixed.pdf", tmp_path)
+    out = tmp_path / "t.json"
+
+    assert pdf_tables.main([str(src), "--pages", "2", "-o", str(out)]) == 0
+
+    stdout = capsys.readouterr().out
+    assert "选中的这几页" in stdout
+    assert "其余页" in stdout  # 必须点明"这只说明这几页"
+
+
+def test_scanned_hint_without_pages_still_speaks_for_whole_file(tmp_path, capsys):
+    """没给 --pages 时作用域就是整份文件，措辞保持原样。"""
+    src = _scanned_pdf(tmp_path / "scan.pdf", tmp_path)
+    out = tmp_path / "s.json"
+
+    assert pdf_tables.main([str(src), "-o", str(out)]) == 0
+
+    assert "这份 PDF 没有文字层" in capsys.readouterr().out

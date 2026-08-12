@@ -143,7 +143,20 @@ def main(argv: list[str] | None = None) -> int:
             # 逐字准确抽出来的表。改成只在 tables 真的是空的时候才提示；tables
             # 为空时 scanned 必为 True（否则上面已经 _die），所以这里不用再判
             # scanned。
-            print("提示：这份 PDF 没有文字层（扫描件），抽不到表格数据，请改走看图识别路线。")
+            #
+            # 复审实测：这句话原来无视 scanned_scope 一律说"这份 PDF"，而
+            # scanned 本来就只按 --pages 选中的那几页算。`--pages "3-4"` 点到
+            # 两页插图，就会把一份其余几十页文字层完好的 PDF 通报成整份扫描件，
+            # 把 agent 推去对全文走 OCR——上面刚加 scanned_scope 就是为了这个，
+            # 提示语也得跟着分情况说。
+            if result["scanned_scope"] == "selected_pages":
+                print(
+                    f"提示：选中的这几页（--pages {args.pages}）没有文字层（扫描件），"
+                    "抽不到表格数据，请对这几页改走看图识别路线。"
+                    "注意这只说明这几页，文件其余页可能是有文字层的。"
+                )
+            else:
+                print("提示：这份 PDF 没有文字层（扫描件），抽不到表格数据，请改走看图识别路线。")
         return 0
     except Exception as e:
         # 兜底：main() 必须有这一层，逐个函数自觉包 try 是不够的——任何未

@@ -53,6 +53,12 @@ _CJK_FONT_CANDIDATES: list[str] = [
 _FONT_NAME = "DocConvertCJK"
 
 
+def _die(msg: str) -> None:
+    """统一的中文报错出口，措辞与 doc_text.py / pdf_tables.py 等脚本对齐。"""
+    print(f"[doc-convert] 错误：{msg}", file=sys.stderr)
+    raise SystemExit(2)
+
+
 def find_soffice() -> str | None:
     """找 LibreOffice 的无头可执行文件；没有返回 None。"""
     found = shutil.which("soffice") or shutil.which("libreoffice")
@@ -105,7 +111,26 @@ def _convert_with_soffice(soffice: str, src: Path, dst: Path) -> None:
             file=sys.stderr,
         )
         raise SystemExit(2) from e
+
+    # 评审实测：soffice 还有一类**「假成功」**——退出码 0、stderr 干净，但
+    # 一个 PDF 都没写出来。上面那个 try 包不住它（它包的是「调用本身失败」，
+    # 这里是「调用成功但没产物」），于是紧接着的 produced.replace(dst) 会抛
+    # 一屏 FileNotFoundError 英文堆栈——正好是上面那段注释声称已经收口掉的
+    # 失败形态。触发条件很日常：源文件扩展名是 .docx 但内容其实不是 Word
+    # 文档（用户手动改过扩展名、或下载下来的是伪装成 docx 的别的格式），
+    # 以及本机已经开着 LibreOffice 时它偶尔会静默 no-op。所以改名前必须
+    # 先确认产物真的在磁盘上。
     produced = dst.parent / (src.stem + ".pdf")
+    if not produced.is_file():
+        print(
+            f"[doc-convert] 错误：LibreOffice 报告转换完成，却没有生成 PDF。"
+            f"最常见的原因是「{src.name}」并不是真正的 Word 文档"
+            "（扩展名是 .docx，内容其实是别的格式）；其次是本机正开着 "
+            "LibreOffice / Word 抢占了配置目录。请先确认文件能正常打开、"
+            "并关掉 LibreOffice 后重试。",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     if produced != dst:
         produced.replace(dst)
 
@@ -197,29 +222,38 @@ def convert(src: Path, dst: Path, allow_textonly: bool = False) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Word 转 PDF")
-    ap.add_argument("input", help="输入 .docx 文件")
-    ap.add_argument("-o", "--output", required=True, help="输出 .pdf 文件")
-    ap.add_argument(
-        "--allow-textonly",
-        action="store_true",
-        help="没有 LibreOffice 时允许输出纯文字版 PDF（会丢失表格/图片/排版）",
-    )
-    args = ap.parse_args(argv)
-
-    src = Path(args.input)
-    if not src.is_file():
-        print(f"[doc-convert] 错误：找不到输入文件 {src}", file=sys.stderr)
-        raise SystemExit(2)
-
-    mode = convert(src, Path(args.output), args.allow_textonly)
-    if mode == "textonly":
-        print(
-            f"[doc-convert] 已生成 {args.output}（纯文字版：表格、图片与排版已丢失）"
+    try:
+        ap = argparse.ArgumentParser(description="Word 转 PDF")
+        ap.add_argument("input", help="输入 .docx 文件")
+        ap.add_argument("-o", "--output", required=True, help="输出 .pdf 文件")
+        ap.add_argument(
+            "--allow-textonly",
+            action="store_true",
+            help="没有 LibreOffice 时允许输出纯文字版 PDF（会丢失表格/图片/排版）",
         )
-    else:
-        print(f"[doc-convert] 已生成 {args.output}（保留原排版）")
-    return 0
+        args = ap.parse_args(argv)
+
+        src = Path(args.input)
+        if not src.is_file():
+            _die(f"找不到输入文件 {src}")
+
+        mode = convert(src, Path(args.output), args.allow_textonly)
+        if mode == "textonly":
+            print(
+                f"[doc-convert] 已生成 {args.output}（纯文字版：表格、图片与排版已丢失）"
+            )
+        else:
+            print(f"[doc-convert] 已生成 {args.output}（保留原排版）")
+        return 0
+    except Exception as e:
+        # 兜底：main() 必须有这一层，逐个函数自觉包 try 是不够的——任何未预期的
+        # 异常（reportlab 写盘遇到只读目录、字体文件损坏……）都要转成中文错误，
+        # 不能让裸 Traceback 打到用户面前。这是本 PR 的全局约束，同
+        # doc_text.py / pdf_tables.py / img_prep.py 的纪律一致。
+        # SystemExit 继承 BaseException 而不是 Exception，所以上面那些
+        # 「主动中文报错后退出」不会被这里重新包一层。
+        _die(f"处理过程中出错：{type(e).__name__}: {e}")
+        return 2  # 不可达，只为类型完整
 
 
 if __name__ == "__main__":

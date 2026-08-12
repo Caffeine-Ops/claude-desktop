@@ -169,3 +169,45 @@ def test_extract_pdf_reports_password_protection_in_chinese(tmp_path, capsys):
         doc_text._extract_pdf(enc)
     err = capsys.readouterr().err
     assert "密码保护" in err
+
+
+def _run_main(argv: list[str], capsys) -> dict:
+    assert doc_text.main(argv) == 0
+    return json.loads(capsys.readouterr().out)
+
+
+def test_same_stem_different_formats_do_not_overwrite(tmp_path, capsys):
+    """复审实测：产物名原来只取主干名（stem），`年报.pdf` 与 `年报.docx` 进同一个
+    --outdir 会算出同一个路径，后跑的静默盖掉先跑的、exit 0 无任何提示。
+    而 SKILL.md 的 A4 工作流恰恰教模型把多份输入都指到同一个 `取料/`。
+    """
+    from docx import Document
+
+    pdf = _text_pdf(tmp_path / "年报.pdf")
+    docx = tmp_path / "年报.docx"
+    d = Document()
+    d.add_paragraph("Word 文档里的正文，内容与那份 PDF 完全不同。")
+    d.save(str(docx))
+    outdir = tmp_path / "取料"
+
+    r1 = _run_main([str(pdf), "--outdir", str(outdir)], capsys)
+    r2 = _run_main([str(docx), "--outdir", str(outdir)], capsys)
+
+    f1, f2 = Path(r1["text_file"]), Path(r2["text_file"])
+    assert f1 != f2
+    assert f1.is_file() and f2.is_file()
+    # 两份取料内容必须各自完好，谁也没被谁盖掉
+    assert "This is page 1" in f1.read_text(encoding="utf-8")
+    assert "Word 文档里的正文" in f2.read_text(encoding="utf-8")
+
+
+def test_rerunning_same_source_is_idempotent(tmp_path, capsys):
+    """撞名护栏不能带来副作用：同一份源重跑要落回同一个文件，不能越跑越多。"""
+    pdf = _text_pdf(tmp_path / "年报.pdf")
+    outdir = tmp_path / "取料"
+
+    r1 = _run_main([str(pdf), "--outdir", str(outdir)], capsys)
+    r2 = _run_main([str(pdf), "--outdir", str(outdir)], capsys)
+
+    assert r1["text_file"] == r2["text_file"]
+    assert len(list(outdir.glob("*.text.txt"))) == 1
