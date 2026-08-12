@@ -89,7 +89,17 @@ def extract(src: Path, pages_spec: str | None) -> dict:
                 })
 
     scanned = bool(wanted) and (chars_total / len(wanted)) < SCANNED_CHARS_PER_PAGE
-    return {"source": src.name, "total_pages": total, "scanned": scanned, "tables": tables}
+    # 评审实测 Minor 9：scanned 只按 `wanted`（--pages 选中的那几页）算，却和
+    # total_pages（整份文档的页数）并排放在同一个 JSON 里，容易被读成整份文件
+    # 的属性——SKILL.md 原来也是这么写的。`--pages "3-4"` 恰好点到两页插图，
+    # 整份 PDF 就会被报成 scanned: true，即便其余几十页全是正常文字层。
+    # 加一个显式字段说明作用域，别指望读的人自己猜。
+    scanned_scope = "selected_pages" if pages_spec else "all_pages"
+    return {
+        "source": src.name, "total_pages": total,
+        "scanned": scanned, "scanned_scope": scanned_scope,
+        "tables": tables,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:

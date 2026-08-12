@@ -155,6 +155,32 @@ def test_scanned_with_no_tables_still_prints_hint(tmp_path):
     assert "抽不到表格数据" in proc.stdout
 
 
+def test_scanned_scope_reflects_pages_filter(tmp_path):
+    """[Minor 9] scanned 只按 --pages 选中的那几页算，却和 total_pages（整份
+    文档页数）并排放在同一个 JSON 里，容易被误读成整份文件的属性——
+    `--pages "3-4"` 恰好点到两页插图，整份 PDF 就会被报成 scanned: true。
+    加一个 scanned_scope 字段显式标出这次判定的作用域，不给读的人留猜的空间。
+    """
+    out = tmp_path / "t.json"
+    # 不给 --pages：作用域应该是全文
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPTS / "pdf_tables.py"), str(_table_pdf(tmp_path / "k.pdf")),
+         "-o", str(out)],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(out.read_text(encoding="utf-8"))["scanned_scope"] == "all_pages"
+
+    # 给了 --pages：作用域应该是选中页，不是整份文档
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPTS / "pdf_tables.py"), str(_table_pdf(tmp_path / "k.pdf")),
+         "--pages", "1", "-o", str(out)],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(out.read_text(encoding="utf-8"))["scanned_scope"] == "selected_pages"
+
+
 def test_page_filter_is_honoured(tmp_path):
     out = tmp_path / "t.json"
     proc = subprocess.run(

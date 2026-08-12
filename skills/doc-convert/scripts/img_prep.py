@@ -71,17 +71,48 @@ def _sips_convert(src: Path, dst: Path) -> bool:
     return dst.is_file()
 
 
-def prepare_one(src: Path, outdir: Path, max_edge: int = MAX_EDGE_DEFAULT) -> Path:
-    """规格化一张图，返回产物路径。失败抛 PrepError（消息是中文）。"""
+def prepare_one(src: Path, outdir: Path, max_edge: int = MAX_EDGE_DEFAULT,
+                 used_names: set[str] | None = None) -> Path:
+    """规格化一张图，返回产物路径。失败抛 PrepError（消息是中文）。
+
+    `used_names`：本次运行（跨多次 prepare_one 调用）已经产出过的文件名集合，
+    由调用方（main() 的批量循环）在多张图之间共享。不传时新建一个空集合，
+    行为等同「只处理这一张」——单测直接调 prepare_one 时不受影响。
+
+    为什么需要它（评审实测 Important 1）：`dst` 只看主干名（stem），
+    两个不同内容的 `IMG_0012.png` 与 `IMG_0012.jpg` 进同一个 outdir 会算出
+    同一个产物路径，后处理的静默覆盖前一张——exit 0，无任何提示，一张票据
+    凭空消失。SKILL.md 的 A3 恰好教模型分两批跑（先 *.jpg 再 *.HEIC）进同一个
+    处理后/，iPhone「共享 → 存储到文件 → 最兼容」导出的正是这种同名对，
+    这条护栏因此不是理论风险。撞名时换成 `stem-2.jpg`、`stem-3.jpg`……
+    保证 `items` 里的 output 与磁盘上真实存在的文件一一对应。
+    """
     src = Path(src)
     outdir = Path(outdir)
+    if used_names is None:
+        used_names = set()
     try:
         outdir.mkdir(parents=True, exist_ok=True)
     except Exception:
         raise PrepError(
             f"无法创建输出目录 {outdir}，请检查权限或磁盘空间。"
         )
-    dst = outdir / (src.stem + ".jpg")
+
+    name = src.stem + ".jpg"
+    n = 2
+    while name in used_names:
+        name = f"{src.stem}-{n}.jpg"
+        n += 1
+    used_names.add(name)
+    dst = outdir / name
+
+    # 评审实测 Important 2：输入是 .jpg 且 -d 就是它所在目录时 dst == src，
+    # 脚本会把用户手机里的原图就地覆盖成 1600px 缩略图——不可逆，丢的是
+    # 原始照片而不是产物。这条检查必须在真正读/写图片之前做。
+    if dst.resolve() == src.resolve():
+        raise PrepError(
+            f"{src.name} 的产物会覆盖它自己，请把 -d 指到另一个目录。"
+        )
 
     work = src
     tmp: Path | None = None
@@ -145,21 +176,57 @@ def main(argv: list[str] | None = None) -> int:
 
         outdir = Path(args.outdir)
         items, failed = [], []
+        used_names: set[str] = set()
         for raw in args.inputs:
             src = Path(raw)
             if not src.is_file():
-                failed.append({"source": src.name, "reason": "文件不存在"})
+                # 评审实测 Important 3：SKILL.md 自己教了一条一定会走到这里的路——
+                # zsh 通配符没匹配到时 bash 会把 `票据/*.HEIC` 字面量原样传进来，
+                # 脚本再把它当"文件不存在"记进 failed。旧文案「文件不存在」不含
+                # 文件名也不给下一步，全军覆没时终端上只剩这四个字，等于没说。
+                failed.append({
+                    "source": src.name,
+                    "reason": (
+                        f"找不到「{src}」。请确认路径；如果你用了通配符，"
+                        "可能是这批文件里没有这种扩展名。"
+                    ),
+                })
                 continue
             try:
-                out = prepare_one(src, outdir, args.max_edge)
+                out = prepare_one(src, outdir, args.max_edge, used_names)
             except PrepError as e:
                 failed.append({"source": src.name, "reason": str(e)})
                 continue
             items.append({"source": src.name, "output": str(out)})
 
         if not items:
-            reasons = "；".join(f["reason"] for f in failed) or "没有可处理的输入"
-            _die(f"这批图片一张也没能处理成功。{reasons}")
+            if not failed:
+                reasons_text = "没有可处理的输入"
+            else:
+                # Minor 2：60 张票据同一个原因（比如清一色 HEIC 无解码器）会
+                # 拼出几千字符的重复句甩给用户。但每条 reason 大多形如
+                # 「{文件名} 具体原因」，文件名不同会让本来相同的原因被当成
+                # 「不同」文本——去重前先把文件名从文案里抠掉，得到用来比较
+                # 的"模板"，模板相同的只保留第一条完整文案，其余只计数。
+                def _reason_key(entry: dict) -> str:
+                    name = entry.get("source", "")
+                    reason = entry.get("reason", "")
+                    return reason.replace(name, "", 1) if name else reason
+
+                seen_keys: list[str] = []
+                shown: list[str] = []
+                for f in failed:
+                    key = _reason_key(f)
+                    if key not in seen_keys:
+                        seen_keys.append(key)
+                        shown.append(f["reason"])
+                shown = shown[:3]
+                shown_keys = set(seen_keys[:3])
+                remaining = sum(1 for f in failed if _reason_key(f) not in shown_keys)
+                reasons_text = "；".join(shown)
+                if remaining:
+                    reasons_text += f"；另有 {remaining} 张同样原因，不逐条列出"
+            _die(f"这批图片一张也没能处理成功。{reasons_text}")
 
         print(json.dumps({"outdir": str(outdir), "items": items, "failed": failed},
                          ensure_ascii=False, indent=2))

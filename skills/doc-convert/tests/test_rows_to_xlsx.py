@@ -274,6 +274,23 @@ def test_string_starting_with_equals_is_written_as_text_not_formula(tmp_path):
     assert ws["A2"].data_type == "s"
 
 
+def test_sheet_name_colliding_with_review_sheet_is_refused(tmp_path):
+    """[Minor 5] `--sheet 待核对` 会撞上存疑核对表的保留名——评审实测 openpyxl
+    自动改名成 `['待核对', '待核对1']`，结果数据表反而叫「待核对」，评审表叫
+    「待核对1」，两张表意思对调，比没有提示更糊涂。必须在写盘前当场拒绝。"""
+    src = _write_json(tmp_path / "r.json", {
+        "headers": ["项目", "金额"],
+        "rows": [{"项目": "餐饮", "金额": 1,
+                  "_存疑": [{"字段": "金额", "原因": "糊"}], "_来源": "x.jpg"}],
+    })
+    out = tmp_path / "r.xlsx"
+    proc = _run(src, out, "--sheet", rows_to_xlsx.REVIEW_SHEET)
+    assert proc.returncode != 0
+    assert proc.stderr.startswith("[doc-convert] 错误：")
+    assert "保留" in proc.stderr, "错误信息要指导用户怎么自救"
+    assert not out.exists()
+
+
 def test_main_wraps_unexpected_exception_in_real_subprocess(tmp_path):
     """[Minor] test_main_wraps_unexpected_exception 的 "Traceback not in
     err" 断言是装饰性的（见上面那条测试新加的注释）：那条测试进程内直接调

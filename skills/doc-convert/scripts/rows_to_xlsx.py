@@ -157,6 +157,13 @@ def _validate_sheet_name(name: str) -> None:
     if len(name) > MAX_SHEET_NAME_LEN:
         _die(f"工作表名「{name}」长度 {len(name)} 超过 Excel 限制的 "
              f"{MAX_SHEET_NAME_LEN} 个字符，请换短一点的名字。")
+    # Minor 5：`--sheet 待核对` 会撞上 build() 里存疑项用的评审表名——openpyxl
+    # 见到重名会自动改成「待核对1」，撞名后是数据表叫「待核对」、评审表叫
+    # 「待核对1」，反而更让人糊涂。数据表名和评审表保留名冲突时当场拒绝，
+    # 比生成一份表名对调的文件更清楚。
+    if name == REVIEW_SHEET:
+        _die(f"工作表名不能是「{REVIEW_SHEET}」，这个名字是本脚本保留给存疑"
+             f"项核对表用的，撞名会导致两张表互相顶替。请换一个名字（比如「数据」）。")
 
 
 def build(headers: list[str], rows: list[dict], meta: dict, sheet_name: str) -> Workbook:

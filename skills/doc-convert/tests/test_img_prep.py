@@ -217,3 +217,100 @@ def test_convert_or_resize_failure_does_not_abort_batch(tmp_path, monkeypatch, c
 
     # 同批的好图照常产出
     assert (outdir / "good.jpg").is_file()
+
+
+# --- 补充：整分支最终评审（2026-08-11）挖出的三条 Important + 一条 Minor，
+# 都是跨文件接缝问题——单任务评审看不到，必须在合并前补测试钉死。
+
+
+def test_duplicate_stem_different_suffix_both_survive(tmp_path):
+    """Important 1 回归测试：`dst` 旧实现只看主干名（stem），两个不同内容的
+    IMG_0012.png 与 IMG_0012.jpg 进同一个 outdir 会算出同一个产物路径，
+    后处理的静默覆盖前一张——exit 0，无任何提示，一张票据凭空消失。
+    SKILL.md 的 A3 恰好教模型分两批跑（先 *.jpg 再 *.HEIC）进同一个
+    处理后/，iPhone「共享 → 存储到文件 → 最兼容」导出的正是这种同名对。
+    两张的产物必须都在磁盘上，且 items 里的 output 与实际文件一一对应。
+    """
+    png = _png(tmp_path / "IMG_0012.png", size=(300, 200))
+    jpg = tmp_path / "IMG_0012.jpg"
+    Image.new("RGB", (500, 400), (10, 200, 10)).save(jpg)
+    outdir = tmp_path / "out"
+
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPTS / "img_prep.py"), str(png), str(jpg),
+         "-d", str(outdir)],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    manifest = json.loads(proc.stdout)
+    assert len(manifest["items"]) == 2
+    assert manifest["failed"] == []
+
+    outputs = [Path(it["output"]) for it in manifest["items"]]
+    assert len(set(outputs)) == 2, "两张的产物路径必须不同，不能互相覆盖"
+    for p in outputs:
+        assert p.is_file(), f"{p} 应该真实存在于磁盘上，items 里的 output 必须与磁盘一一对应"
+
+    # 两张源图尺寸不同，产物尺寸各自不同——证明不是同一份文件被写了两次
+    sizes = {Image.open(p).size for p in outputs}
+    assert len(sizes) == 2
+
+
+def test_outdir_equal_to_source_dir_is_refused_and_original_untouched(tmp_path):
+    """Important 2 回归测试：输入是 .jpg 且 -d 就是它所在目录时 dst == src，
+    旧实现会把用户手机里的原图就地覆盖成缩略图——不可逆，丢的是原始照片。
+    必须在真正读/写图片之前拒绝，且原图字节和尺寸都不能被改动。
+    """
+    src = tmp_path / "orig.jpg"
+    Image.new("RGB", (4000, 3000), (80, 120, 200)).save(src, "JPEG", quality=95)
+    size_before = src.stat().st_size
+    dims_before = Image.open(src).size
+
+    with pytest.raises(img_prep.PrepError) as exc_info:
+        img_prep.prepare_one(src, tmp_path)  # outdir 就是 src 所在目录
+
+    assert "覆盖它自己" in str(exc_info.value)
+    assert "-d" in str(exc_info.value), "错误信息要指导用户怎么自救"
+    assert src.stat().st_size == size_before, "原图字节不能被改动"
+    assert Image.open(src).size == dims_before, "原图尺寸不能被改动（说明没被当成产物重写）"
+
+
+def test_missing_file_cli_message_names_file_and_hints_wildcard(tmp_path):
+    """Important 3 回归测试：旧文案「文件不存在」既不含文件名也不给下一步。
+    SKILL.md 自己教了一条一定会走到这里的路——zsh 下通配符没匹配到，
+    bash 会把 `票据/*.HEIC` 字面量原样传给脚本，脚本再把它当"文件不存在"。
+    全部输入都命中这条时，错误信息必须报出具体路径并提示通配符的可能性。
+    """
+    missing = tmp_path / "票据" / "*.HEIC"
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPTS / "img_prep.py"), str(missing),
+         "-d", str(tmp_path / "out")],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode != 0
+    assert proc.stderr.startswith("[doc-convert] 错误：")
+    assert "*.HEIC" in proc.stderr
+    assert "通配符" in proc.stderr, "错误信息要指导用户怎么自救"
+
+
+def test_all_failed_reasons_are_deduplicated_and_capped(tmp_path):
+    """Minor 2 回归测试：一批文件失败原因相同时（比如清一色不是图片），
+    旧实现把每条原因原样拼接，60 张票据能拼出约 5 KB 的重复文本甩给用户。
+    去重后同一句话只应出现一次，错误信息长度不能随失败文件数线性增长。
+    """
+    bad_files = []
+    for i in range(12):
+        p = tmp_path / f"bad{i}.jpg"
+        p.write_text("不是图片", encoding="utf-8")
+        bad_files.append(str(p))
+
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPTS / "img_prep.py"), *bad_files,
+         "-d", str(tmp_path / "out")],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode != 0
+    assert proc.stderr.count("打不开，可能不是图片文件或已损坏") == 1, (
+        "12 个文件同一个失败原因，不应该被重复拼接 12 次"
+    )
+    assert len(proc.stderr) < 500, f"错误信息应该被去重压缩，实际 {len(proc.stderr)} 字符"
