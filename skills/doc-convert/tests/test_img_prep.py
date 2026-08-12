@@ -319,7 +319,7 @@ def test_all_failed_reasons_are_deduplicated_and_capped(tmp_path):
     # 全同因时唯一的模板本来就在已展示集合里，算出来是 0，"另有 N 张同样
     # 原因"这句话根本不会打印——用户只看到 1 条文案、1 个文件名，对这批
     # 到底炸了多少张毫无概念。去重不能把"规模"这个信息也一起去掉。
-    assert "另有 11 张同样原因" in proc.stderr, (
+    assert "另有 11 张未逐条列出" in proc.stderr, (
         f"去重后完全看不到规模信息，用户不知道这批实际有 12 张失败，stderr: {proc.stderr}"
     )
 

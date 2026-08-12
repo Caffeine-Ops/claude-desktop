@@ -263,7 +263,7 @@ def main(argv: list[str] | None = None) -> int:
                 remaining = len(failed) - len(shown)
                 reasons_text = "；".join(shown)
                 if remaining:
-                    reasons_text += f"；另有 {remaining} 张同样原因，不逐条列出"
+                    reasons_text += f"；另有 {remaining} 张未逐条列出（可能含其他原因）"
             _die(f"这批图片一张也没能处理成功。{reasons_text}")
 
         print(json.dumps({"outdir": str(outdir), "items": items, "failed": failed},

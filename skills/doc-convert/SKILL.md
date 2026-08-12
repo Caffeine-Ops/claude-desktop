@@ -88,7 +88,10 @@ source ${SKILL_DIR}/bin/ensure-python.sh
 "$DOC_CONVERT_PY" ${SKILL_DIR}/scripts/img_prep.py 照片.HEIC -d 处理后/
 ```
 
-然后**你自己读**处理后目录里的 JPG，输出 **Markdown**。
+然后**你自己读** `img_prep.py` 输出 JSON 里 `items[].output` 给出的那个路径
+（同名撞车时脚本会自动换成 `stem-2.jpg`、`stem-3.jpg`……不一定就是
+`处理后/照片.jpg`，别按目录读图、别自己拼路径——部分失败重跑时目录里可能
+留有同一张图的多个版本，按目录读会把它认成两张不同的图），输出 **Markdown**。
 
 ⛔ **只还原图上肉眼可见的结构**（标题、列表、简单表格）。
 **不新增层级、不改写措辞、不补全句子。** 版面还原和内容创作只隔一层窗户纸，
