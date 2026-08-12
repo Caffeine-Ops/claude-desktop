@@ -1,0 +1,38 @@
+# doc-convert skill dependencies / 文档处理 skill 依赖
+# =====================================================
+#
+# 安装由 bin/ensure-python.sh（macOS/Linux，须 `source`）或 bin/ensure-python.cmd
+# （Windows）负责：基于 app 自带 Python 3.12 在 ~/.doc-convert-skill/venv 建虚拟
+# 环境后安装本清单。打包后的 runtime 只读，禁止直装。
+
+# PDF 页级操作：合并 / 拆分 / 删页 / 加水印（pdf_ops.py）
+# 钉住 pypdf<7 的理由：pypdf 7.0 会移除 PageObject.merge_page() 等旧接口，当前 watermark()
+# 依赖该接口。无上界的话新用户首次安装会拿到装不动的版本。等完整升级到新接口后再放开。
+pypdf>=4.0.0,<7
+
+# Word 读写：md_to_docx.py 生成、docx_to_pdf.py 兜底路径解析正文
+python-docx>=1.1
+
+# Excel 读写（excel_csv.py 双向转换）
+openpyxl>=3.1.0
+
+# docx→pdf 的纯文字兜底渲染。本仓已有先例（skills-src/ppt-creator）。
+# 只在本机没有 LibreOffice 且用户显式同意「纯文字版」时才会被用到。
+reportlab>=4.0.0
+
+# openpyxl 嵌图与图片校验的常规伴生依赖，与 spreadsheets 技能一致
+Pillow>=9.0.0
+
+# PDF 抽文字 / 抽表格（doc_text.py、pdf_tables.py）。
+# 附带白赚一件事：pdfplumber>=0.11 自带 pypdfium2，PDF 页面渲染成 PNG
+# （pdf_render.py）不需要再加任何依赖。2026-08-11 实测净增 32.9 MB，
+# 其中 cryptography 13M（pdfminer.six 的硬依赖）+ pdfminer 9.3M + pypdfium2 8.0M
+# （pypdfium2 + pypdfium2_raw + pypdfium2_cli 全家，见设计文档明细）+ 零散 2.6M。
+pdfplumber>=0.11
+
+# HEIC 解码，只在 Windows 装。iPhone 拍的照片默认是 HEIC，而模型读图只认
+# PNG/JPG——「拍张照 → 提字」是本技能的门面场景，卡在这里等于门面塌了。
+# macOS 用系统自带的 /usr/bin/sips 就能转（已实测存在），不让 mac 用户为
+# Windows 的坑多付这 12 MB。分号后面是 pip 的「环境标记」语法，
+# 不满足条件的平台会整行跳过，不是注释。
+pillow-heif>=0.16; sys_platform == "win32"

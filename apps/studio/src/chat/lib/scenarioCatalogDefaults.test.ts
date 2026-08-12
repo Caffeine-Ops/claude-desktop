@@ -37,6 +37,55 @@ describe('内置场景目录 · 审标书', () => {
   })
 })
 
+const DOC_CONVERT_VALUE = '/claude-desktop:doc-convert'
+
+describe('内置场景目录 · 文档处理', () => {
+  it('日常办公分类里有文档处理，且紧跟在处理表格之后', () => {
+    const daily = DEFAULT_SCENARIO_CATALOG.categories.find((c) => c.id === 'daily')
+    expect(daily).toBeDefined()
+    const values = daily!.items.map((i) => i.value)
+    const sheetsIdx = values.indexOf('/claude-desktop:spreadsheets')
+    const docIdx = values.indexOf(DOC_CONVERT_VALUE)
+    expect(sheetsIdx).toBeGreaterThanOrEqual(0)
+    // 两者同属「处理已有文件」，摆放顺序即产品叙事
+    expect(docIdx).toBe(sheetsIdx + 1)
+  })
+
+  it('八条话术：A 类 4 条（走模型）+ B 类 4 条（走脚本）', () => {
+    const item = allSkillItems().find((i) => i.value === DOC_CONVERT_VALUE)
+    expect(item?.prompts?.length).toBe(8)
+  })
+
+  it('A 类 4 条排在 B 类之前', () => {
+    // 列表前几条决定用户对这个技能的第一印象：先看到「AI 真正打得过传统
+    // 工具」的那几条，而不是到处都有的「PDF 转 Word」。顺序即产品叙事，
+    // 同上面「文档处理紧跟处理表格之后」那条断言的立场。
+    const item = allSkillItems().find((i) => i.value === DOC_CONVERT_VALUE)
+    const labels = (item?.prompts ?? []).map((p) => p.label)
+    expect(labels.slice(0, 4)).toEqual([
+      '图片提取文字',
+      'PDF 表格转 Excel',
+      '票据批量转台账',
+      '长文档提炼'
+    ])
+  })
+
+  it('每条话术的文件槽都能选到它真正需要的格式', () => {
+    // 槽关键词写错时 picker 会把正确格式置灰，用户以为功能坏了。
+    // 这条断言把「关键词 → 格式」的映射钉死在测试里。
+    expect(acceptForPlaceholder('Markdown 文件')).toContain('.md')
+    expect(acceptForPlaceholder('Word 文件')).toContain('.docx')
+    expect(acceptForPlaceholder('Excel 文件')).toContain('.csv')
+    expect(acceptForPlaceholder('PDF 文件')).toContain('.pdf')
+    // A 类新增的三个槽。「文稿文件」这条尤其要守：写成「文档文件」会被 word
+    // 规则抢先命中，只给 .doc/.docx，PDF 反而选不了——而 PDF 正是长文档提炼
+    // 的主力格式。
+    expect(acceptForPlaceholder('图片文件')).toBe('image/*')
+    expect(acceptForPlaceholder('票据图片')).toBe('image/*')
+    expect(acceptForPlaceholder('文稿文件')).toContain('.pdf')
+  })
+})
+
 describe('内置目录里每个技能条目都能查到 chip 外观', () => {
   // ScenarioRail 对 findSkillChipSpec 返回 null 的 chip 会整条静默跳过
   // （见 stores/scenarioCatalog.ts 的注释：「配了却看不见，最难查」）。
