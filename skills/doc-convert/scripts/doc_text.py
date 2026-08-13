@@ -197,9 +197,13 @@ def main(argv: list[str] | None = None) -> int:
         src = Path(args.input)
         units, kind = extract(src)
         if not units:
-            # 一个字都提不出来又不是扫描件判定能解释的，属于「给不了任何有用产物」
-            if kind != "pdf":
-                _die(f"「{src.name}」里提不出任何文字。请确认文件内容是否正确。")
+            # 一个字都提不出来又不是扫描件判定能解释的，属于「给不了任何有用产物」。
+            # PDF 侧：units 一项一页，空列表 = 0 页文件（扫描件每页仍占一项，不会
+            # 走到这里）。原来这个分支只拦非 PDF，0 页 PDF 会静默产出空取料文件
+            # + exit 0——与「只有空段落的 docx 被拒绝」不对称（挂账收口）。
+            if kind == "pdf":
+                _die(f"「{src.name}」是一份 0 页的 PDF，没有内容可提取。请确认文件是否正确。")
+            _die(f"「{src.name}」里提不出任何文字。请确认文件内容是否正确。")
 
         report = checkup(units, kind)
         outdir = Path(args.outdir)

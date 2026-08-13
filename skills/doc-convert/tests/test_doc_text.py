@@ -235,3 +235,23 @@ def test_atomic_write_failure_leaves_no_partial_file(tmp_path, monkeypatch):
         doc_text._write_text_atomic(dst, "{}")
     assert not dst.exists()
     assert list(tmp_path.iterdir()) == []
+
+
+def test_zero_page_pdf_is_refused(tmp_path):
+    """挂账收口：0 页的合法 PDF 原来会静默产出空取料文件 + exit 0，与「只有
+    空段落的 docx 走拒绝」不对称。两条路径的纪律要一致：给不了任何有用产物
+    就拒绝，不产出一份空文件让下游误以为「读完了、只是没内容」。"""
+    from pypdf import PdfWriter
+
+    src = tmp_path / "empty.pdf"
+    with src.open("wb") as f:
+        PdfWriter().write(f)
+    outdir = tmp_path / "取料"
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPTS / "doc_text.py"), str(src), "--outdir", str(outdir)],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode != 0
+    assert proc.stderr.startswith("[doc-convert] 错误：")
+    assert "0 页" in proc.stderr
+    assert not outdir.exists() or list(outdir.glob("*.text.txt")) == []
