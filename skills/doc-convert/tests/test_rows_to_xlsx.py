@@ -311,3 +311,21 @@ def test_main_wraps_unexpected_exception_in_real_subprocess(tmp_path):
     assert "[doc-convert] 错误：" in proc.stderr
     assert "Traceback" not in proc.stderr
     assert not out.exists()
+
+
+def test_non_object_meta_gets_chinese_guidance(tmp_path):
+    """挂账收口：meta 手滑写成字符串（如 "meta": "台账"）原来会在 build() 里
+    炸 AttributeError、落进通用兜底，报「中文前缀 + 英文异常类名」，用户不知道
+    该改哪。要在 load() 里当场用中文钉住，并告诉用户下一步怎么办。"""
+    src = _write_json(tmp_path / "m.json", {
+        "headers": ["项目"],
+        "rows": [{"项目": "住宿"}],
+        "meta": "台账标题",
+    })
+    out = tmp_path / "m.xlsx"
+    proc = _run(src, out)
+    assert proc.returncode != 0
+    assert proc.stderr.startswith("[doc-convert] 错误：")
+    assert "meta" in proc.stderr and "对象" in proc.stderr
+    assert "AttributeError" not in proc.stderr
+    assert not out.exists()

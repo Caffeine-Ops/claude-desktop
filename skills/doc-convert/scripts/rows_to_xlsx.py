@@ -92,7 +92,16 @@ def load(path: Path, headers_arg: list[str] | None) -> tuple[list[str], list[dic
              "直接当成了整个文件？请包一层：{\"headers\": [...], "
              "\"rows\": [...]}。")
     headers = headers_arg or payload.get("headers") or []
-    return list(headers), payload.get("rows") or [], payload.get("meta") or {}
+    meta = payload.get("meta") or {}
+    if not isinstance(meta, dict):
+        # 挂账收口：meta 写成字符串/数组是很自然的手滑，不拦的话要到 build()
+        # 末尾 meta.get("标题") 才炸 AttributeError——通用兜底接得住，但报出来
+        # 的是「中文前缀 + 英文异常类名」，用户不知道该改哪。同 payload 顶层
+        # 形状校验一个道理：能在读入时钉死的，不留给下游。
+        _die(f"「{path.name}」的 meta 必须是一个对象（比如 {{\"标题\": \"...\"}}），"
+             f"但读到的是 {type(meta).__name__}。不需要附加信息的话，"
+             "把 meta 字段整个删掉即可。")
+    return list(headers), payload.get("rows") or [], meta
 
 
 def _uncertain_fields(row: dict) -> set[str]:
