@@ -416,6 +416,7 @@ bug，是刻意设计：宁可让你知道哪里出了问题，也不悄悄生�
 | `--ranges` 里一个有效区间都没有（如 `","`） | `pdf_ops.py split` | 报错退出，不产出 0 页 PDF | 按 `"1-2,4-5"` 的写法重写区间（多余的逗号会被自动忽略，不用管） |
 | LibreOffice 报告成功却没生成 PDF | `docx_to_pdf.py`（LibreOffice 路径） | 报错退出 | 转达原文：多半是这份文件扩展名叫 .docx、内容其实不是 Word 文档，或本机开着 LibreOffice/Word。让用户确认文件能正常打开、关掉 LibreOffice 再试 |
 | `.md` 的文字编码既不是 UTF-8 也不是 GBK | `md_to_docx.py` | 报错退出 | 让用户用记事本或 VS Code 另存为 UTF-8 再试 |
+| Markdown 表格某行列数多于表头 | `md_to_docx.py` | 报错并指出第几行、多了几列 | 把那一行改成与表头一致的列数再转，别删内容硬凑 |
 | Excel 里的公式没有保存计算结果 | `excel_csv.py`（xlsx→csv 方向） | 报错退出，不产出缺了汇总列的 CSV | 按上面「Excel ↔ CSV」那段的原话问用户：①另存一次让公式算出结果，还是②照转但那几格空着（②才加 `--allow-empty-formulas`） |
 | CSV 文件一行数据都没有 | `excel_csv.py`（csv→xlsx 方向） | 拒绝生成空 xlsx | 告诉用户这份 CSV 是空的，确认是不是选错了文件 |
 | Excel 源文件有多张工作表但没指定 `--sheet` | `excel_csv.py`（xlsx→csv 方向） | 报错并列出所有工作表名 | 问用户要哪一张，或按需求循环导出多次。**不要随便挑第一张** |
