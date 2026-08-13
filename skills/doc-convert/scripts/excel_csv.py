@@ -17,10 +17,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+import re
 import sys
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.utils import get_column_letter
 
 _XLSX_SUFFIXES = {".xlsx", ".xlsm"}
 _CSV_SUFFIXES = {".csv"}
@@ -30,6 +32,36 @@ def _die(msg: str) -> None:
     """统一的中文报错出口，措辞与 doc_text.py / pdf_tables.py 等脚本对齐。"""
     print(f"[doc-convert] 错误：{msg}", file=sys.stderr)
     raise SystemExit(2)
+
+
+# csv→xlsx 数字推断的三条护栏（顺序即优先级）。设计取舍见 SKILL.md B3：
+# 编号（发票号/手机号/身份证号）长得像数字但不是数值——转成 number 会被
+# Excel 的 15 位精度静默截断成科学计数法，正是本技能要拦的「看起来正常
+# 实则数字有缺陷」。宁可把十亿级无小数点的大金额保守留成文本（用户在
+# Excel 里一步能改回数值），也不冒截断编号的险。
+_THOUSANDS_RE = re.compile(r"^[+-]?\d{1,3}(,\d{3})+(\.\d+)?$")
+_PLAIN_NUM_RE = re.compile(r"^[+-]?\d+(\.\d+)?$")
+_MAX_INT_DIGITS = 9  # 纯整数位数 ≥10（手机号 11 位起）一律保文本
+
+
+def _coerce_cell(text: str) -> tuple[int | float | str, str]:
+    """CSV 单元格 → (写入值, 标签)。标签："num" 转成数值 / "guarded" 长得像
+    数字但被护栏留成文本 / "text" 普通文本。"""
+    s = text.strip()
+    if not s:
+        return text, "text"
+    if _THOUSANDS_RE.match(s):
+        s = s.replace(",", "")  # 千分位只是显示形式，剥掉不算改值（同 A2 规则）
+    elif not _PLAIN_NUM_RE.match(s):
+        return text, "text"
+    int_part = s.lstrip("+-").split(".", 1)[0]
+    if len(int_part) > 1 and int_part.startswith("0"):
+        return text, "guarded"  # 前导零：区号/编号特征（"0"、"0.5" 不算）
+    if "." not in s:
+        if len(int_part) > _MAX_INT_DIGITS:
+            return text, "guarded"
+        return int(s), "num"
+    return float(s), "num"
 
 
 def _uncached_formula_cells(src: Path, sheet_name: str) -> list[str]:
@@ -146,10 +178,31 @@ def csv_to_xlsx(src: Path, dst: Path) -> None:
 
     wb = Workbook()
     ws = wb.active
+    num_cols: dict[int, int] = {}      # 列号 → 转成数值的格数
+    guarded_cols: dict[int, int] = {}  # 列号 → 被护栏保成文本的格数
     for row in rows:
-        ws.append(row)
+        out_row = []
+        for col, cell in enumerate(row, start=1):
+            value, tag = _coerce_cell(cell)
+            if tag == "num":
+                num_cols[col] = num_cols.get(col, 0) + 1
+            elif tag == "guarded":
+                guarded_cols[col] = guarded_cols.get(col, 0) + 1
+            out_row.append(value)
+        ws.append(out_row)
     dst.parent.mkdir(parents=True, exist_ok=True)
     wb.save(str(dst))
+
+    if num_cols:
+        cols = "、".join(get_column_letter(c) for c in sorted(num_cols))
+        print(f"[doc-convert] 已把 {sum(num_cols.values())} 个数字单元格"
+              f"写成真数值（第 {cols} 列），可以直接用 =SUM() 等公式计算。")
+    if guarded_cols:
+        cols = "、".join(get_column_letter(c) for c in sorted(guarded_cols))
+        print(f"[doc-convert] 另有 {sum(guarded_cols.values())} 个疑似编号的"
+              f"单元格（第 {cols} 列，前导零或位数过长）保留为文本，避免被 "
+              "Excel 按 15 位精度截断。确实需要按数值计算的话，"
+              "在 Excel 里选中该列改成数值格式即可。")
 
 
 def main(argv: list[str] | None = None) -> int:
