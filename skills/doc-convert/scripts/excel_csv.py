@@ -39,8 +39,11 @@ def _die(msg: str) -> None:
 # Excel 的 15 位精度静默截断成科学计数法，正是本技能要拦的「看起来正常
 # 实则数字有缺陷」。宁可把十亿级无小数点的大金额保守留成文本（用户在
 # Excel 里一步能改回数值），也不冒截断编号的险。
-_THOUSANDS_RE = re.compile(r"^[+-]?\d{1,3}(,\d{3})+(\.\d+)?$")
-_PLAIN_NUM_RE = re.compile(r"^[+-]?\d+(\.\d+)?$")
+# re.ASCII：不加的话 \d 是 Unicode 感知的，会把全角数字（１２００）也当数字
+# 匹配上，int()/float() 再把它转成 ASCII 数值——字形被悄悄改写。全角数字
+# 不该被当成本技能要推断的"数值"，一律保留成文本原样。
+_THOUSANDS_RE = re.compile(r"^[+-]?\d{1,3}(,\d{3})+(\.\d+)?$", re.ASCII)
+_PLAIN_NUM_RE = re.compile(r"^[+-]?\d+(\.\d+)?$", re.ASCII)
 _MAX_INT_DIGITS = 9  # 纯整数位数 ≥10（手机号 11 位起）一律保文本
 
 

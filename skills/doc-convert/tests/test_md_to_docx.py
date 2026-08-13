@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import md_to_docx  # noqa: E402
@@ -129,9 +130,6 @@ def test_main_wraps_unexpected_error_in_chinese(tmp_path, monkeypatch, capsys):
     assert "Traceback" not in err
 
 
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-
-
 def test_pipe_table_becomes_word_table(tmp_path):
     """表格是 A 类主力场景（发票/报表）最常见的结构，此前会塌成竖线文本。"""
     src = tmp_path / "t.md"
@@ -150,6 +148,24 @@ def test_pipe_table_becomes_word_table(tmp_path):
     assert t.rows[0].cells[0].paragraphs[0].runs[0].bold is True
     assert t.rows[1].cells[1].paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.RIGHT
     # 竖线文本不应再出现在正文段落里
+    assert all("|" not in p.text for p in doc.paragraphs)
+
+
+def test_compact_gfm_separator_row_is_recognized(tmp_path):
+    """I-1：GFM 合法的紧凑分隔行（每格只需 ≥1 个连字符，如 `|:-:|-:|`）此前
+    会被 `-{3,}` 挡在门外，静默塌回竖线文本。改成 `-+` 后要认得出来，且
+    对齐语法（居中 / 右对齐）照常生效。"""
+    src = tmp_path / "z.md"
+    src.write_text("| 甲 | 乙 |\n|:-:|-:|\n| 1 | 2 |\n", encoding="utf-8")
+    dst = tmp_path / "z.docx"
+    md_to_docx.convert(src, dst)
+    doc = Document(str(dst))
+    assert len(doc.tables) == 1
+    t = doc.tables[0]
+    assert t.rows[1].cells[0].text == "1"
+    assert t.rows[1].cells[1].text == "2"
+    assert t.rows[1].cells[0].paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert t.rows[1].cells[1].paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.RIGHT
     assert all("|" not in p.text for p in doc.paragraphs)
 
 

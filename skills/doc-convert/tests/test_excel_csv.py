@@ -243,3 +243,6 @@ def test_coerce_cell_edge_cases():
     assert excel_csv._coerce_cell("abc")[1] == "text"
     assert excel_csv._coerce_cell("")[1] == "text"
     assert excel_csv._coerce_cell(" 42 ") == (42, "num")  # 首尾空白剥掉再判
+    # M-2：全角数字不是本技能要推断的"数值"——\d 默认 Unicode 感知会连
+    # 全角一起吃掉，转成 ASCII 数值会悄悄改写字形，必须保文本
+    assert excel_csv._coerce_cell("１２３")[1] == "text"
