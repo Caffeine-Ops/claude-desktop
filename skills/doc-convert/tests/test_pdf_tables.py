@@ -315,3 +315,27 @@ def test_scanned_hint_without_pages_still_speaks_for_whole_file(tmp_path, capsys
     assert pdf_tables.main([str(src), "-o", str(out)]) == 0
 
     assert "这份 PDF 没有文字层" in capsys.readouterr().out
+
+
+def test_atomic_write_success_leaves_no_temp_file(tmp_path):
+    """挂账收口：结果文件必须原子落盘——成功后目录里只有目标文件，无 .part 残留。"""
+    dst = tmp_path / "r.json"
+    pdf_tables._write_text_atomic(dst, '{"ok": 1}')
+    assert dst.read_text(encoding="utf-8") == '{"ok": 1}'
+    assert [p.name for p in tmp_path.iterdir()] == ["r.json"]
+
+
+def test_atomic_write_failure_leaves_no_partial_file(tmp_path, monkeypatch):
+    """挂账收口：替换（os.replace）失败时不能留下半截临时文件，目标文件也不能
+    出现——半截 JSON 比没有更糟，下游会拿着残缺数据继续走。"""
+    import os as os_mod
+
+    def _boom(src, dst):
+        raise OSError("simulated failure")
+
+    monkeypatch.setattr(pdf_tables.os, "replace", _boom)
+    dst = tmp_path / "r.json"
+    with pytest.raises(OSError):
+        pdf_tables._write_text_atomic(dst, "{}")
+    assert not dst.exists()
+    assert list(tmp_path.iterdir()) == []
