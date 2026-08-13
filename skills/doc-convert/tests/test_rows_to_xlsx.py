@@ -330,3 +330,18 @@ def test_non_object_meta_gets_chinese_guidance(tmp_path):
     assert "meta" in proc.stderr and "对象" in proc.stderr
     assert "AttributeError" not in proc.stderr
     assert not out.exists()
+
+
+def test_sheet_name_over_31_chars_is_refused(tmp_path):
+    """挂账收口（测试欠账）：超长表名分支此前与非法字符共用一道防线、没有专属
+    断言。Excel 表名硬上限 31 字符，超了 openpyxl 会报英文异常或静默截断。"""
+    src = _write_json(tmp_path / "s.json", {
+        "headers": ["项目"],
+        "rows": [{"项目": "住宿"}],
+    })
+    out = tmp_path / "s.xlsx"
+    proc = _run(src, out, "--sheet", "长" * 32)
+    assert proc.returncode != 0
+    assert proc.stderr.startswith("[doc-convert] 错误：")
+    assert "超过 Excel 限制" in proc.stderr
+    assert not out.exists()

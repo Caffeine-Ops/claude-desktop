@@ -189,3 +189,22 @@ def test_render_removes_failed_pages_own_partial_file(tmp_path, monkeypatch, cap
     # 只报 len(written)=0——但实际清理了 1 个文件（失败页自己的半成品）。
     err = capsys.readouterr().err
     assert "已清理本次产生的 1 个部分文件" in err
+
+
+def test_render_reports_zero_cleaned_when_nothing_was_written(tmp_path, monkeypatch, capsys):
+    """挂账收口（测试欠账）：失败发生在 save() 落任何字节之前时，written 为空、
+    失败页自己也没留半成品，计数必须如实报 0——这是 `len(written) + leftover`
+    公式的另一条分支，此前只有「1 个」的断言守着。"""
+    from PIL import Image
+
+    src = _pdf(tmp_path / "m.pdf", pages=1)
+    outdir = tmp_path / "png"
+
+    def _fail_before_write(self, fp, *a, **kw):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(Image.Image, "save", _fail_before_write)
+    with pytest.raises(SystemExit):
+        pdf_render.render(src, [1], outdir, pdf_render.SCALE_DEFAULT)
+    err = capsys.readouterr().err
+    assert "已清理本次产生的 0 个部分文件" in err
