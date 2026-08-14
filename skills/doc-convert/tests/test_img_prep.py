@@ -86,11 +86,17 @@ def test_cli_partial_failure_still_succeeds(tmp_path):
     assert manifest["failed"][0]["source"] == "bad.jpg"
 
 
-def test_heic_error_message_contains_original_text(tmp_path):
-    """Critical 1 回归测试：HEIC 错误消息要保留原文中文标点和「最兼容」。"""
-    # 模拟 HEIC 文件
+def test_heic_error_message_contains_original_text(tmp_path, monkeypatch):
+    """Critical 1 回归测试：HEIC 错误消息要保留原文中文标点和「最兼容」。
+
+    两道解码门都 monkeypatch 掉，钉死「无解码器」前提：pillow-heif 按
+    requirements.txt 的环境标记只在 Windows 装，真跑在 Windows 上时
+    _heif_ready() 为 True、假 HEIC 会走「打不开」分支——那是正确的产品
+    行为，但不是本测试要测的路径（2026-08-14 Windows CI 首跑实锤）。"""
     heic_file = tmp_path / "photo.heic"
     heic_file.write_bytes(b"not a real heic")
+    monkeypatch.setattr(img_prep, "_heif_ready", lambda: False)
+    monkeypatch.setattr(img_prep, "_sips_convert", lambda src, dst: False)
 
     # prepare_one 会报错，错误消息应含「最兼容」
     with pytest.raises(img_prep.PrepError) as exc_info:
