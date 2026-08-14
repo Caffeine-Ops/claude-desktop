@@ -59,15 +59,25 @@ def _die(msg: str) -> None:
     raise SystemExit(2)
 
 
+# which 落空后的默认安装路径候选表。macOS 装了 LibreOffice.app 但没把 soffice
+# 加进 PATH 是常态；Windows 的安装器则**从不**写 PATH——只查 which 的话，
+# Windows 用户装了 LibreOffice 也会被当成没装，永远走不到保排版路径、
+# 只能被引导去纯文字兜底（2026-08-14 Windows CI 验证的后续发现）。
+_SOFFICE_DEFAULTS = [
+    "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+    r"C:\Program Files\LibreOffice\program\soffice.exe",
+    r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+]
+
+
 def find_soffice() -> str | None:
     """找 LibreOffice 的无头可执行文件；没有返回 None。"""
     found = shutil.which("soffice") or shutil.which("libreoffice")
     if found:
         return found
-    # macOS 装了 LibreOffice.app 但没把 soffice 加进 PATH 是常态
-    mac_default = "/Applications/LibreOffice.app/Contents/MacOS/soffice"
-    if Path(mac_default).is_file():
-        return mac_default
+    for cand in _SOFFICE_DEFAULTS:
+        if Path(cand).is_file():
+            return cand
     return None
 
 

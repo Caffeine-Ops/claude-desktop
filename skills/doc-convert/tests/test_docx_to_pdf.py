@@ -200,3 +200,30 @@ def test_empty_paragraph_document_refuses_textonly(tmp_path, monkeypatch, capsys
     # 拒绝时不产出文件
     assert not dst.exists()
     assert "没有可提取的文字" in capsys.readouterr().err
+
+
+def test_find_soffice_falls_back_to_default_install_paths(tmp_path, monkeypatch):
+    """Windows CI 验证的后续发现（2026-08-14）：LibreOffice 的 Windows 安装器
+    默认不写 PATH，which 永远找不到——原实现只点名了 macOS 默认路径，
+    Windows 用户装了 LibreOffice 也会被当成没装、永远走不到保排版路径。
+    改成扫 _SOFFICE_DEFAULTS 候选表（mac + Windows 两个 Program Files），
+    本测试用假候选表钉住「which 落空 → 扫默认路径」这条链路本身。"""
+    fake = tmp_path / "soffice.exe"
+    fake.write_bytes(b"")
+    monkeypatch.setattr(docx_to_pdf.shutil, "which", lambda name: None)
+    monkeypatch.setattr(docx_to_pdf, "_SOFFICE_DEFAULTS", [str(tmp_path / "不存在"), str(fake)])
+    assert docx_to_pdf.find_soffice() == str(fake)
+
+
+def test_find_soffice_returns_none_when_nothing_found(tmp_path, monkeypatch):
+    monkeypatch.setattr(docx_to_pdf.shutil, "which", lambda name: None)
+    monkeypatch.setattr(docx_to_pdf, "_SOFFICE_DEFAULTS", [str(tmp_path / "不存在")])
+    assert docx_to_pdf.find_soffice() is None
+
+
+def test_soffice_default_candidates_cover_windows_and_mac():
+    """反遗漏断言：候选表必须同时点名 macOS 与 Windows 的默认安装路径——
+    这正是本次要修的缺口，谁把 Windows 条目删了这条会当场红。"""
+    joined = "\n".join(docx_to_pdf._SOFFICE_DEFAULTS)
+    assert "/Applications/LibreOffice.app" in joined
+    assert "Program Files\\LibreOffice" in joined or "Program Files/LibreOffice" in joined
