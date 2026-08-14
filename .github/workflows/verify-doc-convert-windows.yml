@@ -1,0 +1,103 @@
+# doc-convert 技能的 Windows 真机验证。
+#
+# 为什么存在：ensure-python.cmd 自 PR #30/#31 起只做过静态推理，从未在真实
+# Windows 上跑过——它挂了 = 该技能在 Windows 整个不可用，而 Windows 安装包
+# 已经带着这个未知发布过（评审挂账原文：「发版前应在 Windows 真机或 CI runner
+# 补一次实测」）。同理中文字体候选路径（msyh.ttc / simsun.ttc）也从未在真实
+# Windows 上核对过——失败模式虽然安全（找不到就拒绝输出），但路径全对不上的话
+# Word→PDF 纯文字兜底和中文水印在 Windows 会永远被拒绝，功能等于残废。
+#
+# 刻意只做 workflow_dispatch 手动触发：这不是每次提交都要跑的回归门
+# （改动技能时本地 pytest 是第一道防线），是「换 CLI / 改 bin 脚本 / 发新
+# Windows 版本前」按需点一下的验证。跑一次约几分钟，公开仓库免费。
+#
+# 注意与 build.yml 的关系：build.yml 只在 v* tag 触发、只打壳，永远不会执行
+# 这里的任何步骤；两个 workflow 互不干扰。
+name: Verify doc-convert on Windows
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # 钉 3.12 并通过 DOC_CONVERT_PYTHON_HOME 喂给引导脚本——这是生产环境
+      # 的主路径（打包后的 app 把自带 python-runtime 的路径塞进这个 env），
+      # 比让脚本回退到 runner 系统 Python 更接近真实用户。
+      - uses: actions/setup-python@v5
+        id: py
+        with:
+          python-version: '3.12'
+
+      # 引导脚本本体：建 venv + 装依赖 + 末行打印 DOC_CONVERT_PY=<path>。
+      # 输出同时落文件，供下一步解析路径。shell 用 cmd 而不是 powershell：
+      # 生产里调它的就是 cmd 语义（SKILL.md 教 agent 直接跑 .cmd），验证要
+      # 跑在同一条路径上。
+      - name: Run ensure-python.cmd
+        shell: cmd
+        env:
+          DOC_CONVERT_PYTHON_HOME: ${{ env.pythonLocation }}
+        run: |
+          call skills\doc-convert\bin\ensure-python.cmd > ensure-out.txt 2>&1
+          set "RC=%errorlevel%"
+          type ensure-out.txt
+          exit /b %RC%
+
+      # 从输出里解析 DOC_CONVERT_PY（约定：最后一行 DOC_CONVERT_PY=<path>），
+      # 与 SKILL.md 教 agent 的读法一致——解析不出来本身就是一种失败。
+      - name: Parse DOC_CONVERT_PY
+        shell: pwsh
+        run: |
+          $line = Select-String -Path ensure-out.txt -Pattern '^DOC_CONVERT_PY=' | Select-Object -Last 1
+          if (-not $line) { Write-Error 'ensure-python.cmd 没有输出 DOC_CONVERT_PY= 行'; exit 1 }
+          $py = $line.Line.Substring('DOC_CONVERT_PY='.Length)
+          if (-not (Test-Path $py)) { Write-Error "DOC_CONVERT_PY 指向的解释器不存在：$py"; exit 1 }
+          "DOC_CONVERT_PY=$py" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "DOC_CONVERT_PY=$py"
+
+      # SKILL.md 开头教 agent 的依赖自检命令，原样照跑
+      - name: Import check (SKILL.md 自检命令)
+        shell: pwsh
+        run: |
+          & $env:DOC_CONVERT_PY -c "import pypdf, docx, openpyxl, reportlab, pdfplumber, pypdfium2, PIL; print('ok')"
+
+      # 哨兵幂等：第二次调用应秒过（命中 .deps-ok 快路径）且仍打印 DOC_CONVERT_PY
+      - name: Re-run ensure-python.cmd (sentinel fast path)
+        shell: cmd
+        env:
+          DOC_CONVERT_PYTHON_HOME: ${{ env.pythonLocation }}
+        run: |
+          call skills\doc-convert\bin\ensure-python.cmd > ensure-out2.txt 2>&1
+          set "RC=%errorlevel%"
+          type ensure-out2.txt
+          findstr /b "DOC_CONVERT_PY=" ensure-out2.txt >nul || exit /b 1
+          exit /b %RC%
+
+      # 中文字体候选路径核对：挂账另一半。windows-latest（Windows Server）
+      # 自带微软雅黑/宋体，与消费级 Windows 的字体环境基本一致；这里失败
+      # 说明候选清单在真实 Windows 上对不上，得去修 _CJK_FONT_CANDIDATES。
+      - name: CJK font candidates check
+        shell: pwsh
+        run: |
+          & $env:DOC_CONVERT_PY -c @"
+          import sys
+          sys.path.insert(0, r'skills/doc-convert/scripts')
+          from docx_to_pdf import find_cjk_font
+          p = find_cjk_font()
+          if p is None:
+              print('未命中任何中文字体候选路径——Windows 上 Word→PDF 兜底与中文水印将永远被拒绝', file=sys.stderr)
+              sys.exit(1)
+          print(f'命中字体：{p}')
+          "@
+
+      # 全套 pytest：脚本行为在 Windows 上（路径分隔符/编码/文件锁语义）
+      # 是否与 macOS 一致。pytest 是 dev 依赖，单独装，不进用户 venv 清单。
+      - name: Run full test suite
+        shell: pwsh
+        run: |
+          & $env:DOC_CONVERT_PY -m pip install -r skills/doc-convert/requirements-dev.txt --quiet
+          & $env:DOC_CONVERT_PY -m pytest skills/doc-convert/tests -q
