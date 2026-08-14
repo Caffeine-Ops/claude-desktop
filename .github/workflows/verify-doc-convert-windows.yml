@@ -22,6 +22,12 @@ jobs:
   verify:
     runs-on: windows-latest
     timeout-minutes: 30
+    env:
+      # CI 的 Windows 控制台默认 cp1252，Python 打印中文直接 UnicodeEncodeError
+      # （第二轮实测：字体检查明明命中了，却死在打印「命中字体：…」上）。
+      # 真实中文 Windows 是 cp936 能编码中文，此处纯属 runner 环境差异——
+      # PYTHONUTF8=1 让本 job 里所有 Python（含 pytest 的子进程）统一 UTF-8。
+      PYTHONUTF8: '1'
     steps:
       - uses: actions/checkout@v4
 
