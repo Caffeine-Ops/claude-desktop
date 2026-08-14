@@ -238,7 +238,13 @@ def test_coerce_cell_edge_cases():
     assert excel_csv._coerce_cell("0") == (0, "num")
     assert excel_csv._coerce_cell("0.5") == (0.5, "num")
     assert excel_csv._coerce_cell("007")[1] == "guarded"
-    assert excel_csv._coerce_cell("12345678901.5") == (12345678901.5, "num")  # 带小数不受位数限制
+    assert excel_csv._coerce_cell("12345678901.5") == (12345678901.5, "num")  # 12 位有效数字，够精度
+    # 终审留任项收口（2026-08-14）：带小数的数字总位数超 15 位同样会被
+    # float/Excel 的精度静默截断（12345678901234567890.5 会变 1.234...e+19），
+    # 与纯整数护栏是同一个坑的另一条进口，一并 guarded
+    assert excel_csv._coerce_cell("12345678901234567890.5")[1] == "guarded"
+    assert excel_csv._coerce_cell("123456789012345.5")[1] == "guarded"        # 16 位，超
+    assert excel_csv._coerce_cell("1234567890123.45") == (1234567890123.45, "num")  # 恰 15 位，转
     assert excel_csv._coerce_cell("1,23")[1] == "text"   # 假千分位
     assert excel_csv._coerce_cell("abc")[1] == "text"
     assert excel_csv._coerce_cell("")[1] == "text"
