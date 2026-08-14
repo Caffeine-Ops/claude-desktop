@@ -224,8 +224,6 @@ def test_atomic_write_success_leaves_no_temp_file(tmp_path):
 def test_atomic_write_failure_leaves_no_partial_file(tmp_path, monkeypatch):
     """挂账收口：替换（os.replace）失败时不能留下半截临时文件，目标文件也不能
     出现——半截 JSON 比没有更糟，下游会拿着残缺数据继续走。"""
-    import os as os_mod
-
     def _boom(src, dst):
         raise OSError("simulated failure")
 

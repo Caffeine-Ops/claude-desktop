@@ -45,6 +45,7 @@ def _die(msg: str) -> None:
 _THOUSANDS_RE = re.compile(r"^[+-]?\d{1,3}(,\d{3})+(\.\d+)?$", re.ASCII)
 _PLAIN_NUM_RE = re.compile(r"^[+-]?\d+(\.\d+)?$", re.ASCII)
 _MAX_INT_DIGITS = 9  # 纯整数位数 ≥10（手机号 11 位起）一律保文本
+_MAX_FLOAT_SIG_DIGITS = 15  # float/Excel 都只有 15 位有效精度，超了会静默截断
 
 
 def _coerce_cell(text: str) -> tuple[int | float | str, str]:
@@ -64,6 +65,13 @@ def _coerce_cell(text: str) -> tuple[int | float | str, str]:
         if len(int_part) > _MAX_INT_DIGITS:
             return text, "guarded"
         return int(s), "num"
+    # 带小数的数字总位数超 15 位同样会被 float/Excel 的精度静默截断
+    # （12345678901234567890.5 会变 1.234...e+19）——与纯整数护栏是同一个坑
+    # 的另一条进口（终审留任项，2026-08-14 收口）。按「整数位 + 小数位」粗算
+    # 位数，宁可把 0.000…01234 这类前导零多的极端值多保成文本，也不冒截断的险。
+    frac_part = s.split(".", 1)[1]
+    if len(int_part) + len(frac_part) > _MAX_FLOAT_SIG_DIGITS:
+        return text, "guarded"
     return float(s), "num"
 
 

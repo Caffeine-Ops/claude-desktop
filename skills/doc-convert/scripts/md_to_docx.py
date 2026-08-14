@@ -185,6 +185,12 @@ def convert(src: Path, dst: Path) -> None:
                 and _is_table_sep(lines[i + 1])):
             j = i + 2
             while j < len(lines) and lines[j].strip().startswith("|"):
+                # 前瞻一行：下一行是分隔行 ⇒ 当前行其实是下一张表的表头。
+                # 两张表之间没有空行时必须在这里断开，否则第二张表连同它的
+                # 分隔行会被当成第一张表的数据行吃进去，产出一张混着 ---
+                # 的怪表（终审留任项，2026-08-14 收口）。
+                if j + 1 < len(lines) and _is_table_sep(lines[j + 1]):
+                    break
                 j += 1
             # 行号从 1 起：数据行从文件的第 i+3 行开始（表头 i+1、分隔行 i+2）
             _add_md_table(doc, line, lines[i + 1],

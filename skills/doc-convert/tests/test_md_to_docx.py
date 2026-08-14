@@ -169,6 +169,26 @@ def test_compact_gfm_separator_row_is_recognized(tmp_path):
     assert all("|" not in p.text for p in doc.paragraphs)
 
 
+def test_adjacent_tables_without_blank_line_stay_separate(tmp_path):
+    """终审留任项收口（2026-08-14）：两张表之间没有空行时，第二张表的表头
+    会被当成第一张表的数据行吃进去，产出一张混着 `---` 分隔行的怪表。
+    靠「下一行是分隔行 ⇒ 当前行是新表表头」的前瞻断开。"""
+    src = tmp_path / "adj.md"
+    src.write_text(
+        "| 甲 |\n|---|\n| 1 |\n| 乙 | 丙 |\n|---|---|\n| 2 | 3 |\n",
+        encoding="utf-8",
+    )
+    dst = tmp_path / "adj.docx"
+    md_to_docx.convert(src, dst)
+    doc = Document(str(dst))
+    assert len(doc.tables) == 2
+    assert len(doc.tables[0].rows) == 2 and len(doc.tables[0].columns) == 1
+    assert len(doc.tables[1].rows) == 2 and len(doc.tables[1].columns) == 2
+    assert doc.tables[1].rows[0].cells[0].text == "乙"
+    # 分隔行不许作为文本混进任何表格或正文
+    assert all("---" not in c.text for t in doc.tables for r in t.rows for c in r.cells)
+
+
 def test_table_cell_inline_formatting_works(tmp_path):
     src = tmp_path / "u.md"
     src.write_text("| 项 |\n|---|\n| **重点** |\n", encoding="utf-8")
