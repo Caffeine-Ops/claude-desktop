@@ -13,6 +13,7 @@
 """
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -27,6 +28,22 @@ except Exception:
 def _die(msg: str) -> None:
     print(f"[doc-convert] 错误：{msg}", file=sys.stderr)
     raise SystemExit(2)
+
+
+def _write_text_atomic(dst: Path, body: str) -> None:
+    """先写同目录临时文件、成功后原子改名，失败清掉临时文件再抛。
+
+    挂账收口（PR #31 Task 5 deferred）：原来的 dst.write_text 直接往目标路径写，
+    中途失败（磁盘满/进程被杀）会留下半截文件——下游拿着残缺 JSON 继续走，
+    比报错更糟。临时文件必须与目标同目录：os.replace 跨文件系统不保证原子。
+    """
+    tmp = dst.with_name(dst.name + ".part")
+    try:
+        tmp.write_text(body, encoding="utf-8")
+        os.replace(tmp, dst)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _extract_pdf(path: Path) -> list[str]:
@@ -180,9 +197,13 @@ def main(argv: list[str] | None = None) -> int:
         src = Path(args.input)
         units, kind = extract(src)
         if not units:
-            # 一个字都提不出来又不是扫描件判定能解释的，属于「给不了任何有用产物」
-            if kind != "pdf":
-                _die(f"「{src.name}」里提不出任何文字。请确认文件内容是否正确。")
+            # 一个字都提不出来又不是扫描件判定能解释的，属于「给不了任何有用产物」。
+            # PDF 侧：units 一项一页，空列表 = 0 页文件（扫描件每页仍占一项，不会
+            # 走到这里）。原来这个分支只拦非 PDF，0 页 PDF 会静默产出空取料文件
+            # + exit 0——与「只有空段落的 docx 被拒绝」不对称（挂账收口）。
+            if kind == "pdf":
+                _die(f"「{src.name}」是一份 0 页的 PDF，没有内容可提取。请确认文件是否正确。")
+            _die(f"「{src.name}」里提不出任何文字。请确认文件内容是否正确。")
 
         report = checkup(units, kind)
         outdir = Path(args.outdir)
@@ -196,7 +217,7 @@ def main(argv: list[str] | None = None) -> int:
         body = render_anchored(units, kind)
         text_file = _resolve_text_path(outdir, src, body)
         try:
-            text_file.write_text(body, encoding="utf-8")
+            _write_text_atomic(text_file, body)
         except Exception:
             _die(f"写入文本文件 {text_file} 失败，请检查目标目录权限或磁盘空间。")
 

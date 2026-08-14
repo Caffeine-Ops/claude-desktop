@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import md_to_docx  # noqa: E402
@@ -127,3 +128,94 @@ def test_main_wraps_unexpected_error_in_chinese(tmp_path, monkeypatch, capsys):
     err = capsys.readouterr().err
     assert "处理过程中出错" in err
     assert "Traceback" not in err
+
+
+def test_pipe_table_becomes_word_table(tmp_path):
+    """表格是 A 类主力场景（发票/报表）最常见的结构，此前会塌成竖线文本。"""
+    src = tmp_path / "t.md"
+    src.write_text(
+        "| 品名 | 金额 |\n|:---|---:|\n| 差旅 | 128.5 |\n| 餐饮 | 56 |\n",
+        encoding="utf-8",
+    )
+    dst = tmp_path / "t.docx"
+    md_to_docx.convert(src, dst)
+    doc = Document(str(dst))
+    assert len(doc.tables) == 1
+    t = doc.tables[0]
+    assert t.rows[0].cells[0].text == "品名"
+    assert t.rows[2].cells[1].text == "56"
+    # 表头加粗；右对齐列（---:）落到单元格段落上
+    assert t.rows[0].cells[0].paragraphs[0].runs[0].bold is True
+    assert t.rows[1].cells[1].paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.RIGHT
+    # 竖线文本不应再出现在正文段落里
+    assert all("|" not in p.text for p in doc.paragraphs)
+
+
+def test_compact_gfm_separator_row_is_recognized(tmp_path):
+    """I-1：GFM 合法的紧凑分隔行（每格只需 ≥1 个连字符，如 `|:-:|-:|`）此前
+    会被 `-{3,}` 挡在门外，静默塌回竖线文本。改成 `-+` 后要认得出来，且
+    对齐语法（居中 / 右对齐）照常生效。"""
+    src = tmp_path / "z.md"
+    src.write_text("| 甲 | 乙 |\n|:-:|-:|\n| 1 | 2 |\n", encoding="utf-8")
+    dst = tmp_path / "z.docx"
+    md_to_docx.convert(src, dst)
+    doc = Document(str(dst))
+    assert len(doc.tables) == 1
+    t = doc.tables[0]
+    assert t.rows[1].cells[0].text == "1"
+    assert t.rows[1].cells[1].text == "2"
+    assert t.rows[1].cells[0].paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert t.rows[1].cells[1].paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.RIGHT
+    assert all("|" not in p.text for p in doc.paragraphs)
+
+
+def test_table_cell_inline_formatting_works(tmp_path):
+    src = tmp_path / "u.md"
+    src.write_text("| 项 |\n|---|\n| **重点** |\n", encoding="utf-8")
+    dst = tmp_path / "u.docx"
+    md_to_docx.convert(src, dst)
+    cell_runs = Document(str(dst)).tables[0].rows[1].cells[0].paragraphs[0].runs
+    assert cell_runs[0].text == "重点" and cell_runs[0].bold is True
+
+
+def test_short_row_is_padded_with_empty_cells(tmp_path):
+    """GFM 标准行为：短行补空，不丢信息、不拒绝。"""
+    src = tmp_path / "v.md"
+    src.write_text("| 甲 | 乙 |\n|---|---|\n| 只有一格 |\n", encoding="utf-8")
+    dst = tmp_path / "v.docx"
+    md_to_docx.convert(src, dst)
+    t = Document(str(dst)).tables[0]
+    assert t.rows[1].cells[0].text == "只有一格"
+    assert t.rows[1].cells[1].text == ""
+
+
+def test_long_row_is_refused_with_line_number(tmp_path, capsys):
+    """纪律：比表头长的行如果截断就丢内容，宁可拒绝，并报出 md 行号。"""
+    src = tmp_path / "w.md"
+    src.write_text("| 甲 | 乙 |\n|---|---|\n| 1 | 2 | 3 |\n", encoding="utf-8")
+    dst = tmp_path / "w.docx"
+    with pytest.raises(SystemExit):
+        md_to_docx.convert(src, dst)
+    err = capsys.readouterr().err
+    assert err.startswith("[doc-convert] 错误：")
+    assert "第 3 行" in err and "列" in err
+    assert not dst.exists()
+
+
+def test_pipe_lines_without_separator_stay_plain_text(tmp_path):
+    """没有分隔行就不是表格——维持旧行为当普通文本，不误伤正文里的竖线。"""
+    src = tmp_path / "x.md"
+    src.write_text("| 这行只是碰巧有竖线 |\n没有分隔行。\n", encoding="utf-8")
+    dst = tmp_path / "x.docx"
+    md_to_docx.convert(src, dst)
+    doc = Document(str(dst))
+    assert doc.tables == []
+    assert "| 这行只是碰巧有竖线 |" in [p.text for p in doc.paragraphs]
+
+
+def test_table_syntax_inside_code_fence_is_not_parsed(tmp_path):
+    src = tmp_path / "y.md"
+    src.write_text("```\n| a | b |\n|---|---|\n| 1 | 2 |\n```\n", encoding="utf-8")
+    dst = tmp_path / "y.docx"
+    md_to_docx.convert(src, dst)
+    assert Document(str(dst)).tables == []

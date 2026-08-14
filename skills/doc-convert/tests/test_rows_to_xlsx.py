@@ -295,14 +295,15 @@ def test_main_wraps_unexpected_exception_in_real_subprocess(tmp_path):
     """[Minor] test_main_wraps_unexpected_exception 的 "Traceback not in
     err" 断言是装饰性的（见上面那条测试新加的注释）：那条测试进程内直接调
     main()，未捕获异常根本进不了 capsys 捕获的 stderr。这里换一条真正跨
-    进程的测试，用一个 I-1~I-4 没有专门覆盖、但确实会在 build() 里炸出
-    原生 AttributeError 的输入（meta 不是对象，`meta.get("标题")` 在字符串
-    上调用），验证子进程的 stderr 里真的看不到裸 Traceback——这才是「不让
-    Python 堆栈漏到用户面前」这条全局约束真正要保证的场景。
+    进程的测试，用一个能穿透所有专项校验（I-1~I-4，包括新加的 meta 中文指引）、
+    但确实会在 validate() 里炸出原生 TypeError 的输入——headers 列表混入
+    不可哈希的元素（字典），`set(headers)` 当场崩溃。验证子进程的 stderr
+    里真的看不到裸 Traceback，被 main() 通用兜底接住后报出中文前缀 + 异常
+    类名——这才是「不让 Python 堆栈漏到用户面前」这条全局约束真正要保证的
+    场景。
     """
     src = _write_json(tmp_path / "q.json", {
-        "headers": ["项目"],
-        "meta": "不是对象",
+        "headers": ["项目", {"x": 1}],
         "rows": [{"项目": "住宿"}],
     })
     out = tmp_path / "q.xlsx"
@@ -310,4 +311,37 @@ def test_main_wraps_unexpected_exception_in_real_subprocess(tmp_path):
     assert proc.returncode != 0
     assert "[doc-convert] 错误：" in proc.stderr
     assert "Traceback" not in proc.stderr
+    assert not out.exists()
+
+
+def test_non_object_meta_gets_chinese_guidance(tmp_path):
+    """挂账收口：meta 手滑写成字符串（如 "meta": "台账"）原来会在 build() 里
+    炸 AttributeError、落进通用兜底，报「中文前缀 + 英文异常类名」，用户不知道
+    该改哪。要在 load() 里当场用中文钉住，并告诉用户下一步怎么办。"""
+    src = _write_json(tmp_path / "m.json", {
+        "headers": ["项目"],
+        "rows": [{"项目": "住宿"}],
+        "meta": "台账标题",
+    })
+    out = tmp_path / "m.xlsx"
+    proc = _run(src, out)
+    assert proc.returncode != 0
+    assert proc.stderr.startswith("[doc-convert] 错误：")
+    assert "meta" in proc.stderr and "对象" in proc.stderr
+    assert "AttributeError" not in proc.stderr
+    assert not out.exists()
+
+
+def test_sheet_name_over_31_chars_is_refused(tmp_path):
+    """挂账收口（测试欠账）：超长表名分支此前与非法字符共用一道防线、没有专属
+    断言。Excel 表名硬上限 31 字符，超了 openpyxl 会报英文异常或静默截断。"""
+    src = _write_json(tmp_path / "s.json", {
+        "headers": ["项目"],
+        "rows": [{"项目": "住宿"}],
+    })
+    out = tmp_path / "s.xlsx"
+    proc = _run(src, out, "--sheet", "长" * 32)
+    assert proc.returncode != 0
+    assert proc.stderr.startswith("[doc-convert] 错误：")
+    assert "超过 Excel 限制" in proc.stderr
     assert not out.exists()

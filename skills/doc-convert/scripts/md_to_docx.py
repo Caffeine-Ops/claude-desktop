@@ -2,13 +2,18 @@
 """Markdown → Word（.docx）。
 
 **刻意只支持 Markdown 的常用子集**，不引 markdown/mistune 之类解析库：
-用户在办公场景写的 md 就是标题 / 段落 / 列表 / 粗斜体 / 代码块这几样，
-为覆盖表格嵌套引用等长尾多背一个解析依赖不划算。真遇到复杂 md，
-正确做法是让模型先把它规整成这个子集，而不是把解析器做厚。
+用户在办公场景写的 md 就是标题 / 段落 / 列表 / 表格 / 粗斜体 / 代码块这几样，
+解析全靠手写规则就够。真遇到复杂 md，正确做法是让模型先把它规整成这个子集，
+而不是把解析器做厚。
 
 支持：# ~ ###### 标题、空行分段、- / * 无序列表、1. 有序列表、
-     **粗体**、*斜体*、`行内代码`、``` 围栏代码块、--- 分隔线。
-不支持（会原样当普通文本输出，不报错）：表格、引用块、图片、链接语法。
+     **粗体**、*斜体*、`行内代码`、``` 围栏代码块、--- 分隔线、
+     | 管道表格（表头加粗、:--- 对齐语法；2026-08-13 补，A 类场景刚需）。
+不支持（会原样当普通文本输出，不报错）：引用块、图片、链接语法、
+     表格里的合并单元格。
+     单元格里的 \\| 转义竖线**不受支持且不会原样保留**——它仍会被当成列
+     分隔符：出现在数据行会因列数超限直接报错拒绝，出现在表头行会静默
+     多切出一列且不报错。表格里需要竖线时改用全角 ｜ 等其他符号。
 """
 from __future__ import annotations
 
@@ -85,47 +90,138 @@ def _add_inline(paragraph, text: str) -> None:
             paragraph.add_run(piece)
 
 
+_SEP_CELL = re.compile(r":?-+:?")
+
+
+def _is_table_sep(line: str) -> bool:
+    """判定分隔行（`|---|:---:|`，GFM 语义：每格只需 ≥1 个连字符，
+    `|-|-|`、`|:-:|` 同样合法）。它是「这一片竖线行是表格」的唯一凭证——
+    没有它就维持旧行为当普通文本，不误伤正文里碰巧带竖线的行。"""
+    s = line.strip()
+    if not s.startswith("|"):
+        return False
+    parts = [p.strip() for p in s.strip("|").split("|")]
+    return bool(parts) and all(_SEP_CELL.fullmatch(p) for p in parts)
+
+
+def _split_cells(line: str) -> list[str]:
+    return [c.strip() for c in line.strip().strip("|").split("|")]
+
+
+def _add_md_table(doc, header_line: str, sep_line: str,
+                  data_lines: list[str], first_data_lineno: int) -> None:
+    """把一片管道表格行画成真正的 Word 表格。
+
+    边界纪律：短行补空单元格（GFM 标准行为，不丢信息）；长行拒绝——截断会
+    丢内容，宁可报错让用户改（同本技能「不产出有缺陷文件」的头号纪律）。
+    """
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    headers = _split_cells(header_line)
+    aligns = []
+    for p in [c.strip() for c in sep_line.strip().strip("|").split("|")]:
+        if p.startswith(":") and p.endswith(":"):
+            aligns.append(WD_ALIGN_PARAGRAPH.CENTER)
+        elif p.endswith(":"):
+            aligns.append(WD_ALIGN_PARAGRAPH.RIGHT)
+        else:
+            aligns.append(None)  # 左对齐是 Word 默认，不用显式设
+    # 分隔行列数与表头不齐时对齐信息按左对齐补齐——对齐是装饰，不值得拒绝
+    aligns += [None] * (len(headers) - len(aligns))
+
+    rows: list[list[str]] = []
+    for offset, ln in enumerate(data_lines):
+        cells = _split_cells(ln)
+        if len(cells) > len(headers):
+            _die(f"Markdown 表格第 {first_data_lineno + offset} 行有 "
+                 f"{len(cells)} 列，多于表头的 {len(headers)} 列。多出来的列"
+                 "如果截断就丢内容，请把这一行改成与表头一致的列数后重试。")
+        cells += [""] * (len(headers) - len(cells))
+        rows.append(cells)
+
+    table = doc.add_table(rows=len(rows) + 1, cols=len(headers))
+    table.style = "Table Grid"  # 带边框；无边框的表在 Word 里看不出是表
+    for c, text in enumerate(headers):
+        par = table.rows[0].cells[c].paragraphs[0]
+        _add_inline(par, text)
+        for run in par.runs:
+            run.bold = True
+        if aligns[c] is not None:
+            par.alignment = aligns[c]
+    for r, cells in enumerate(rows, start=1):
+        for c, text in enumerate(cells):
+            par = table.rows[r].cells[c].paragraphs[0]
+            _add_inline(par, text)
+            if aligns[c] is not None:
+                par.alignment = aligns[c]
+
+
 def convert(src: Path, dst: Path) -> None:
     """把 src 这份 Markdown 转成 dst 这份 .docx。"""
     doc = Document()
     in_code = False
+    lines = _read_md(src).splitlines()
+    i = 0
 
-    for raw in _read_md(src).splitlines():
-        line = raw.rstrip()
+    while i < len(lines):
+        line = lines[i].rstrip()
 
         # 围栏代码块：进入后逐行原样成段，直到再遇到围栏。放在最前面判断——
-        # 代码块里的 `# ` 是注释不是标题，任何结构规则都不该在这里生效。
+        # 代码块里的 `# ` 是注释不是标题，任何结构规则（包括表格）都不该在
+        # 这里生效。
         if line.strip().startswith("```"):
             in_code = not in_code
+            i += 1
             continue
         if in_code:
             run = doc.add_paragraph().add_run(line)
             run.font.name = "Consolas"
+            i += 1
+            continue
+
+        # 管道表格：当前行以 | 开头、下一行是分隔行，才认作表格——分隔行是
+        # 唯一凭证，没有它就落到下面当普通文本（不误伤正文里的竖线）。
+        if (line.strip().startswith("|") and i + 1 < len(lines)
+                and _is_table_sep(lines[i + 1])):
+            j = i + 2
+            while j < len(lines) and lines[j].strip().startswith("|"):
+                j += 1
+            # 行号从 1 起：数据行从文件的第 i+3 行开始（表头 i+1、分隔行 i+2）
+            _add_md_table(doc, line, lines[i + 1],
+                          [ln.rstrip() for ln in lines[i + 2:j]],
+                          first_data_lineno=i + 3)
+            i = j
             continue
 
         if not line.strip():
+            i += 1
             continue
 
         if _HRULE.match(line):
             doc.add_paragraph("―" * 20)
+            i += 1
             continue
 
         m = _HEADING.match(line)
         if m:
             doc.add_heading(m.group(2).strip(), level=len(m.group(1)))
+            i += 1
             continue
 
         m = _BULLET.match(line)
         if m:
             _add_inline(doc.add_paragraph(style="List Bullet"), m.group(1))
+            i += 1
             continue
 
         m = _ORDERED.match(line)
         if m:
             _add_inline(doc.add_paragraph(style="List Number"), m.group(1))
+            i += 1
             continue
 
         _add_inline(doc.add_paragraph(), line)
+        i += 1
 
     dst.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(dst))

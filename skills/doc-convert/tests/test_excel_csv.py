@@ -44,9 +44,11 @@ def test_csv_to_xlsx_roundtrip(tmp_path):
     excel_csv.csv_to_xlsx(src, dst)
 
     ws = load_workbook(str(dst)).active
+    # 2026-08-13 起 csv→xlsx 做保守数字推断："200" 这类数值格写成真数值，
+    # 这是功能预期，不是回归。
     assert [[c.value for c in row] for row in ws.iter_rows()] == [
         ["姓名", "金额"],
-        ["李四", "200"],
+        ["李四", 200],
     ]
 
 
@@ -195,3 +197,52 @@ def test_main_wraps_unexpected_error_in_chinese(tmp_path, monkeypatch, capsys):
     err = capsys.readouterr().err
     assert "处理过程中出错" in err
     assert "Traceback" not in err
+
+
+def test_csv_to_xlsx_infers_numbers_conservatively(tmp_path, capsys):
+    """csv→xlsx 数字推断：数值写成真数值（=SUM 能算），编号样的坚决保文本。
+    护栏三条：前导零、纯整数位数 ≥10、含非数值字符。"""
+    src = tmp_path / "n.csv"
+    src.write_text(
+        "项目,金额,发票号,电话,备注\n"
+        "差旅,\"1,200.50\",24312000000123456789,13800138000,正常\n"
+        "餐饮,-56,007,1.5E+3,0.5\n",
+        encoding="utf-8-sig",
+    )
+    dst = tmp_path / "n.xlsx"
+    assert excel_csv.main([str(src), "-o", str(dst)]) == 0
+    ws = load_workbook(dst).active
+    # 数值列：千分位被剥掉、负数、小数都成真数值
+    assert ws["B2"].value == 1200.5 and ws["B2"].data_type == "n"
+    assert ws["B3"].value == -56 and ws["B3"].data_type == "n"
+    assert ws["E3"].value == 0.5
+    # 编号护栏：20 位发票号、11 位手机号、前导零、科学计数法——全部保文本
+    assert ws["C2"].value == "24312000000123456789"
+    assert ws["D2"].value == "13800138000"
+    assert ws["C3"].value == "007"
+    assert ws["D3"].value == "1.5E+3"
+    # 表头行是普通文本
+    assert ws["B1"].value == "金额"
+    # 透明度：转换报告点名列
+    out = capsys.readouterr().out
+    assert "写成真数值" in out
+    assert "保留为文本" in out
+
+
+def test_coerce_cell_edge_cases():
+    assert excel_csv._coerce_cell("128.5") == (128.5, "num")
+    assert excel_csv._coerce_cell("1,200.50") == (1200.5, "num")
+    assert excel_csv._coerce_cell("-42") == (-42, "num")
+    assert excel_csv._coerce_cell("999999999") == (999999999, "num")     # 9 位，转
+    assert excel_csv._coerce_cell("1234567890")[1] == "guarded"          # 10 位，保
+    assert excel_csv._coerce_cell("0") == (0, "num")
+    assert excel_csv._coerce_cell("0.5") == (0.5, "num")
+    assert excel_csv._coerce_cell("007")[1] == "guarded"
+    assert excel_csv._coerce_cell("12345678901.5") == (12345678901.5, "num")  # 带小数不受位数限制
+    assert excel_csv._coerce_cell("1,23")[1] == "text"   # 假千分位
+    assert excel_csv._coerce_cell("abc")[1] == "text"
+    assert excel_csv._coerce_cell("")[1] == "text"
+    assert excel_csv._coerce_cell(" 42 ") == (42, "num")  # 首尾空白剥掉再判
+    # M-2：全角数字不是本技能要推断的"数值"——\d 默认 Unicode 感知会连
+    # 全角一起吃掉，转成 ASCII 数值会悄悄改写字形，必须保文本
+    assert excel_csv._coerce_cell("１２３")[1] == "text"

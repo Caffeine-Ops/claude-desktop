@@ -211,3 +211,47 @@ def test_rerunning_same_source_is_idempotent(tmp_path, capsys):
 
     assert r1["text_file"] == r2["text_file"]
     assert len(list(outdir.glob("*.text.txt"))) == 1
+
+
+def test_atomic_write_success_leaves_no_temp_file(tmp_path):
+    """挂账收口：结果文件必须原子落盘——成功后目录里只有目标文件，无 .part 残留。"""
+    dst = tmp_path / "r.txt"
+    doc_text._write_text_atomic(dst, '{"ok": 1}')
+    assert dst.read_text(encoding="utf-8") == '{"ok": 1}'
+    assert [p.name for p in tmp_path.iterdir()] == ["r.txt"]
+
+
+def test_atomic_write_failure_leaves_no_partial_file(tmp_path, monkeypatch):
+    """挂账收口：替换（os.replace）失败时不能留下半截临时文件，目标文件也不能
+    出现——半截 JSON 比没有更糟，下游会拿着残缺数据继续走。"""
+    import os as os_mod
+
+    def _boom(src, dst):
+        raise OSError("simulated failure")
+
+    monkeypatch.setattr(doc_text.os, "replace", _boom)
+    dst = tmp_path / "r.txt"
+    with pytest.raises(OSError):
+        doc_text._write_text_atomic(dst, "{}")
+    assert not dst.exists()
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_zero_page_pdf_is_refused(tmp_path):
+    """挂账收口：0 页的合法 PDF 原来会静默产出空取料文件 + exit 0，与「只有
+    空段落的 docx 走拒绝」不对称。两条路径的纪律要一致：给不了任何有用产物
+    就拒绝，不产出一份空文件让下游误以为「读完了、只是没内容」。"""
+    from pypdf import PdfWriter
+
+    src = tmp_path / "empty.pdf"
+    with src.open("wb") as f:
+        PdfWriter().write(f)
+    outdir = tmp_path / "取料"
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPTS / "doc_text.py"), str(src), "--outdir", str(outdir)],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode != 0
+    assert proc.stderr.startswith("[doc-convert] 错误：")
+    assert "0 页" in proc.stderr
+    assert not outdir.exists() or list(outdir.glob("*.text.txt")) == []
