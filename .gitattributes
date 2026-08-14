@@ -14,3 +14,10 @@ skills/**/*.png binary
 skills/**/*.jpg binary
 skills/**/*.jpeg binary
 skills/**/*.mp4 binary
+# 唯一的例外：cmd 批处理是「必须 CRLF」的文本格式——cmd.exe 的解析器遇到
+# 裸 LF 会在错误的字节位置切分命令（'layedexpansion' is not recognized 这种
+# 从单词中间断开的报错），四个技能的 ensure-python.cmd 在真实 Windows 上
+# 因此整个不可用（2026-08-14 GitHub Actions windows-latest 实锤，doc-convert
+# 验证 workflow 首跑抓到）。规则必须写在 skills/** text eol=lf 之后才能覆盖它。
+# 没有任何测试/模板逐字节消费 .cmd，改 CRLF 不碰快照红线。
+*.cmd text eol=crlf
