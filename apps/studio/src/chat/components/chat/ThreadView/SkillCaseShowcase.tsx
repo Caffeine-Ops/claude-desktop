@@ -20,9 +20,8 @@
  */
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { useAuiState } from '@assistant-ui/react'
 import type { ScenarioCase } from '@desktop-shared/ipc-channels'
 
 import { Button } from '@/src/components/ui/button'
@@ -36,10 +35,9 @@ import {
 } from '@/src/components/ui/dialog'
 import { GLASS_DIALOG_SURFACE } from '@/src/components/ui/glassDialogSurface'
 
-import { LEADING_SLASH_COMMAND_RE } from '../../../composer/skillChipRegistry'
 import { useT } from '../../../i18n'
-import { casesForSkill, pageCount, pageSlice, SHOWCASE_PAGE_SIZE } from '../../../lib/scenarioCases'
-import { useScenarioCasesStore } from '../../../stores/scenarioCases'
+import { pageCount, pageSlice, SHOWCASE_PAGE_SIZE } from '../../../lib/scenarioCases'
+import { useSkillCases } from './useSkillCases'
 
 export interface SkillCaseShowcaseProps {
   /** 把案例的 prompt 填进 composer 正文（保留 leading chip）。 */
@@ -48,19 +46,7 @@ export interface SkillCaseShowcaseProps {
 
 export function SkillCaseShowcase({ onFillPrompt }: SkillCaseShowcaseProps): React.JSX.Element | null {
   const t = useT()
-  const gallery = useScenarioCasesStore((s) => s.gallery)
-
-  const composerText = useAuiState(
-    (s) => ((s as { composer?: { text?: string } }).composer?.text as string | undefined) ?? ''
-  )
-  const leading = LEADING_SLASH_COMMAND_RE.exec(composerText)
-  const skillValue = leading?.[1] ?? null
-  const bodyAfterChip = skillValue ? composerText.slice(skillValue.length).trim() : ''
-
-  const cases = useMemo(
-    () => (skillValue ? casesForSkill(gallery, skillValue) : []),
-    [gallery, skillValue]
-  )
+  const { skillValue, cases, visible } = useSkillCases()
 
   const [page, setPage] = useState(0)
   const [active, setActive] = useState<ScenarioCase | null>(null)
@@ -71,13 +57,16 @@ export function SkillCaseShowcase({ onFillPrompt }: SkillCaseShowcaseProps): Rea
   }, [skillValue])
 
   const pages = pageCount(cases.length, SHOWCASE_PAGE_SIZE)
-  const visible = pageSlice(cases, page, SHOWCASE_PAGE_SIZE)
+  const pageItems = pageSlice(cases, page, SHOWCASE_PAGE_SIZE)
 
-  if (!skillValue || bodyAfterChip !== '' || cases.length === 0) return null
+  if (!visible) return null
 
+  // 高度预算：这一块必须和 hero 标题、rail、composer 一起在 800px 高的窗口里
+  // 不滚动放下（用户硬要求，2026-08-17）。EmptyState 在案例可见时会把大标题
+  // 收成一行（useSkillCases().visible 同一判定），这里则压紧上边距与卡片比例。
   return (
-    <div className="mt-8" data-testid="skill-case-showcase">
-      <div className="mb-3 flex items-center justify-between gap-3 px-0.5">
+    <div className="mt-4" data-testid="skill-case-showcase">
+      <div className="mb-2 flex items-center justify-between gap-3 px-0.5">
         <span className="text-[13px] text-foreground/80">{t('skillCaseTitle')}</span>
         {pages > 1 ? (
           <button
@@ -103,7 +92,7 @@ export function SkillCaseShowcase({ onFillPrompt }: SkillCaseShowcaseProps): Rea
           transition={{ duration: 0.18, ease: 'easeOut' }}
           className="grid grid-cols-5 gap-3 max-[900px]:grid-cols-3 max-[620px]:grid-cols-2"
         >
-          {visible.map((c) => (
+          {pageItems.map((c) => (
             <CaseCard key={c.id} item={c} onOpen={() => setActive(c)} openLabel={t('skillCaseOpen')} />
           ))}
         </motion.div>
@@ -138,7 +127,7 @@ function CaseCard({
       type="button"
       onClick={onOpen}
       aria-label={`${openLabel}: ${item.title}`}
-      className="group relative aspect-[3/2] overflow-hidden rounded-[12px] border border-border/60 bg-muted text-left transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-[2px] hover:border-border hover:shadow-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[hsl(var(--accent))] active:-translate-y-px"
+      className="group relative aspect-[16/10] overflow-hidden rounded-[12px] border border-border/60 bg-muted text-left transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-[2px] hover:border-border hover:shadow-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[hsl(var(--accent))] active:-translate-y-px"
     >
       {!broken ? (
         <img
