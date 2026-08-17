@@ -906,6 +906,17 @@ export const IPC_CHANNELS = {
    */
   SCENARIO_CATALOG_CHANGED: 'scenario-catalog:changed',
   /**
+   * Renderer → main. 技能最佳实践案例（SkillCaseShowcase）的远端配置，一次性
+   * 拉取。与 SCENARIO_CATALOG_GET 同一取舍：**同步读 main 内存里那份磁盘缓存，
+   * 不发网络请求**。`gallery: null` = 从未成功拉取过 → 渲染层不显示案例区。
+   */
+  SCENARIO_CASES_GET: 'scenario-cases:get',
+  /**
+   * Main → every renderer. 远端案例刷新成功且**版本有变**时广播一次（同
+   * SCENARIO_CATALOG_CHANGED）。整体替换不拼装。
+   */
+  SCENARIO_CASES_CHANGED: 'scenario-cases:changed',
+  /**
    * Renderer → main. Returns the current KB root path (or null when
    * not yet configured) plus the fixed output directory for index
    * artefacts (`userData/kb-index`). Called by the settings page to
@@ -2498,6 +2509,44 @@ export interface ScenarioCatalogResult {
 }
 
 /**
+ * 技能最佳实践案例（后台「客户端技能案例」页配置，独立于场景目录）。
+ *
+ * 用户在空态 composer 里选中某个技能后，卡片下方出现该技能的案例卡片
+ * （封面 + 标题）；点开看成品大图与说明，「用这个试试」把 `prompt` 填进
+ * composer 正文（同推荐 prompt 的 fillBody 通道）。
+ *
+ * 字段名与 sub2api 的 scenario_case_service.go 一致，两边同步演进。
+ */
+export interface ScenarioCase {
+  /** 稳定 id（服务端生成），渲染 key。 */
+  id: string
+  /**
+   * 所属技能的 slash 命令（与 ScenarioCatalogItem.value 同一套写法）。渲染层
+   * 按裸名匹配（去掉 plugin 命名空间），与 scenarioPromptsFor 同一规则。
+   */
+  skill: string
+  title: string
+  /** 封面图 URL。**只收 http/https**（服务端与 main 侧各校验一次）。 */
+  cover: string
+  /** 详情弹窗里的成品大图（轮播），可空——为空时详情只显示封面。 */
+  images: readonly string[]
+  description?: string
+  /** 「用这个试试」填进 composer 的正文，沿用【…】占位约定。 */
+  prompt: string
+}
+
+/** 整份案例。`version` 单调递增，语义同 ScenarioCatalog.version。 */
+export interface ScenarioCaseGallery {
+  version: number
+  cases: readonly ScenarioCase[]
+}
+
+/** Result of SCENARIO_CASES_GET. `gallery: null` = 没有案例可展示。 */
+export interface ScenarioCaseGalleryResult {
+  gallery: ScenarioCaseGallery | null
+}
+
+/**
  * Supported export formats for a proposal document. Defined here (shared)
  * so the renderer payload, the preload type, and the main-side
  * proposalExport.ts can all reference the same closed union without
@@ -3680,6 +3729,18 @@ export interface ChatApi {
    * 触发。handler 收到整份目录——替换，不要合并。返回退订函数。
    */
   onScenarioCatalogChanged(handler: (catalog: ScenarioCatalog) => void): () => void
+
+  /**
+   * 技能案例的远端配置（见 SCENARIO_CASES_GET）。**不发网络请求**，读 main
+   * 内存里那份磁盘缓存。`gallery: null` 时不显示案例区。
+   */
+  getScenarioCases(): Promise<ScenarioCaseGalleryResult>
+
+  /**
+   * 订阅案例刷新（见 SCENARIO_CASES_CHANGED）。只在版本真的变了时触发。
+   * handler 收到整份——替换，不要合并。返回退订函数。
+   */
+  onScenarioCasesChanged(handler: (gallery: ScenarioCaseGallery) => void): () => void
 
   /** 使用记录页筛选器下拉数据源：API 密钥 + 分组列表（见 USAGE_FILTER_OPTIONS_GET）。 */
   getUsageFilterOptions(): Promise<UsageFilterOptionsResult>

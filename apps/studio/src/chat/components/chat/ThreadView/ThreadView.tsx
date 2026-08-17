@@ -39,6 +39,7 @@ import { findSkillChipSpec } from '../../../composer/skillChipRegistry'
 import { SkillChipIcon } from '../SkillChipIcon'
 import { Composer } from './Composer'
 import { DemoShowcase } from './DemoShowcase'
+import { useSkillCases } from './useSkillCases'
 import { ReplayControlBar } from '../ReplayControlBar'
 import { ReplayController } from '../../../replay/ReplayController'
 import { isReplaySessionId } from '../../../replay/replayStore'
@@ -1680,6 +1681,10 @@ function ChatHeader(): React.JSX.Element {
  */
 function EmptyState(): React.JSX.Element {
   const t = useT()
+  // 紧凑模式：composer 里选中了有案例的技能 → 大标题收成一行、副标题隐藏、
+  // 上下留白收紧，好让 rail + composer + 案例区在 800px 高的窗口里**不滚动**
+  // 全部可见（用户硬要求，2026-08-17）。判定与 SkillCaseShowcase 同源。
+  const compact = useSkillCases().visible
   // Hero 标题在全角逗号处断成两行大字（「不止聊天，」/「搞定一切」）。英文
   // 标题没有全角逗号 → parts 只有一个元素，单行渲染，无多余 <br>。
   const titleParts = t('emptyStateTitle').split('，')
@@ -1701,18 +1706,32 @@ function EmptyState(): React.JSX.Element {
     // motion.div）。标题/提示语/演示区没有 backdrop-filter，各自留在独立的
     // motion.div 里继续淡入，观感上仍是「整块一起浮现」，只是 Composer 从
     // 第一帧就是最终态，不参与这次半透明合成。
-    <div className="flex flex-1 flex-col items-stretch justify-center py-10">
+    <div
+      className={
+        compact
+          ? 'flex flex-1 flex-col items-stretch justify-center py-2'
+          : 'flex flex-1 flex-col items-stretch justify-center py-10'
+      }
+    >
       <motion.div {...heroFade}>
-        <h1 className="text-[clamp(36px,4.5vw,52px)] font-bold leading-[1.18] tracking-tight text-foreground">
-          {titleParts.map((part, i) => (
-            <span key={i} className="block">
-              {i < titleParts.length - 1 ? `${part}，` : part}
-            </span>
-          ))}
-        </h1>
-        <p className="mb-8 mt-4 text-[14px] text-muted-foreground/80">
-          {t('emptyStateScenarioHint')}
-        </p>
+        {compact ? (
+          <h1 className="mb-4 text-[26px] font-bold leading-tight tracking-tight text-foreground">
+            {t('emptyStateTitle')}
+          </h1>
+        ) : (
+          <>
+            <h1 className="text-[clamp(36px,4.5vw,52px)] font-bold leading-[1.18] tracking-tight text-foreground">
+              {titleParts.map((part, i) => (
+                <span key={i} className="block">
+                  {i < titleParts.length - 1 ? `${part}，` : part}
+                </span>
+              ))}
+            </h1>
+            <p className="mb-8 mt-4 text-[14px] text-muted-foreground/80">
+              {t('emptyStateScenarioHint')}
+            </p>
+          </>
+        )}
       </motion.div>
 
       {/* Composer sits inside the centered block (not the bottom dock).

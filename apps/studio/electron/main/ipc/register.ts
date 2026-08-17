@@ -112,6 +112,7 @@ import {
   type AuthLoginResult,
   type AuthSendSmsCodeResult,
   type AuthState,
+  type ScenarioCaseGalleryResult,
   type ScenarioCatalogResult,
   type UsageQueryFilters,
   type UsageListQuery,
@@ -247,6 +248,7 @@ import {
   updateAccountProfile
 } from '../services/authService'
 import { getScenarioCatalog } from '../services/scenarioCatalogService'
+import { getScenarioCases } from '../services/scenarioCasesService'
 import {
   ensurePptSkill,
   getPptSkillStatus,
@@ -591,6 +593,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.ACCOUNT_GET_PROFILE)
   ipcMain.removeHandler(IPC_CHANNELS.ACCOUNT_UPDATE_PROFILE)
   ipcMain.removeHandler(IPC_CHANNELS.SCENARIO_CATALOG_GET)
+  ipcMain.removeHandler(IPC_CHANNELS.SCENARIO_CASES_GET)
   ipcMain.removeHandler(IPC_CHANNELS.PPT_SKILL_GET_STATUS)
   ipcMain.removeHandler(IPC_CHANNELS.PPT_SKILL_ENSURE)
   ipcMain.removeHandler(IPC_CHANNELS.RUNTIME_COMPONENTS_GET_STATE)
@@ -2480,6 +2483,14 @@ export function registerIpcHandlers(): void {
     IPC_CHANNELS.SCENARIO_CATALOG_GET,
     async (): Promise<ScenarioCatalogResult> => {
       return { catalog: getScenarioCatalog() }
+    }
+  )
+
+  // 技能案例：同上，只读 main 内存里的磁盘缓存。
+  ipcMain.handle(
+    IPC_CHANNELS.SCENARIO_CASES_GET,
+    async (): Promise<ScenarioCaseGalleryResult> => {
+      return { gallery: getScenarioCases() }
     }
   )
 

@@ -17,6 +17,7 @@ import { resolveStudioTabUrl } from './services/openDesignServices'
 import {
   IPC_CHANNELS,
   type AuthState,
+  type ScenarioCaseGallery,
   type ScenarioCatalog,
   type ShellMenuAction,
   type TabDescriptor,
@@ -1195,6 +1196,18 @@ export function broadcastScenarioCatalog(catalog: ScenarioCatalog): void {
     if (ctx.kind === 'web') continue
     const wc = ctx.view.webContents
     if (canSendIpc(wc)) wc.send(IPC_CHANNELS.SCENARIO_CATALOG_CHANGED, catalog)
+  }
+}
+
+/** 同 broadcastScenarioCatalog：技能案例刷新后整体推给每个 renderer。 */
+export function broadcastScenarioCases(gallery: ScenarioCaseGallery): void {
+  if (shellWindow && !shellWindow.isDestroyed() && canSendIpc(shellWindow.webContents)) {
+    shellWindow.webContents.send(IPC_CHANNELS.SCENARIO_CASES_CHANGED, gallery)
+  }
+  for (const ctx of tabs.values()) {
+    if (ctx.kind === 'web') continue
+    const wc = ctx.view.webContents
+    if (canSendIpc(wc)) wc.send(IPC_CHANNELS.SCENARIO_CASES_CHANGED, gallery)
   }
 }
 

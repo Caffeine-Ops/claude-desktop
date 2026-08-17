@@ -29,6 +29,7 @@ import {
 } from '../../../composer/ProseMirrorComposerInput'
 import { QueuePanel } from './QueuePanel'
 import { ScenarioRail } from './ScenarioRail'
+import { SkillCaseShowcase } from './SkillCaseShowcase'
 import { AgentTeamBar } from './AgentTeamBar'
 import { buildWfRows } from './WorkflowTaskTree'
 import { useAgentTeamStore } from '../../../stores/agentTeam'
@@ -909,6 +910,12 @@ export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero'
           </div>
         </div>
       </div>
+      {variant === 'hero' ? (
+        // 技能最佳实践案例（后台「客户端技能案例」页配置）：挂在 Composer 内的
+        // 理由同上方 ScenarioRail——「用这个提示词试试」要驱动 composerInputRef
+        // 的 fillBody。组件自己按 composer.text 判定当前技能，无案例时渲染 null。
+        <SkillCaseShowcase onFillPrompt={(text) => composerInputRef.current?.fillBody(text)} />
+      ) : null}
     </div>
   )
 }
