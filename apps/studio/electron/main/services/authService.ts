@@ -16,6 +16,7 @@ import type {
 import { broadcastAuthState } from '../tabRegistry'
 import { applyClientEnvConfig } from './clientEnvConfigService'
 import { refreshScenarioCatalog } from './scenarioCatalogService'
+import { refreshScenarioCases } from './scenarioCasesService'
 import {
   sub2apiGet,
   sub2apiPost,
@@ -189,6 +190,11 @@ async function refreshProfileInBackground(): Promise<void> {
   // 广播都不会发，冷启动对已经画好的 rail 完全无感。
   void refreshScenarioCatalog(authedGet).catch((err) => {
     console.error('[auth] refresh scenario catalog failed', {
+      message: err instanceof Error ? err.message : String(err)
+    })
+  })
+  void refreshScenarioCases(authedGet).catch((err) => {
+    console.error('[auth] refresh scenario cases failed', {
       message: err instanceof Error ? err.message : String(err)
     })
   })
@@ -738,6 +744,11 @@ export async function login(payload: AuthLoginPayload): Promise<AuthLoginResult>
   // 拉到了就广播刷新 rail，拉不到渲染层继续用上一次的缓存/内置默认表。
   void refreshScenarioCatalog(freshGet).catch((err) => {
     console.error('[auth] refresh scenario catalog failed', {
+      message: err instanceof Error ? err.message : String(err)
+    })
+  })
+  void refreshScenarioCases(freshGet).catch((err) => {
+    console.error('[auth] refresh scenario cases failed', {
       message: err instanceof Error ? err.message : String(err)
     })
   })

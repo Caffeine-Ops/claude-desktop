@@ -102,6 +102,8 @@ import {
   type AuthLoginResult,
   type AuthSendSmsCodeResult,
   type AuthState,
+  type ScenarioCaseGallery,
+  type ScenarioCaseGalleryResult,
   type ScenarioCatalog,
   type ScenarioCatalogResult,
   type UsageQueryFilters,
@@ -848,6 +850,18 @@ const chatApi: ChatApi = {
     ipcRenderer.on(IPC_CHANNELS.SCENARIO_CATALOG_CHANGED, listener)
     return () => {
       ipcRenderer.off(IPC_CHANNELS.SCENARIO_CATALOG_CHANGED, listener)
+    }
+  },
+
+  getScenarioCases(): Promise<ScenarioCaseGalleryResult> {
+    return ipcRenderer.invoke(IPC_CHANNELS.SCENARIO_CASES_GET) as Promise<ScenarioCaseGalleryResult>
+  },
+
+  onScenarioCasesChanged(handler: (gallery: ScenarioCaseGallery) => void): () => void {
+    const listener = (_e: unknown, gallery: ScenarioCaseGallery): void => handler(gallery)
+    ipcRenderer.on(IPC_CHANNELS.SCENARIO_CASES_CHANGED, listener)
+    return () => {
+      ipcRenderer.off(IPC_CHANNELS.SCENARIO_CASES_CHANGED, listener)
     }
   },
 
