@@ -348,6 +348,9 @@ function CaseDetailDialog({
     setIndex(0)
     setDir(1)
     setAutoplay(true)
+    // hovering 也要清：鼠标停在大图上直接关弹窗时，元素卸载不会触发 mouseleave，
+    // 不清的话下次打开自动轮播就一直暂停。
+    setHovering(false)
   }, [item?.id])
   const count = images.length
   const safeIndex = Math.min(index, Math.max(count - 1, 0))
@@ -379,6 +382,10 @@ function CaseDetailDialog({
   useEffect(() => {
     if (!item || count <= 1) return
     const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return
+      // 焦点在可输入的元素里时不抢方向键（弹窗现在没有输入框，但别给以后埋雷）。
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
       if (e.key === 'ArrowRight') {
         e.preventDefault()
         step(1, true)
@@ -392,7 +399,7 @@ function CaseDetailDialog({
   }, [item, count, step])
 
   const navBtnCls =
-    'pointer-events-auto grid size-8 place-items-center p-0 rounded-full bg-black/45 text-white shadow-[0_2px_10px_rgba(0,0,0,0.25)] backdrop-blur-sm transition-[opacity,background-color] duration-150 hover:bg-black/60 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-white/80'
+    'pointer-events-auto grid size-8 place-items-center border-0 p-0 rounded-full bg-black/45 text-white shadow-[0_2px_10px_rgba(0,0,0,0.25)] backdrop-blur-sm transition-[opacity,background-color] duration-150 hover:bg-black/60 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-white/80'
 
   return (
     <DialogPrimitive.Root
@@ -509,7 +516,7 @@ function CaseDetailDialog({
 
                     {/* 多图：一排缩略图点选（替代原来的 ‹ › 盲翻） */}
                     {images.length > 1 ? (
-                      <div className="-mt-1 flex shrink-0 gap-2 overflow-x-auto py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                      <div className="-mt-1 flex shrink-0 gap-2 overflow-x-auto py-0.5" style={{ scrollbarWidth: 'none' }}>
                         {images.map((src, i) => (
                           <button
                             key={src + i}
@@ -518,7 +525,7 @@ function CaseDetailDialog({
                             aria-current={i === safeIndex}
                             onClick={() => goTo(i, i >= safeIndex ? 1 : -1, true)}
                             className={cn(
-                              'relative aspect-video w-[72px] shrink-0 overflow-hidden rounded-md border bg-muted transition-[opacity,box-shadow,border-color] duration-150',
+                              'relative aspect-video w-[72px] shrink-0 overflow-hidden rounded-md border p-0 bg-muted transition-[opacity,box-shadow,border-color] duration-150',
                               i === safeIndex
                                 ? 'border-[hsl(var(--accent))] shadow-[0_0_0_2px_hsl(var(--accent)/0.25)]'
                                 : 'border-border/60 opacity-60 hover:opacity-100'
