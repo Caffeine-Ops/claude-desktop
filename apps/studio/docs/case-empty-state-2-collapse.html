@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><title>方案 2 · 选完就收</title>
+<style>
+  :root{--bg:#f7f7f6;--card:#fff;--ink:#1c1c1a;--ink-2:#4b4b47;--muted:#8a8a85;--line:rgba(0,0,0,.08);--pill:rgba(0,0,0,.045);--accent:#e5623a;--green:#16a34a;--shadow:0 1px 2px rgba(0,0,0,.04),0 12px 32px -16px rgba(0,0,0,.18)}
+  *{box-sizing:border-box}
+  body{margin:0;background:#dcdcd9;font-family:-apple-system,"PingFang SC","Helvetica Neue",Arial,sans-serif;color:var(--ink);-webkit-font-smoothing:antialiased}
+  .note{max-width:1032px;margin:28px auto 12px;font-size:13px;color:#555;line-height:1.7}.note b{color:#111}
+  .frame{width:1032px;height:748px;margin:0 auto 40px;background:var(--bg);border-radius:14px;overflow:hidden;position:relative;box-shadow:0 30px 80px -30px rgba(0,0,0,.35)}
+  .page{position:absolute;inset:0;padding:0 80px;display:flex;flex-direction:column;justify-content:center}
+  .tabs{display:inline-flex;gap:2px;background:var(--pill);border-radius:12px;padding:3px;align-self:flex-start}
+  .tab{font-size:13px;padding:7px 12px;border-radius:9px;color:var(--ink-2)}.tab.on{background:#1c1c1a;color:#fff}
+  .chip{font-size:13px;padding:8px 12px;border-radius:10px;background:var(--pill);color:var(--ink-2);white-space:nowrap}
+  .chip.skill{background:#1c1c1a;color:#fff;display:inline-flex;gap:6px;align-items:center}
+  .chip.skill i{width:14px;height:14px;border-radius:4px;background:#e5623a;display:inline-block}
+  .chip.rec::before{content:"↘ ";color:var(--green);font-weight:700}
+  .composer{background:var(--card);border:1.5px solid rgba(229,98,58,.55);border-radius:20px;padding:16px;display:flex;flex-direction:column;box-shadow:var(--shadow)}
+  .composer .lead{display:inline-flex;align-self:flex-start;gap:6px;align-items:center;font-size:13px;background:var(--pill);padding:5px 10px;border-radius:8px}
+  .composer .lead i{width:12px;height:12px;border-radius:3px;background:#e5623a}
+  .composer .ph{margin-top:10px;font-size:14px;color:var(--muted)}
+  .composer .bar{margin-top:auto;display:flex;align-items:center;gap:10px}
+  .plus{width:36px;height:36px;border-radius:50%;border:1px solid var(--line);display:grid;place-items:center;color:var(--ink-2)}
+  .bar .sp{flex:1}.bar .m{font-size:13px;color:var(--muted)}
+  .send{width:36px;height:36px;border-radius:50%;background:var(--green);color:#fff;display:grid;place-items:center;font-weight:700}
+  .shell{background:rgba(0,0,0,.035);border-radius:28px;padding:0 0 10px}
+  .tray{display:flex;justify-content:space-between;font-size:12.5px;color:var(--ink-2);padding:10px 18px 0}
+  .tray span{background:#fff;border:1px solid var(--line);border-radius:999px;padding:6px 12px}
+  /* 案例条：与现在线上一致，不动 */
+  .cases{margin-top:var(--cases-gap,12px)}
+  .cases .cap{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .cases .cap span{font-size:13px;color:var(--ink-2)}.cases .cap i{font-style:normal;color:var(--muted);font-size:14px;letter-spacing:6px}
+  .strip{display:flex;gap:12px;overflow:hidden;-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 56px),transparent);mask-image:linear-gradient(to right,#000 calc(100% - 56px),transparent)}
+  .card{width:210px;flex:none}
+  .card img{width:210px;aspect-ratio:16/9;object-fit:cover;border-radius:10px;border:1px solid var(--line);display:block;background:#eee}
+  .card .t{font-size:12.5px;font-weight:600;margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .card .d{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  h1{margin:0 0 20px;font-size:24px;font-weight:700;letter-spacing:-.01em}
+  .crumb{display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:13px;color:var(--muted)}
+  .crumb b{color:var(--ink);font-weight:600}
+  .crumb .x{color:var(--muted);cursor:pointer}
+  .crumb .back{margin-left:auto;font-size:12.5px;color:var(--ink-2)}
+  .composer .ph{margin-top:8px}
+  .hints{margin-top:14px;display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;color:var(--ink-2)}
+  .hints span::before{content:"↘ ";color:var(--green);font-weight:700}
+  .hints em{font-style:normal;color:var(--muted)}
+  .cases{--cases-gap:24px}
+</style></head>
+<body>
+<div class="note"><b>方案 2 · 选完就收</b>：选中技能后，分类 tab 和技能 chip 已经完成使命，<b>收成一行面包屑</b>「日常办公 › 制作PPT ×」（右侧「换个场景」可展开回原来的 tab + chip）；推荐提示词<b>搬进输入框内部</b>，变成一行淡色的「试试：…」文字链，就在光标下面——它们本来就是给输入框用的。页面只剩标题 / 输入框 / 案例三块，最清爽，但多了一步「展开」才能换技能。</div>
+<div class="frame"><div class="page">
+    <h1>不止聊天，搞定一切</h1>
+    <div class="crumb"><span>日常办公</span><span>›</span><b>制作PPT</b><span class="x">×</span><span class="back">换个场景 ⌄</span></div>
+    <div class="shell">
+      <div class="composer" style="min-height:190px">
+        <span class="lead"><i></i>制作PPT</span>
+        <div class="ph">说说你要做什么样的 PPT…</div>
+        <div class="hints"><em>试试：</em><span>AI 发展历程 PPT</span><span>修改PPT文件</span><span>季度业务汇报</span><span>产品介绍页</span><span>选用现成模版</span><span>用我的PPT模版</span></div>
+        <div class="bar" style="margin-top:14px"><span class="plus">＋</span><span class="sp"></span><span class="m">✦ 模型 ⌄</span><span class="m">🎙</span><span class="send">↑</span></div>
+      </div>
+      <div class="tray"><span>▭ 桌面 ⌄</span><span>● ▸▸ 全自动 ⌄</span></div>
+    </div>
+    
+    <div class="cases">
+      <div class="cap"><span>不知道做什么，试试最佳实践案例</span><i>‹ ›</i></div>
+      <div class="strip">
+        <div class="card"><img src="https://cowork.cntcn.com/downloads/cases/ppt/quarterly-review/slide-1.jpg"><div class="t">季度业务汇报：KPI 卡片 + 项目进度 + 下季度规划</div><div class="d">一套 12 页的季度业务汇报，深蓝 + 琥珀的商务配色。</div></div>
+        <div class="card"><img src="https://cowork.cntcn.com/downloads/cases/ppt/product-launch/slide-1.jpg"><div class="t">新品发布会：科技感深色风，痛点 → 能力 → 定价</div><div class="d">深色底 + 紫青渐变，10 页以内。</div></div>
+        <div class="card"><img src="https://cowork.cntcn.com/downloads/cases/ppt/ai-history/slide-1.jpg"><div class="t">培训课件：AI 发展简史，时间轴 + 对比表 + 课堂小结</div><div class="d">米色纸张底 + 红色强调，编辑排版风。</div></div>
+        <div class="card"><img src="https://cowork.cntcn.com/downloads/cases/ppt/excel-sales-report/slide-1.jpg"><div class="t">Excel 数据一键变汇报：折线 / 环形 / 条形图 + Top 客户表</div><div class="d">把一份销售明细 Excel 直接整理成上半年销售汇报。</div></div>
+        <div class="card"><img src="https://cowork.cntcn.com/downloads/cases/ppt/project-proposal/slide-1.jpg"><div class="t">项目方案汇报：现状诊断 → 三期路径 → 预算与风险</div><div class="d">蓝灰稳重风，14 页。</div></div>
+      </div>
+    </div></div></div>
+</body></html>

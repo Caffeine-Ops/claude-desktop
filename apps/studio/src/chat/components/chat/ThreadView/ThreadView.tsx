@@ -1679,6 +1679,9 @@ function ChatHeader(): React.JSX.Element {
  * thread has messages, the dock takes over and the composer pins to the
  * bottom as usual.
  */
+/** 紧凑模式进出的统一节奏：软阻尼弹簧，高度/内边距一起收放，不弹。 */
+const COMPACT_TRANSITION = { type: 'spring', bounce: 0.1, visualDuration: 0.34 } as const
+
 function EmptyState(): React.JSX.Element {
   const t = useT()
   // 紧凑模式：composer 里选中了有案例的技能 → 大标题收成一行、副标题隐藏、
@@ -1706,38 +1709,70 @@ function EmptyState(): React.JSX.Element {
     // motion.div）。标题/提示语/演示区没有 backdrop-filter，各自留在独立的
     // motion.div 里继续淡入，观感上仍是「整块一起浮现」，只是 Composer 从
     // 第一帧就是最终态，不参与这次半透明合成。
-    <div
-      className={
-        compact
-          ? 'flex flex-1 flex-col items-stretch justify-center py-2'
-          : 'flex flex-1 flex-col items-stretch justify-center py-10'
-      }
+    // 外层是 motion.div 但**只动 padding / margin**（不动 opacity / transform）：
+    // 紧凑模式再吃掉外层列 `pb-20` 里的 48px（marginBottom -48）——那 80px 底部
+    // 留白是给消息态的 composer dock 让位的，空态没有 dock，白占。数值变化
+    // 走 animate 而不是 className 硬切，进出紧凑模式时整块是顺滑地收/放。
+    <motion.div
+      className="flex flex-1 flex-col items-stretch justify-center"
+      initial={false}
+      animate={compact ? { paddingTop: 4, paddingBottom: 4, marginBottom: -48 } : { paddingTop: 40, paddingBottom: 40, marginBottom: 0 }}
+      transition={COMPACT_TRANSITION}
     >
-      <motion.div {...heroFade}>
-        {compact ? (
-          <h1 className="mb-4 text-[26px] font-bold leading-tight tracking-tight text-foreground">
-            {t('emptyStateTitle')}
-          </h1>
-        ) : (
-          <>
-            <h1 className="text-[clamp(36px,4.5vw,52px)] font-bold leading-[1.18] tracking-tight text-foreground">
-              {titleParts.map((part, i) => (
-                <span key={i} className="block">
-                  {i < titleParts.length - 1 ? `${part}，` : part}
-                </span>
-              ))}
-            </h1>
-            <p className="mb-8 mt-4 text-[14px] text-muted-foreground/80">
-              {t('emptyStateScenarioHint')}
-            </p>
-          </>
-        )}
-      </motion.div>
+      {/* 大标题 + 副标题：只在非紧凑模式渲染。进紧凑时高度收到 0 + 淡出，
+          下面的 rail / composer 顺着文档流平滑上移；小标题在同一时刻从
+          Composer 的 heroLeading 槽淡入（见下）。overflow-hidden 让高度动画
+          期间文字不外溢。 */}
+      <AnimatePresence initial={false}>
+        {!compact ? (
+          <motion.div
+            key="hero-title"
+            className="overflow-hidden"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={COMPACT_TRANSITION}
+          >
+            <motion.div {...heroFade}>
+              <h1 className="text-[clamp(36px,4.5vw,52px)] font-bold leading-[1.18] tracking-tight text-foreground">
+                {titleParts.map((part, i) => (
+                  <span key={i} className="block">
+                    {i < titleParts.length - 1 ? `${part}，` : part}
+                  </span>
+                ))}
+              </h1>
+              <p className="mb-8 mt-4 text-[14px] text-muted-foreground/80">
+                {t('emptyStateScenarioHint')}
+              </p>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
 
       {/* Composer sits inside the centered block (not the bottom dock).
           hero 形态：分类 tab + 技能 chips 的 ScenarioRail 由它自己渲染在
-          卡片上方，工作目录/权限行收进灰壳托盘的延伸条。 */}
-      <Composer variant="hero" />
+          卡片上方，工作目录/权限行收进灰壳托盘的延伸条。
+          紧凑模式：一行小标题通过 heroLeading 塞到 rail 的分类 tab 同一行左侧
+          （2026-08-18 方案 1「三层结构」：标题+tab 一行 / chip 一行 / 输入框）。 */}
+      <Composer
+        variant="hero"
+        heroLeading={
+          <AnimatePresence initial={false}>
+            {compact ? (
+              <motion.h1
+                key="hero-title-compact"
+                className="min-w-0 truncate text-[24px] font-bold leading-tight tracking-tight text-foreground"
+                initial={{ opacity: 0, x: -8 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -8 }}
+                transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+              >
+                {t('emptyStateTitle')}
+              </motion.h1>
+            ) : null}
+          </AnimatePresence>
+        }
+      />
 
       {/* 「看看它能做什么」演示区：内置演示录像的卡片入口（点卡片就地
           回放）。没有内置录像时自渲染 null，页面与旧版完全一致。 */}
@@ -1769,6 +1804,6 @@ function EmptyState(): React.JSX.Element {
         </button>
       </div>
       */}
-    </div>
+    </motion.div>
   )
 }
