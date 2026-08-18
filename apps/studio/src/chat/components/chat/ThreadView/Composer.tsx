@@ -30,6 +30,7 @@ import {
 import { QueuePanel } from './QueuePanel'
 import { ScenarioRail } from './ScenarioRail'
 import { SkillCaseShowcase } from './SkillCaseShowcase'
+import { useSkillCases } from './useSkillCases'
 import { AgentTeamBar } from './AgentTeamBar'
 import { buildWfRows } from './WorkflowTaskTree'
 import { useAgentTeamStore } from '../../../stores/agentTeam'
@@ -268,8 +269,22 @@ function GapFillBanner({ sessionId }: { sessionId: string | null }): React.JSX.E
  *     chips），卡片和底行一起包进一个浅灰圆角「托盘」，底行成为托盘露出的
  *     延伸条——WorkBuddy 参考里的「选择工作空间 / 默认权限」灰条。
  */
-export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero' } = {}): React.JSX.Element {
+export function Composer({
+  variant = 'default',
+  heroLeading = null
+}: {
+  variant?: 'default' | 'hero'
+  /**
+   * hero 形态下塞进 ScenarioRail 分类 tab 同一行左侧的节点（EmptyState 用它
+   * 在「紧凑模式」把收成一行的大标题放到 tab 旁边，见 ThreadView EmptyState）。
+   */
+  heroLeading?: React.ReactNode
+} = {}): React.JSX.Element {
   const t = useT()
+  // 紧凑模式（选中了有案例的技能）：rail 的 chip 行改单行横滑、输入区收矮，
+  // 好让案例条在 800px 窗口里不滚动放下。判定与 EmptyState / SkillCaseShowcase
+  // 同源（useSkillCases().visible），三处必须一致。
+  const compact = useSkillCases().visible
   const [sessionMeta, setSessionMeta] = useState<SessionMeta | null>(null)
   const [files, setFiles] = useState<readonly string[]>([])
   const streaming = useChatStore((s) => s.streaming)
@@ -544,6 +559,8 @@ export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero'
         // 出组件边界，联动状态（composer.text）走 assistant-ui store。
         <div className="mb-4">
           <ScenarioRail
+            compact={compact}
+            leading={heroLeading}
             onInsertSkill={(value) => {
               // PPT 技能不再随安装包发布，首次点它要先下载（见 stores/pptSkill）。
               // 未就绪时弹进度层并中止本次插入——装好后进度层自动关闭，用户再
@@ -724,7 +741,12 @@ export function Composer({ variant = 'default' }: { variant?: 'default' | 'hero'
                     最后几个字）。 */}
                 <div
                   className={
-                    (variant === 'hero' ? 'min-h-[108px]' : 'min-h-[52px]') +
+                    // hero 紧凑模式把输入区收矮（108 → 76）：min-height 用 CSS
+                    // 过渡，切换时卡片是顺滑地缩/涨，不是跳一下。
+                    (variant === 'hero'
+                      ? (compact ? 'min-h-[76px]' : 'min-h-[108px]') +
+                        ' transition-[min-height] duration-300 ease-out'
+                      : 'min-h-[52px]') +
                     ' pb-3 pt-4'
                   }
                 >

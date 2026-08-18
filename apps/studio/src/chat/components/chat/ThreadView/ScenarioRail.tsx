@@ -253,6 +253,16 @@ const COLLAPSED_PROMPT_COUNT = 6
 
 interface ScenarioRailProps {
   /**
+   * 紧凑模式（EmptyState 选中了有案例的技能，见 useSkillCases）：chip 行不
+   * 折行、改成单行横向滑动（右侧渐隐提示还有），tab 行与 chip 行的间距收紧。
+   * 目的是给下方的案例条让出高度，同时不让上半部分挤成一团（2026-08-18
+   * 方案 1「三层结构」，设计稿 docs/case-empty-state-1-three-layers.html）。
+   */
+  compact?: boolean
+  /** 与分类 tab 同一行、放在左侧的节点（紧凑模式下 EmptyState 把一行小标题
+   *  放这里，tab 组随之靠右）。null 时 tab 组保持靠左。 */
+  leading?: React.ReactNode
+  /**
    * 选定技能：整 input 重置为该技能的 slash chip（resetWithSlashCommand）。
    * 旧正文一并清空——点技能=重开该技能流程，随后正文为空、推荐行出现。
    */
@@ -266,6 +276,8 @@ interface ScenarioRailProps {
 }
 
 export function ScenarioRail({
+  compact = false,
+  leading = null,
   onInsertSkill,
   onFillPrompt,
   snapshotDraft,
@@ -331,7 +343,15 @@ export function ScenarioRail({
       {/* 分类 tab 组：浅灰 pill 容器，选中项一个共享 layoutId 的墨黑块在
           tab 间滑动（bg-foreground 暗色下自动反转为白底黑字——原型 Tweaks
           里验证过的 ink 选中态）。 */}
-      <div className="inline-flex gap-1 rounded-[14px] bg-foreground/[0.045] p-1">
+      {/* tab 行：左侧可放 leading（紧凑模式的一行小标题），tab 组挂 layout——
+          leading 出现/消失时它在左右两端之间滑过去，而不是瞬移。 */}
+      <div className="flex items-center justify-between gap-4">
+        {leading}
+        <motion.div
+          layout
+          transition={LAYOUT_TRANSITION}
+          className="inline-flex shrink-0 gap-1 rounded-[14px] bg-foreground/[0.045] p-1"
+        >
         {categories.map((cat) => {
           const active = cat.id === (category?.id ?? catId)
           return (
@@ -361,6 +381,7 @@ export function ScenarioRail({
             </motion.button>
           )
         })}
+        </motion.div>
       </div>
 
       {/* 双态 chip 行：key 随内容源翻转触发 AnimatePresence 进出场。
@@ -375,7 +396,16 @@ export function ScenarioRail({
           initial="hidden"
           animate="show"
           exit="exit"
-          className="mt-8 flex min-h-[40px] flex-wrap items-center gap-2.5"
+          className={
+            'flex min-h-[40px] items-center gap-2.5 transition-[margin-top] duration-300 ease-out ' +
+            (compact
+              ? // 紧凑：单行横滑，隐藏滚动条（scrollbar-width 用内联样式，理由见
+                // SkillCaseShowcase），右侧 mask 渐隐提示还有；上下各留 4px 给
+                // whileHover 的轻微放大，别被 overflow 裁掉。
+                'mt-5 flex-nowrap overflow-x-auto overflow-y-hidden py-1 [mask-image:linear-gradient(to_right,black_calc(100%-48px),transparent)]'
+              : 'mt-8 flex-wrap')
+          }
+          style={compact ? { scrollbarWidth: 'none' } : undefined}
         >
           {showPrompts ? (
             <>
@@ -390,7 +420,7 @@ export function ScenarioRail({
                 variants={CHIP_VARIANTS}
                 whileHover={CHIP_HOVER}
                 whileTap={CHIP_TAP}
-                className="group flex items-center gap-1.5 rounded-[10px] bg-foreground px-3 py-[7px] text-[13.5px] font-semibold text-background shadow-sm"
+                className="group flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[10px] bg-foreground px-3 py-[7px] text-[13.5px] font-semibold text-background shadow-sm"
                 onClick={() => {
                   setExpandedPromptSkill(null)
                   restoreDraft(null)
@@ -414,7 +444,7 @@ export function ScenarioRail({
               </motion.button>
               <motion.span
                 variants={CHIP_VARIANTS}
-                className="h-[18px] w-px bg-border"
+                className="h-[18px] w-px shrink-0 bg-border"
                 aria-hidden="true"
               />
               {visiblePrompts!.map((p) => (
@@ -424,7 +454,7 @@ export function ScenarioRail({
                   variants={CHIP_VARIANTS}
                   whileHover={CHIP_HOVER}
                   whileTap={CHIP_TAP}
-                  className="flex items-center gap-1.5 rounded-[10px] bg-foreground/[0.05] px-[13px] py-2 text-[13.5px] font-medium text-foreground transition-colors hover:bg-foreground/[0.09] dark:bg-white/[0.08] dark:hover:bg-white/[0.13]"
+                  className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[10px] bg-foreground/[0.05] px-[13px] py-2 text-[13.5px] font-medium text-foreground transition-colors hover:bg-foreground/[0.09] dark:bg-white/[0.08] dark:hover:bg-white/[0.13]"
                   onClick={() => onFillPrompt(p.text)}
                 >
                   <FillArrowIcon className="shrink-0 text-brand" />
@@ -440,7 +470,7 @@ export function ScenarioRail({
                   variants={CHIP_VARIANTS}
                   whileHover={CHIP_HOVER}
                   whileTap={CHIP_TAP}
-                  className="flex items-center gap-1 rounded-[10px] border border-dashed border-border px-[13px] py-2 text-[13.5px] font-medium text-muted-foreground transition-colors hover:border-foreground/25 hover:text-foreground"
+                  className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-[10px] border border-dashed border-border px-[13px] py-2 text-[13.5px] font-medium text-muted-foreground transition-colors hover:border-foreground/25 hover:text-foreground"
                   onClick={() =>
                     setExpandedPromptSkill(promptsExpanded ? null : (activeSpec?.match ?? null))
                   }
