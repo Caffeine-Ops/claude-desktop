@@ -16,7 +16,7 @@ Electron 桌面应用，封装 `@anthropic-ai/claude-agent-sdk`（实际驱动�
 
 IPC 通道名集中在 `electron/shared/ipc-channels.ts`，共享类型在 `electron/shared/types.ts`（前端经 `@desktop-shared/*` 别名 type-only 消费）。**加一条 IPC 要同时改四处**：`ipc-channels.ts`（通道常量）→ `preload/index.ts`（暴露方法）→ `preload/index.d.ts`（类型）→ main 侧 handler（`electron/main/ipc/register.ts` 或 engine）。漏一处类型就报错，typecheck hook 会当场抓到。
 
-## 核心：ChatEngine（`electron/main/core/engine.ts`，~3200 行）
+## 核心：ChatEngine（`electron/main/core/engine.ts`，~4400 行）
 
 每个 tab 一个 `WebContentsView` + 一个独立 `ChatEngine`（绑定到自己的 `webContents`）。引擎内部用 **multi-runtime** 模型：一个 engine 可同时持有多个 `SessionRuntime`（每个对应一个 fusion-code 子进程）。
 
