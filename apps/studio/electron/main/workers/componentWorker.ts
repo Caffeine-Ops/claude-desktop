@@ -148,7 +148,52 @@ function checkDiskSpace(): void {
 
 // ── ① 下载（可续传）──────────────────────────────────────────────────
 
+/**
+ * 一轮下载。本层只负责**架好停滞看门狗**，实际的请求与落盘在 downloadBody。
+ *
+ * 看门狗必须在 `fetch` **之前**就 armed。这里原本把 setInterval 写在 fetch
+ * 之后——实测（2026-08，Node 24 + undici）服务器只发响应头就装死时
+ * `await fetch()` 本身会永久挂起，那行 setInterval 永远执行不到，看门狗形同
+ * 虚设：首启门会无限转圈，正是它本该防住的场景。提前 arm 之后，「等响应头」
+ * 与「读 body」两个阶段都能在 abort 后 ~5ms 内抛错（已用最小复现确认）。
+ * 同 pptSkillWorker，两处保持同形。
+ */
 async function downloadOnce(attempt: number): Promise<void> {
+  const controller = new AbortController()
+  let lastBytesAt = Date.now()
+  const stall = setInterval(() => {
+    if (Date.now() - lastBytesAt > STALL_TIMEOUT_MS) controller.abort()
+  }, 5_000)
+
+  try {
+    await downloadBody(attempt, controller, () => {
+      lastBytesAt = Date.now()
+    })
+  } catch (err) {
+    // **不能依赖 abort(reason) 把 reason 带出来**：经 `Readable.fromWeb` 包装的
+    // body 流被 abort 时，pipeline 抛的是固定的 "This operation was aborted"。
+    // 所以按「是谁掐的」反查——signal.aborted 只可能是看门狗（本层不接受外部
+    // signal），可以放心翻译成人话；否则用户在界面上看到的就是那句英文。
+    if (controller.signal.aborted) {
+      throw new Error(
+        `连接停滞超过 ${Math.round(STALL_TIMEOUT_MS / 1000)} 秒没有新数据——已判定为断线`
+      )
+    }
+    throw err
+  } finally {
+    clearInterval(stall)
+  }
+}
+
+/**
+ * 真正跑请求与落盘的那一段。
+ * @param onBytes 收到新字节时回调，喂上层看门狗的「上次有进展」时间戳。
+ */
+async function downloadBody(
+  attempt: number,
+  controller: AbortController,
+  onBytes: () => void
+): Promise<void> {
   const part = partPath()
   let existing = 0
   try {
@@ -172,7 +217,6 @@ async function downloadOnce(attempt: number): Promise<void> {
     truncateSync(part, existing)
   }
 
-  const controller = new AbortController()
   const headers: Record<string, string> = {}
   if (existing > 0) headers.Range = `bytes=${existing}-`
 
@@ -220,19 +264,14 @@ async function downloadOnce(attempt: number): Promise<void> {
   mkdirSync(job.cacheDir, { recursive: true })
   let received = writeOffset
   let lastTick = 0
-  let lastBytesAt = Date.now()
   let lastSampleAt = Date.now()
   let lastSampleBytes = received
   let bps = 0
 
-  const stall = setInterval(() => {
-    if (Date.now() - lastBytesAt > STALL_TIMEOUT_MS) controller.abort()
-  }, 5_000)
-
   const counter = new Transform({
     transform(chunk: Buffer, _enc, cb) {
       received += chunk.length
-      lastBytesAt = Date.now()
+      onBytes()
       const now = Date.now()
       if (now - lastTick >= PROGRESS_THROTTLE_MS) {
         // 速率用 EMA 平滑，否则 1.1MB/s 的抖动会让 ETA 疯狂跳。
@@ -255,15 +294,11 @@ async function downloadOnce(attempt: number): Promise<void> {
     }
   })
 
-  try {
-    await pipeline(
-      Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]),
-      counter,
-      createWriteStream(part, writeOffset > 0 ? { flags: 'a' } : { flags: 'w' })
-    )
-  } finally {
-    clearInterval(stall)
-  }
+  await pipeline(
+    Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]),
+    counter,
+    createWriteStream(part, writeOffset > 0 ? { flags: 'a' } : { flags: 'w' })
+  )
 
   send({ type: 'progress', phase: 'downloading', done: received, total: job.size, bytesPerSecond: Math.round(bps), attempt })
 }
