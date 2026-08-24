@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import {
+  chmodSync,
   createReadStream,
   createWriteStream,
   existsSync,
@@ -92,6 +93,8 @@ const STALL_TIMEOUT_MS = 45_000
 
 /** 非重试错误：再试多少次都是同样结果，立刻失败比让用户干等五轮退避强。 */
 class FatalError extends Error {}
+
+const IS_WIN = process.platform === 'win32'
 
 const job: PptSkillJob = JSON.parse(process.argv[2] ?? '{}')
 
@@ -322,6 +325,9 @@ function extractAndInstall(): void {
     const entries = zip.getEntries()
     let extracted = 0
     let lastTick = 0
+    // 权限位对账，见循环后的断言。
+    let execDeclared = 0
+    let execApplied = 0
     for (const entry of entries) {
       if (entry.isDirectory) continue
       // 路径穿越防御：zip 里的 entryName 是外部数据，`../` 能写到安装根之外。
@@ -331,6 +337,31 @@ function extractAndInstall(): void {
       }
       mkdirSync(dirname(dest), { recursive: true })
       writeFileSync(dest, entry.getData())
+
+      /**
+       * 把 zip 里的权限位写回磁盘。
+       *
+       * **writeFileSync 不会带上 mode**，于是包里 755 的脚本解出来是 644。这个
+       * bug 一直潜伏着：skill 的 `bin/ensure-python.sh` 正是靠被 `source` 调用
+       * （而不是直接执行）才侥幸没炸——真去 exec 它就是 EACCES。
+       *
+       * 三道守卫，每道都有必要：
+       *   · 非 Windows —— 那边没有 unix 权限位概念，chmodSync 只能改只读位。
+       *   · zip 声明来自 unix（made 高字节 = 3）—— 只有那样 external attributes
+       *     的高 16 位才真的是 unix mode；Windows 工具打的包那里是 MS-DOS 属性
+       *     位，照搬会 chmod 出垃圾权限。
+       *   · mode 落在 (0, 0o777] —— 兜底。**chmod(0) 会让文件谁都读不了**，那比
+       *     丢执行位严重得多；宁可不改，也不能改坏。
+       */
+      const mode = entry.header.fileAttr
+      const unixZip = entry.header.made >> 8 === 3
+      const declaresExec = unixZip && (mode & 0o111) !== 0
+      if (declaresExec) execDeclared += 1
+      if (!IS_WIN && unixZip && mode > 0 && mode <= 0o777) {
+        chmodSync(dest, mode)
+        // 只对声明了可执行的少数文件回读校验——12167 个文件全 stat 一遍不值得。
+        if (declaresExec && (statSync(dest).mode & 0o111) !== 0) execApplied += 1
+      }
       extracted += 1
       const now = Date.now()
       if (now - lastTick >= PROGRESS_THROTTLE_MS) {
@@ -339,6 +370,23 @@ function extractAndInstall(): void {
       }
     }
     send({ type: 'progress', phase: 'extracting', done: extracted, total: entries.length })
+
+    /**
+     * 权限位对账。
+     *
+     * 丢执行位属于「不报错、只是以后某处莫名 EACCES」那类退化——症状离病因很远，
+     * 排查成本极高（这次就是靠读另一个文件的注释才发现的）。所以在这里当场对账：
+     * zip 里声明了几个可执行文件，落盘后就该有几个。数不上就是 chmod 环节失效，
+     * 安装期硬失败，而不是留给用户某天在 CLI 里撞见。
+     *
+     * 同 afterPack 的 assertLocalesSurvived：静默的退化必须用断言逼成显式失败。
+     * Windows 上不对账 —— 那边 chmod 本就不生效，execApplied 恒为 0。
+     */
+    if (!IS_WIN && execDeclared > 0 && execApplied !== execDeclared) {
+      throw new Error(
+        `可执行权限设置失败：zip 声明 ${execDeclared} 个可执行文件，实际只有 ${execApplied} 个生效`
+      )
+    }
 
     // fusion-code 认的插件清单——由安装器写而不是打进 zip：它是安装形态的
     // 一部分，不是 skill 内容（与 daemon 市场安装器的 pluginManifestContent
