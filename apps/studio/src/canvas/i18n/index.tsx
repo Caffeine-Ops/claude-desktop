@@ -9,25 +9,8 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { de } from './locales/de';
 import { en } from './locales/en';
-import { id } from './locales/id';
-import { esES } from './locales/es-ES';
-import { fa } from './locales/fa';
-import { ar } from './locales/ar';
-import { ja } from './locales/ja';
-import { ko } from './locales/ko';
-import { ptBR } from './locales/pt-BR';
-import { ru } from './locales/ru';
 import { zhCN } from './locales/zh-CN';
-import { zhTW } from './locales/zh-TW';
-import { pl } from './locales/pl';
-import { hu } from './locales/hu';
-import { fr } from './locales/fr';
-import { uk } from './locales/uk';
-import { tr } from './locales/tr';
-import { th } from './locales/th';
-import { it } from './locales/it';
 import { LOCALES, type Dict, type Locale } from './types';
 
 export { LOCALES, LOCALE_LABEL } from './types';
@@ -35,27 +18,64 @@ export type { Locale } from './types';
 
 type DictKey = keyof Dict;
 
-const DICTS: Record<Locale, Dict> = {
+/**
+ * 19 本字典约 2MB 源码，全静态 import 会把它们无条件塞进首屏 chunk（实测落在
+ * 两个 1891.8KB 的 chunk 里、且两个入口各打一份）。而一个用户只可能用其中一种。
+ *
+ * 于是分两类：
+ *
+ * **静态内联 2 本**
+ *   · `en` —— **兜底字典，必须同步可用**。`t()` 的取值链是
+ *     `dict[key] ?? en[key] ?? key`，无 Provider 的兜底分支也直接读它；把它变
+ *     成异步的，首帧会连英文都没有，整个 UI 拿不到任何文案。
+ *   · `zh-CN` —— 主要用户群。多留这一本（~100KB）换中文用户零闪烁，划算。
+ *
+ * **其余 17 本动态 import**，切到那些语言时才从磁盘读对应 chunk。加载完成前
+ * `t()` 自动走上面那条 `?? en[key]` 兜底链——**所以 t() 的逻辑一个字都不用改**，
+ * 代价只是非中英文用户首帧短暂显示英文。这是 Electron、读的是本地文件而非网络，
+ * 毫秒级，基本看不见。
+ */
+const STATIC_DICTS: Partial<Record<Locale, Dict>> = {
   'en': en,
-  'id': id,
-  'de': de,
   'zh-CN': zhCN,
-  'zh-TW': zhTW,
-  'pt-BR': ptBR,
-  'es-ES': esES,
-  'ru': ru,
-  'fa': fa,
-  'ar': ar,
-  'ja': ja,
-  'ko': ko,
-  'pl': pl,
-  'hu': hu,
-  'fr': fr,
-  'uk': uk,
-  'tr': tr,
-  'th': th,
-  'it': it,
 };
+
+/**
+ * 按需加载表。**每个 import() 的路径必须是字面量**——打包器靠静态分析这个字符串
+ * 切 chunk，写成 `import(`./locales/${locale}`)` 会退化成「把整个目录都打进来」，
+ * 那就白改了。
+ */
+const LAZY_DICTS: Partial<Record<Locale, () => Promise<Dict>>> = {
+  'id': () => import('./locales/id').then((m) => m.id),
+  'de': () => import('./locales/de').then((m) => m.de),
+  'zh-TW': () => import('./locales/zh-TW').then((m) => m.zhTW),
+  'pt-BR': () => import('./locales/pt-BR').then((m) => m.ptBR),
+  'es-ES': () => import('./locales/es-ES').then((m) => m.esES),
+  'ru': () => import('./locales/ru').then((m) => m.ru),
+  'fa': () => import('./locales/fa').then((m) => m.fa),
+  'ar': () => import('./locales/ar').then((m) => m.ar),
+  'ja': () => import('./locales/ja').then((m) => m.ja),
+  'ko': () => import('./locales/ko').then((m) => m.ko),
+  'pl': () => import('./locales/pl').then((m) => m.pl),
+  'hu': () => import('./locales/hu').then((m) => m.hu),
+  'fr': () => import('./locales/fr').then((m) => m.fr),
+  'uk': () => import('./locales/uk').then((m) => m.uk),
+  'tr': () => import('./locales/tr').then((m) => m.tr),
+  'th': () => import('./locales/th').then((m) => m.th),
+  'it': () => import('./locales/it').then((m) => m.it),
+};
+
+// 开发期完整性检查：新增语言时漏登记 loader 会**静默锁英文**（零报错，和
+// 2026-07-03 Provider 漏搬那次同一种病）。同 skills/writing 的
+// validate_library.py 抓「新增手册漏登记进 _index.md」的思路。
+if (process.env.NODE_ENV !== 'production') {
+  const orphans = LOCALES.filter((l) => !STATIC_DICTS[l] && !LAZY_DICTS[l]);
+  if (orphans.length) {
+    console.error(
+      `[i18n] 这些语言既不在 STATIC_DICTS 也没有 LAZY_DICTS loader，切过去会静默锁英文：${orphans.join(', ')}`,
+    );
+  }
+}
 
 const LS_KEY = 'open-design:locale';
 
@@ -121,6 +141,37 @@ const RTL_LOCALES: Locale[] = ['ar', 'fa'];
 
 export function I18nProvider({ initial, children }: ProviderProps) {
   const [locale, setLocaleState] = useState<Locale>(() => initial ?? detectInitialLocale());
+  // 手上已有的字典：静态那两本 + 已按需加载回来的。
+  const [dicts, setDicts] = useState<Partial<Record<Locale, Dict>>>(STATIC_DICTS);
+
+  /**
+   * 当前语言的字典还没到手就去加载它。
+   *
+   * **竞态是这里唯一的坑**：用户快速连切 fr → de → ja 时，三个 import() 的完成
+   * 顺序不保证，晚发起的可能先回来。cleanup 里的 cancelled 标志保证只有「当前
+   * 这次 effect」的结果会被采纳，过期的一律丢弃——否则界面会停在中途某个语言，
+   * 而且是那种「偶尔才出现、复现不了」的 bug。
+   *
+   * 已加载过的语言再切回来会重新调 import()，但模块已在内存里，那次是同步
+   * resolve 的，成本可忽略；setDicts 里再挡一道，避免无意义的重渲染。
+   */
+  useEffect(() => {
+    const load = LAZY_DICTS[locale];
+    if (!load) return; // 静态内联的那两本，或未登记的语言（dev 下已报错）
+    let cancelled = false;
+    void load()
+      .then((dict) => {
+        if (cancelled) return;
+        setDicts((prev) => (prev[locale] ? prev : { ...prev, [locale]: dict }));
+      })
+      .catch((err: unknown) => {
+        // 加载失败不致命：t() 会继续走 en 兜底，UI 是英文但可用。
+        console.error(`[i18n] 语言包 ${locale} 加载失败，暂时回退英文`, err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [locale]);
 
   // Keep <html lang="…" dir="…"> in sync so screen readers and CSS hooks
   // pick the right language token and direction without each component
@@ -144,7 +195,9 @@ export function I18nProvider({ initial, children }: ProviderProps) {
 
   const t = useCallback(
     (key: DictKey, vars?: Record<string, string | number>): string => {
-      const dict = DICTS[locale] ?? en;
+      // 取值链与改造前完全一致，只是数据源从常量表换成了 state：字典还在路上
+      // 时 `dicts[locale]` 是 undefined，自然落到 en —— 这正是我们要的降级。
+      const dict = dicts[locale] ?? en;
       const raw = dict[key] ?? en[key] ?? key;
       if (!vars) return raw;
       return raw.replace(/\{(\w+)\}/g, (_, name: string) => {
@@ -152,7 +205,9 @@ export function I18nProvider({ initial, children }: ProviderProps) {
         return v == null ? `{${name}}` : String(v);
       });
     },
-    [locale],
+    // dicts 必须在依赖里：字典异步到手后要靠这个身份变化触发重渲染，
+    // 漏了它界面会一直停在英文（而且没有任何报错）。
+    [locale, dicts],
   );
 
   const value = useMemo<I18nContextValue>(

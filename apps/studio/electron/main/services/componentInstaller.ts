@@ -34,6 +34,7 @@ import {
   type ComponentsManifest,
   type RuntimeComponentsState
 } from '../../shared/runtimeComponents'
+import { API_TIMEOUT_MS, fetchWithTimeout } from '../lib/http'
 
 /**
  * 运行时组件（AI 引擎 / Python 环境）的按需安装器。
@@ -180,7 +181,7 @@ export function ensureRuntimeComponentsInBackground(): void {
 
 async function fetchManifest(): Promise<ComponentsManifest | null> {
   const url = `${baseUrl()}/${MANIFEST_FILE}`
-  const res = await fetch(url)
+  const res = await fetchWithTimeout(url, undefined, { timeoutMs: API_TIMEOUT_MS })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   // 同域 SPA 兜底会把漏配路径变成 200 + text/html，先看类型再解析，
   // 免得把一个网页丢进 JSON.parse 得到一句没头没脑的语法错误。

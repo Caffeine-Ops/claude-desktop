@@ -12,6 +12,7 @@
 
 import { extForImageMime } from '../../shared/imageMime'
 import type { ProposalImageApiConfig } from '../../shared/ipc-channels'
+import { API_TIMEOUT_MS, fetchWithTimeout } from '../lib/http'
 
 /**
  * 出图凭据配置。直接复用 shared 的 IPC 类型而非再声明一份结构双胞胎（评审发现：两份
@@ -66,21 +67,21 @@ export function __setSleepForTest(fn: (ms: number) => Promise<void>): void {
 }
 
 async function postJson(url: string, apiKey: string, payload: unknown): Promise<unknown> {
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method: 'POST',
     headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
     body: JSON.stringify(payload)
-  })
+  }, { timeoutMs: API_TIMEOUT_MS })
   if (!res.ok) throw new Error(`Image API error (${res.status}): ${await res.text()}`)
   return res.json()
 }
 
 async function postMultipart(url: string, apiKey: string, form: FormData): Promise<unknown> {
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method: 'POST',
     headers: { authorization: `Bearer ${apiKey}` },
     body: form
-  })
+  }, { timeoutMs: API_TIMEOUT_MS })
   if (!res.ok) throw new Error(`Image API error (${res.status}): ${await res.text()}`)
   return res.json()
 }
@@ -90,7 +91,7 @@ async function extractBytes(json: unknown): Promise<Buffer> {
   if (!first) throw new Error('API 响应缺 data[0]')
   if (first.b64_json) return Buffer.from(first.b64_json, 'base64')
   if (first.url) {
-    const res = await fetch(first.url)
+    const res = await fetchWithTimeout(first.url, undefined, { timeoutMs: API_TIMEOUT_MS })
     if (!res.ok) throw new Error(`下载生成图失败 (${res.status})`)
     return Buffer.from(await res.arrayBuffer())
   }

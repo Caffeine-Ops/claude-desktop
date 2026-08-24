@@ -317,6 +317,12 @@ import {
   getLogs,
   removeLogSubscriber
 } from '../core/logCollector'
+import {
+  API_TIMEOUT_MS,
+  LLM_TIMEOUT_MS,
+  PROBE_TIMEOUT_MS,
+  fetchWithTimeout
+} from '../lib/http'
 
 /**
  * MODEL_LIST cache: the catalog changes rarely, and the composer's 模型 chip
@@ -1825,9 +1831,9 @@ export function registerIpcHandlers(): void {
       try {
         // Electron's net.fetch: Chromium network stack, honors the system
         // proxy config the same way the rest of the app does.
-        const res = await net.fetch(`${base}/v1/models`, {
+        const res = await fetchWithTimeout(`${base}/v1/models`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {}
-        })
+        }, { timeoutMs: API_TIMEOUT_MS, fetchImpl: net.fetch })
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const body = (await res.json()) as {
           data?: Array<{ id?: unknown; display_name?: unknown }>
@@ -3592,7 +3598,10 @@ const DAEMON_BASE = `http://127.0.0.1:${DAEMON_PORT}`
  */
 async function fetchDaemonAppearance(): Promise<AppearancePrefs | null> {
   try {
-    const res = await net.fetch(`${DAEMON_BASE}/api/app-config`)
+    const res = await fetchWithTimeout(`${DAEMON_BASE}/api/app-config`, undefined, {
+      timeoutMs: PROBE_TIMEOUT_MS,
+      fetchImpl: net.fetch
+    })
     if (!res.ok) return null
     const data = (await res.json()) as { config?: { appearance?: AppearancePrefs } }
     return data?.config?.appearance ?? null
@@ -3610,11 +3619,11 @@ async function writeDaemonAppearance(
   patch: AppearancePrefs
 ): Promise<AppearancePrefs | null> {
   try {
-    const res = await net.fetch(`${DAEMON_BASE}/api/app-config`, {
+    const res = await fetchWithTimeout(`${DAEMON_BASE}/api/app-config`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ appearance: patch })
-    })
+    }, { timeoutMs: PROBE_TIMEOUT_MS, fetchImpl: net.fetch })
     if (!res.ok) return null
     const data = (await res.json()) as { config?: { appearance?: AppearancePrefs } }
     return data?.config?.appearance ?? null
@@ -4100,11 +4109,11 @@ async function transcribeViaGemini(
     }
     const bodyJson = JSON.stringify(body)
     console.log('[transcribe:gemini] body size', bodyJson.length)
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: bodyJson
-    })
+    }, { timeoutMs: LLM_TIMEOUT_MS })
     console.log('[transcribe:gemini] status', res.status)
     if (!res.ok) {
       const errBody = await res.text().catch(() => '')
@@ -4194,14 +4203,14 @@ async function transcribeViaOpenAIChat(
     }
     const bodyJson = JSON.stringify(body)
     console.log('[transcribe:openai] body size', bodyJson.length)
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       },
       body: bodyJson
-    })
+    }, { timeoutMs: LLM_TIMEOUT_MS })
     console.log('[transcribe:openai] status', res.status)
     if (!res.ok) {
       const errBody = await res.text().catch(() => '')

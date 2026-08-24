@@ -32,6 +32,7 @@ import { is } from '@electron-toolkit/utils'
 
 import { pushLog } from '../core/logCollector'
 import type { LogSource } from '../../shared/ipc-channels'
+import { PROBE_TIMEOUT_MS, fetchWithTimeout } from '../lib/http'
 
 /**
  * Pipe a spawned child's stdout/stderr into the runtime-log collector while
@@ -374,9 +375,9 @@ export async function waitForDaemonReady(timeoutMs = 30_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(`${DAEMON_ORIGIN}/api/skills`, {
+      const res = await fetchWithTimeout(`${DAEMON_ORIGIN}/api/skills`, {
         headers: { Origin: WEB_DEV_ORIGIN }
-      })
+      }, { timeoutMs: PROBE_TIMEOUT_MS })
       if (res.ok) return true
     } catch {
       // daemon 还没起好，继续轮询
@@ -392,7 +393,9 @@ export async function waitForStudioReady(timeoutMs = 30_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(STUDIO_DEV_ORIGIN)
+      const res = await fetchWithTimeout(STUDIO_DEV_ORIGIN, undefined, {
+        timeoutMs: PROBE_TIMEOUT_MS
+      })
       if (res.ok) return true
     } catch {
       // 继续轮询
