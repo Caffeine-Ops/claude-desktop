@@ -6,6 +6,8 @@
  * reason code 集合并不重叠，没有共同的翻译表可提。
  */
 
+import { API_TIMEOUT_MS, fetchWithTimeout } from '../lib/http'
+
 const DEFAULT_BASE_URL = 'http://127.0.0.1:8080'
 
 export function sub2apiBaseUrl(): string {
@@ -39,14 +41,14 @@ async function sub2apiRequest<T>(
 ): Promise<Sub2ApiResult<T>> {
   let res: Response
   try {
-    res = await fetch(`${sub2apiBaseUrl()}${path}`, {
+    res = await fetchWithTimeout(`${sub2apiBaseUrl()}${path}`, {
       method,
       headers: {
         ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
         ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {})
       },
       body: body !== undefined ? JSON.stringify(body) : undefined
-    })
+    }, { timeoutMs: API_TIMEOUT_MS })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.error('[sub2api] request failed', { path, message })

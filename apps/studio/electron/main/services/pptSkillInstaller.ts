@@ -15,6 +15,7 @@ import {
   type PptSkillPhase,
   type PptSkillStatus
 } from '../../shared/pptSkillStatus'
+import { API_TIMEOUT_MS, fetchWithTimeout } from '../lib/http'
 
 /**
  * ppt-creator skill 的按需安装器（main 侧薄壳：状态机 + fork worker + venv
@@ -186,7 +187,9 @@ async function run(opts: { force?: boolean }): Promise<PptSkillStatus> {
 
   let manifest: RemoteManifest
   try {
-    const res = await fetch(`${baseUrl()}/${SKILL_ID}.json`)
+    const res = await fetchWithTimeout(`${baseUrl()}/${SKILL_ID}.json`, undefined, {
+      timeoutMs: API_TIMEOUT_MS
+    })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     manifest = (await res.json()) as RemoteManifest
     if (!manifest?.version || !manifest.file || !/^[0-9a-f]{64}$/.test(manifest.sha256 ?? '')) {
