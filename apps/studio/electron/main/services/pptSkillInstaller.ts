@@ -123,6 +123,18 @@ function installRoot(): string {
   return join(homedir(), '.cowork', 'plugins')
 }
 
+/**
+ * .part 与 staging 的家。
+ *
+ * **必须与 installRoot 同分区**——worker 最后要把 staging `renameSync` 到安装
+ * 目录，跨分区会直接 EXDEV 失败。所以它跟着 installRoot 走（后者可被
+ * `COWORK_PLUGINS_DIR` 改写），而不是硬编码 `~/.cowork`。放在插件根的**兄弟**
+ * 位置而不是里面，免得下载残留被插件扫描器看见。
+ */
+function cacheDir(): string {
+  return join(dirname(installRoot()), 'ppt-skill-cache')
+}
+
 export function pptSkillDir(): string {
   return join(installRoot(), SKILL_ID, 'skills', SKILL_ID)
 }
@@ -258,12 +270,19 @@ function downloadAndExtract(manifest: RemoteManifest): Promise<boolean> {
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), 'pptSkillWorker.js')
     // 绝对 url 优先（Gitee Release 附件这类异地托管），否则同目录拼接。
     const zipUrl = manifest.url?.trim() ? manifest.url.trim() : `${baseUrl()}/${manifest.file}`
+    // 一整个 JSON 而不是位置参数：字段到 7 个已过位置参数的可读极限（同
+    // componentWorker）。maxAttempts=3 —— 有断点续传兜底，重试的边际成本很低，
+    // 但也不必无限试，三次还不成多半是源站或网络本身有问题。
     const child = utilityProcess.fork(workerPath, [
-      zipUrl,
-      installRoot(),
-      SKILL_ID,
-      manifest.sha256,
-      String(manifest.size)
+      JSON.stringify({
+        url: zipUrl,
+        installRoot: installRoot(),
+        skillId: SKILL_ID,
+        sha256: manifest.sha256,
+        size: Number(manifest.size) || 0,
+        cacheDir: cacheDir(),
+        maxAttempts: 3
+      })
     ])
     let settled = false
     child.on(
@@ -273,11 +292,29 @@ function downloadAndExtract(manifest: RemoteManifest): Promise<boolean> {
         phase?: 'downloading' | 'extracting'
         done?: number
         total?: number
+        detail?: string
+        attempt?: number
+        delayMs?: number
+        reason?: string
         ok?: boolean
         error?: string
       }) => {
         if (msg?.type === 'progress' && msg.phase) {
-          setStatus({ phase: msg.phase, done: msg.done ?? 0, total: msg.total ?? 0 })
+          setStatus({
+            phase: msg.phase,
+            done: msg.done ?? 0,
+            total: msg.total ?? 0,
+            // worker 用 detail 说明当前在干嘛（如校验阶段）；没给就清空，
+            // 免得上一阶段的说明字残留在界面上。
+            detail: msg.detail ?? ''
+          })
+        } else if (msg?.type === 'retry') {
+          // 静默重试会被用户当成卡死——必须让界面说出正在发生什么。
+          setStatus({
+            detail: `连接中断，第 ${msg.attempt ?? 2} 次重试（${Math.round(
+              (msg.delayMs ?? 0) / 1000
+            )} 秒后）…`
+          })
         } else if (msg?.type === 'done') {
           settled = true
           if (msg.ok) {
