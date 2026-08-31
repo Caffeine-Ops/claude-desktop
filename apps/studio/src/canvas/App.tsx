@@ -1366,6 +1366,15 @@ export function App({
   // 原生设置迁移来的桌面专属项（字号/指针/CLI backend）暴露出来；但用户反馈
   // 齿轮点击应落在视觉上的"第一个菜单"，与列表顺序保持直觉一致，故改回。
   //
+  // ⚠️ 已知边界（review 指出，当前 UI 不可达）：本 effect 只在 isSettingsOverlay
+  // **翻转**时跑，所以「设置页已经开着，再调一次 openSettingsOverlay('media')」
+  // 不会改落点——section 写进了 store，但没有任何东西去读它。今天触发不到：设置
+  // 页揭开时 rail 的按钮组被隐藏、聊天面整个被盖住，那几个带 section 的调用点
+  // 都点不到。**但如果将来加了深链（协议 URL / 通知点击 / 设置页内部跳转），
+  // 这里必须一并改**——把 section 加进依赖数组不行（关闭时 closeSettingsOverlay
+  // 会把 section 清成 null，依赖变化会让 effect 重跑、又把设置页重新打开），
+  // 正确做法是另起一个只在 open 为 true 时响应 section 变化的 effect。
+  //
   // 2026-08-31：落点改成「store 指定了就听它的，没指定才用默认首项」。带
   // section 的调用方是那些「去设置改这个」式的跨面直达（写方案/写作页的出图
   // 配置入口），它们指向的那一节可能在左栏很靠下，落到 account 再让用户自己

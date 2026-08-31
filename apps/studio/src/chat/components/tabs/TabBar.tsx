@@ -123,11 +123,15 @@ export default function TabBar(): React.ReactElement {
           /schedule capability with no UI), so a row here would be a dead
           button.
 
-          2026-08-31：这一行**本身**曾是死按钮。它原先调 tabApi.openSettingsWindow()
-          → SETTINGS_WINDOW_OPEN IPC，而设置早已从「main 管理的独立 WebContentsView」
-          搬进 studio tab 内部，main 侧那个 handler 被改成了空实现（no-op），于是点
-          它彻底没反应、且不报错。改直调根层 openSettingsOverlay()，与 rail 齿轮、
-          菜单栏「设置」、Cmd+, 同一条路径。 */}
+          ⚠️ 2026-08-31：**整个 TabBar 组件已是死代码**——`src/` 与 `app/` 里没有
+          任何地方 import 它，它所属的 shell 窗口渲染器（ShellApp / `?shell=1`）也
+          已不存在（只剩 main.css:235 的注释提到）。所以下面这个「设置」行不会出现
+          在任何界面上。
+
+          本次把它的 onClick 从 tabApi.openSettingsWindow()（对应的 main handler
+          早已是空实现，那条 IPC 链本次一并删除）改成 openSettingsOverlay()，只是
+          为了让这个文件在被删掉之前不残留指向已删 API 的调用——**不代表 shell 栏
+          上真有一个可用的设置入口**。这个文件与 UserInfoBar.tsx 该整体退役，待定。 */}
       <div className="mt-3 mb-1 px-3 text-[11px] font-medium tracking-wide text-[color:var(--rail-muted)]">
         更多
       </div>

@@ -44,22 +44,44 @@ export function KnowledgeBaseSection(): React.JSX.Element {
   const [applyingRemote, setApplyingRemote] = useState(false);
   const [syncNowBusy, setSyncNowBusy] = useState(false);
 
-  const refresh = (): void => {
-    void window.chatApi.getKbPath().then((s) => {
+  /**
+   * 拉一次最新配置。
+   *
+   * `syncDraft` 决定要不要把地址输入框也重置成持久化的值：
+   *   · true —— mount 与用户自己的写操作之后（切源/选目录/保存地址）。此时输入
+   *     框本就该反映刚落盘的结果。
+   *   · false —— **后台同步推送触发的刷新**。这是 2026-08-31 搬迁时修掉的一个
+   *     真实缺陷：原代码在这里无条件 `setUrlDraft(...)`，而原注释断言「用户敲
+   *     地址期间没有 refresh 被触发」——这句是错的。kbSyncScheduler（主进程）
+   *     启动 30 秒后跑一次、之后每 6 小时一次，成功时推 onKbSyncStatus，下面的
+   *     订阅收到 success 就调 refresh()。于是「已配了远程 KB 的用户正在改服务
+   *     器地址，后台定时同步刚好完成」→ 输入框被静默重置回旧地址，用户敲到一半
+   *     的内容消失且毫无提示。推送路径改为不动草稿即可，其余状态照常刷新。
+   */
+  const refresh = (opts?: { syncDraft?: boolean }): void => {
+    const syncDraft = opts?.syncDraft ?? true;
+    const api = window.chatApi;
+    if (!api?.getKbPath) return;
+    void api.getKbPath().then((s) => {
       setState(s);
-      setUrlDraft(s.remote?.baseUrl ?? '');
-      // 每次拉到新状态都把面板选择跟实际生效来源对齐——这是唯一会覆盖 uiTab 的
-      // 地方，且只在 refresh 完成时发生（mount / 写操作之后 / sync 成功推送后），
-      // 不会打断用户正在远程面板里敲地址的过程（那期间没有 refresh 被触发）。
-      setUiTab(s.remote ? 'remote' : 'local');
+      if (syncDraft) setUrlDraft(s.remote?.baseUrl ?? '');
+      // 面板选择跟实际生效来源对齐。同样只在「本人写操作 / mount」时才纠正——
+      // 后台推送不该把用户刚点开的远程面板收回去（uiTab 与 mode 允许短暂分叉，
+      // 见组件头注释）。
+      if (syncDraft) setUiTab(s.remote ? 'remote' : 'local');
     });
   };
 
   useEffect(() => {
     refresh();
-    const off = window.chatApi.onKbSyncStatus((s) => {
+    // 守卫理由同 ProposalImageApiSubsection 的 mount effect：canvas 面用
+    // `bun dev:next` 时跑在真浏览器里，没有 preload，window.chatApi 是 undefined。
+    const api = typeof window !== 'undefined' ? window.chatApi : undefined;
+    if (!api?.onKbSyncStatus) return;
+    const off = api.onKbSyncStatus((s) => {
       setSync(s);
-      if (s.state === 'success') refresh(); // 成功后 lastSync 变了，重拉一次
+      // 成功后 lastSync 变了，重拉一次——但**不碰地址草稿**，见 refresh 头注释。
+      if (s.state === 'success') refresh({ syncDraft: false });
     });
     return off;
   }, []);
@@ -69,9 +91,11 @@ export function KnowledgeBaseSection(): React.JSX.Element {
   const applyRemote = async (): Promise<void> => {
     const baseUrl = urlDraft.trim();
     if (!baseUrl || applyingRemote) return;
+    const api = window.chatApi;
+    if (!api?.setKbRemote) return;
     setApplyingRemote(true);
     try {
-      await window.chatApi.setKbRemote({ baseUrl, kbId: 'default' }); // kbId 口子：UI 本期不暴露
+      await api.setKbRemote({ baseUrl, kbId: 'default' }); // kbId 口子：UI 本期不暴露
       refresh();
     } catch (err) {
       console.error('[settings] setKbRemote failed', err);
@@ -87,9 +111,11 @@ export function KnowledgeBaseSection(): React.JSX.Element {
     // 选中项只收回面板，不重发 setKbRemote(null)+写盘+refresh——对齐远程那行纯
     // setUiTab 的零副作用行为。
     if (mode === 'local') return;
+    const api = window.chatApi;
+    if (!api?.setKbRemote) return;
     setSwitchingLocal(true);
     try {
-      await window.chatApi.setKbRemote(null);
+      await api.setKbRemote(null);
       refresh();
     } catch (err) {
       console.error('[settings] setKbRemote(null) failed', err);
@@ -100,11 +126,13 @@ export function KnowledgeBaseSection(): React.JSX.Element {
 
   const pickLocal = async (): Promise<void> => {
     if (picking) return;
+    const api = window.chatApi;
+    if (!api?.pickKbRoot) return;
     setPicking(true);
     try {
-      const { path } = await window.chatApi.pickKbRoot();
+      const { path } = await api.pickKbRoot();
       if (path) {
-        await window.chatApi.setKbPath(path);
+        await api.setKbPath(path);
         refresh();
       }
     } catch (err) {
@@ -116,11 +144,13 @@ export function KnowledgeBaseSection(): React.JSX.Element {
 
   const syncNow = async (): Promise<void> => {
     if (syncNowBusy) return;
+    const api = window.chatApi;
+    if (!api?.kbSyncNow) return;
     setSyncNowBusy(true);
     try {
       // 返回值（started/alreadyRunning/noRemote）只是「请求是否受理」，真正的
       // 进度/成败走 onKbSyncStatus 推送渲染，这里不用管。
-      await window.chatApi.kbSyncNow();
+      await api.kbSyncNow();
     } catch (err) {
       console.error('[settings] kbSyncNow failed', err);
     } finally {

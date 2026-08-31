@@ -53,7 +53,20 @@ export function ProposalImageApiSubsection(): React.JSX.Element {
 
   useEffect(() => {
     let cancelled = false;
-    window.chatApi
+    // chatApi 守卫：本目录其它 section（AccountSection / AppearanceSection /
+    // CliBackendCard / UpdateAppSection）都是这个写法。搬来的 chat 版没有守卫是
+    // 因为 chat 树只在 Electron 里渲染，而 canvas 面用 `bun dev:next` 时会跑在
+    // **真浏览器**里（localhost:3100，preload 不存在 → window.chatApi 是
+    // undefined）。裸调会从 mount effect 抛 TypeError——而本组件现在嵌在
+    // 「媒体生成提供商」里，那一下会把整节连坐拖挂（此前那一节在无 chatApi
+    // 时渲染正常）。守卫后退化为「表单在，但读不到已存配置」，不影响同页
+    // 其它内容。
+    const api = typeof window !== 'undefined' ? window.chatApi : undefined;
+    if (!api?.proposalImageSettingsGet) {
+      setLoaded(true); // 不留在「加载中」态，否则保存按钮永远灰着且没人解释为什么
+      return;
+    }
+    api
       .proposalImageSettingsGet()
       .then((cfg) => {
         if (cancelled) return;
@@ -78,11 +91,13 @@ export function ProposalImageApiSubsection(): React.JSX.Element {
 
   const handleSave = async (): Promise<void> => {
     if (saving) return;
+    const api = window.chatApi;
+    if (!api?.proposalImageSettingsSet) return; // 同 mount 守卫：浏览器下无 preload
     setSaving(true);
     setJustSaved(false);
     try {
       const cfg: ProposalImageApiConfig = { apiKey, baseURL, model };
-      await window.chatApi.proposalImageSettingsSet(cfg);
+      await api.proposalImageSettingsSet(cfg);
       // 手里这份 key 现在可能已经过期（用户刚敲了新的，或它本来就是掩码）。
       // 无论哪种都在本地重新打掩码，让明文在 state 里存活不超过这一个来回。
       // 但 apiKey 为 '' 时（用户只动了 baseURL/model、从没填过 key）main 存的
@@ -103,10 +118,12 @@ export function ProposalImageApiSubsection(): React.JSX.Element {
   // 见头注释防坑 2。
   const handleClearKey = async (): Promise<void> => {
     if (saving) return;
+    const api = window.chatApi;
+    if (!api?.proposalImageSettingsSet) return;
     setSaving(true);
     setJustSaved(false);
     try {
-      await window.chatApi.proposalImageSettingsSet({ apiKey: '', baseURL, model });
+      await api.proposalImageSettingsSet({ apiKey: '', baseURL, model });
       setApiKey('');
       setConfigured(false);
     } catch (err) {

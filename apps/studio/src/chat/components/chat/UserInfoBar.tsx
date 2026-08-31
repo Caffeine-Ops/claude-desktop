@@ -14,12 +14,13 @@ import { openSettingsOverlay } from '@/src/stores/surfaceOverlay'
  * horizontal tab strip. Now that the strip is a left rail, it became a
  * full-width footer row matching the rail's nav rhythm.
  *
- * 点「设置」开的是 studio tab 内部的全屏设置页（根层 openSettingsOverlay，
- * 与 rail 齿轮/菜单栏/Cmd+, 同一条路径）。
+ * ⚠️ 2026-08-31：**本组件已是死代码**——`src/` 与 `app/` 里无任何 import，它所属
+ * 的 shell 窗口渲染器（ShellApp）也已不存在。下面这个齿轮不会出现在任何界面上。
  *
- * 2026-08-31 前这里是死按钮：调的 tabApi.openSettingsWindow() 对应的 main 侧
- * handler 早已改成空实现——设置从「main 管理的独立 WebContentsView」搬进 studio
- * tab 之后没人再把这个入口接回去，点了没反应也不报错。
+ * 本次把它的 onClick 从 tabApi.openSettingsWindow()（对应 main handler 早已是空
+ * 实现，那条 IPC 链本次一并删除）改成 openSettingsOverlay()，只是为了不残留指向
+ * 已删 API 的调用——**不代表 rail 底部真有一个可用的设置入口**。本文件与
+ * components/tabs/TabBar.tsx 该整体退役，待定。
  *
  * Note: name/plan are placeholders — there is no signed-in user model in
  * the desktop app yet. They mirror the reference design's footer; wiring
