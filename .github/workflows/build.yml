@@ -161,6 +161,11 @@ jobs:
         env:
           MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          # 断言用：证书里带的 Team ID 必须与公证用的 APPLE_TEAM_ID 是同一个。
+          # 两者分属不同 secret，换开发者组织时极易只换其一（2026-08-31 换到
+          # Team LY4H54M9XG 时就是分两次写的），不比对就得等到 notarytool 报
+          # 一句 403 才发现，那时构建已经跑了半小时。
+          EXPECTED_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           if [ -z "$MAC_CSC_LINK" ]; then
             echo "::warning::MAC_CSC_LINK 为空，跳过签名（mac 自动更新将不可用）"
@@ -186,7 +191,28 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
           if security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MAC_CSC_KEY_PASSWORD" -T /usr/bin/codesign 2>&1; then
             echo "✓ 证书导入成功（base64 完整 + 密码正确）"
-            security find-identity -v -p codesigning "$KEYCHAIN" | grep -i "Developer ID" || true
+            echo "--- 钥匙串内的签名身份 ---"
+            security find-identity -v -p codesigning "$KEYCHAIN"
+            # ⚠️ 这里曾是 `... | grep -i "Developer ID" || true`——`|| true` 让它
+            # 只会打印、永远不会失败，等于没有断言。换开发者组织恰恰是它该拦人的
+            # 时刻：p12 里若装的是 Apple Distribution（App Store 用）而不是
+            # Developer ID Application（自分发用），那条 grep 照样绿灯放行，一路
+            # 走到 CSC_IDENTITY_AUTO_DISCOVERY=true 让 electron-builder 从钥匙串
+            # 另行搜身份，最后产出未签名或签错的包——与 v0.0.18 第八轮「自检全绿
+            # 却打印 skipped macOS application code signing」同一族的静默退化。
+            # 2026-08-31 换 Team 时改成真断言，并在 verify-signing 分支上做过负向
+            # 测试（只跑正向的断言等于没有断言）。
+            if ! security find-identity -v -p codesigning "$KEYCHAIN" | grep -q "Developer ID Application"; then
+              echo "::error::钥匙串里没有 Developer ID Application 身份——p12 里装的证书类型不对"
+              security delete-keychain "$KEYCHAIN" 2>/dev/null || true
+              exit 1
+            fi
+            if [ -n "$EXPECTED_TEAM_ID" ] && ! security find-identity -v -p codesigning "$KEYCHAIN" | grep -q "($EXPECTED_TEAM_ID)"; then
+              echo "::error::证书的 Team ID 与 APPLE_TEAM_ID 不一致——两个 secret 来自不同开发者账号"
+              security delete-keychain "$KEYCHAIN" 2>/dev/null || true
+              exit 1
+            fi
+            echo "✓ 身份类型与 Team ID 均符合预期"
           else
             echo "::error::证书导入失败——base64 被截断，或 MAC_CSC_KEY_PASSWORD 与导出时设的密码不一致"
             security delete-keychain "$KEYCHAIN" 2>/dev/null || true
@@ -283,6 +309,59 @@ jobs:
             echo "ulimit -n = $(ulimit -n)"
           fi
           bun run dist:${{ matrix.platform }}
+
+      # 产物落盘后再验一次——前面每一步都只能证明「证书能用」，只有 .app 上
+      # 实际落下的签名才能证明「这次构建真的签了、且签对了」。v0.0.18 第八轮的
+      # 教训正是：证书自检全绿、真打包却因 CSC_IDENTITY_AUTO_DISCOVERY=false 被
+      # 整个跳过，出的是未签名包而 job 全绿。那种静默退化只有在这里才拦得住。
+      #
+      # env.CSC_FILE 为空 = 上一步判定没配证书、有意跳过签名，此时不该断言。
+      - name: Verify mac signature & notarization
+        if: matrix.platform == 'mac' && env.CSC_FILE != ''
+        shell: bash
+        env:
+          EXPECTED_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+        run: |
+          set -euo pipefail
+          APP=$(find apps/studio/dist -maxdepth 2 -name "*.app" -type d | head -1)
+          if [ -z "$APP" ]; then
+            echo "::error::apps/studio/dist 下找不到 .app，无法校验签名"
+            exit 1
+          fi
+          echo "校验目标: $APP"
+          echo "--- 证书链 ---"
+          codesign -dv --verbose=4 "$APP" 2>&1 | grep -E "Authority|TeamIdentifier|Timestamp" || true
+
+          # 断言 1：真的签了。未签名的 .app 上 codesign -dv 直接非零退出。
+          if ! codesign -dv "$APP" 2>/dev/null; then
+            echo "::error::.app 未签名——签名步骤被静默跳过了"
+            exit 1
+          fi
+          # 断言 2：签的是预期的 team。
+          ACTUAL=$(codesign -dv --verbose=4 "$APP" 2>&1 | grep "^TeamIdentifier=" | cut -d= -f2)
+          echo "实际 TeamIdentifier: $ACTUAL"
+          if [ -n "$EXPECTED_TEAM_ID" ] && [ "$ACTUAL" != "$EXPECTED_TEAM_ID" ]; then
+            echo "::error::.app 的 TeamIdentifier 与 APPLE_TEAM_ID 不符"
+            exit 1
+          fi
+          # 断言 3：签名自身完整（codesign 说成功 ≠ 签出来的东西验得过）。
+          codesign --verify --strict --verbose=2 "$APP"
+          echo "✓ 签名有效且 Team 正确"
+
+          # 断言 4：配了公证凭据就必须真公证成功。electron-builder 在公证后会把
+          # ticket staple 进 .app，stapler validate 读的是这张票——它过了才代表
+          # 用户双击能直接打开，而不是撞上「无法验证开发者」。缺 APPLE_ID 时
+          # electron-builder 本就跳过公证，那就不该断言。
+          if [ -n "$APPLE_ID" ]; then
+            if ! xcrun stapler validate "$APP"; then
+              echo "::error::公证票据缺失或无效——配了 APPLE_* 却没公证成功"
+              exit 1
+            fi
+            echo "✓ 公证票据已 staple"
+          else
+            echo "::warning::APPLE_ID 未配置，本次为「签名但未公证」——用户首次打开需在系统设置里手动放行"
+          fi
 
       # Stage installers as an Actions artifact instead of uploading straight
       # to the GitHub Release from here. Why the change (2026-07-10 incident):
