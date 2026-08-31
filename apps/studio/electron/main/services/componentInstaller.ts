@@ -66,7 +66,7 @@ import { API_TIMEOUT_MS, fetchWithTimeout } from '../lib/http'
  * + 3600s 超时）。已实测：`/downloads/` 下不存在的路径正确返回 404，而**顶层新增
  * 的路径若配错会被 sub2api 的 SPA 兜底吃成 200 + text/html**。能不碰 nginx 就不碰。
  */
-const DEFAULT_BASE_URL = 'https://cowork.cntcn.com/downloads/components'
+const DEFAULT_BASE_URL = 'https://coworkapi.lizhiyun.net/downloads/components'
 
 const MANIFEST_FILE = 'components.json'
 

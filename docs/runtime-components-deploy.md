@@ -9,7 +9,7 @@ CLI 二进制与 python-runtime 不随安装包发布，改由客户端首次启
 |---|---|
 | 主机 | ningbo-cowork（114.66.17.142） |
 | 目录 | `/var/www/downloads/components/` |
-| URL | `https://cowork.cntcn.com/downloads/components/` |
+| URL | `https://coworkapi.lizhiyun.net/downloads/components/` |
 | 清单 | `components.json` |
 | 权限 | 目录 755 / 文件 644（**744 会 403**） |
 
@@ -81,12 +81,12 @@ python3 -c "import tarfile; print(sum(m.size for m in tarfile.open('x.tar.gz')))
 
 ```bash
 # ① 清单必须是 JSON 而不是被 SPA 兜底的网页
-curl -sI https://cowork.cntcn.com/downloads/components/components.json | head -6
+curl -sI https://coworkapi.lizhiyun.net/downloads/components/components.json | head -6
 #   期望：200 + Content-Type: application/json
 
 # ② Range 必须真生效，否则断点续传是纸面功能
 curl -sI -H 'Range: bytes=0-1023' \
-  https://cowork.cntcn.com/downloads/components/cli-<ver>-darwin-arm64.gz | head -8
+  https://coworkapi.lizhiyun.net/downloads/components/cli-<ver>-darwin-arm64.gz | head -8
 #   期望：206 Partial Content + ETag
 #   拿到 200 = 被兜底 / 中间层在重编码 → 续传失效，先修这个
 ```
@@ -125,7 +125,7 @@ curl -sI -H 'Range: bytes=0-1023' \
    python 判据永远不满足（每次启动重下一遍）。两个症状都离真因极远，而且
    **只在 Windows 出现，mac 上开发永远测不到**。现在 merge 阶段有断言挡住这类错误。
 2. **代理**。本机 shell 常驻 `HTTP_PROXY`，对境外源（downloads.claude.ai / GitHub）
-   走代理 4KB/s、直连 4.5MB/s；对国内的 cowork.cntcn.com 走代理 14KB/s、直连 1.1MB/s。
+   走代理 4KB/s、直连 4.5MB/s；对国内的 coworkapi.lizhiyun.net 走代理 14KB/s、直连 1.1MB/s。
    两个方向都要绕开。这坑在本仓库已经踩过 8 次。
 3. **python 有 9 个符号链接**（`bin/python3 → python3.12`）。必须用 tar 保留，
    换成 zip 走 adm-zip 会写成内容是路径字符串的普通文件，解出来是个跑不动的 runtime。
