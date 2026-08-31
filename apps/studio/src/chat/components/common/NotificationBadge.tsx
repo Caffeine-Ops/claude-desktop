@@ -20,7 +20,7 @@ import React from 'react'
  *
  * Used in:
  *   - ThreadListSidebar rows: per-session pending-permission count
- *   - TabBar pills: per-workspace aggregate count across all
+ *   - TabBar pills（该组件已于 2026-08-31 删除）: per-workspace aggregate count across all
  *     sessions in that tab's engine
  */
 export function NotificationBadge({

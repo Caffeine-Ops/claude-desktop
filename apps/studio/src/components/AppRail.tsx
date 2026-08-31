@@ -221,7 +221,8 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
   // 与「插件」按钮同一套视觉（都是 rail 上的目的地）。
   //  - 聊天面：**空态 = 有 id 没消息**，不是 sessionId === null。
   //    `switchShellSession(null)` 的语义是「让 main mint 一个新 session」
-  //    （见 TabBar 的注释），点完「新对话」store 里的 sessionId 是那个**新会话
+  //    （原见 TabBar 的注释，该组件已于 2026-08-31 删除），点完「新对话」store
+  //    里的 sessionId 是那个**新会话
   //    的 id**、不是 null——按 null 判定会永远点不亮（2026-07-17 实测栽过）。
   //    真正的空态信号与 ThreadView 同源（`messages.length > 0` 的 hasMessages，
   //    那边注释也写着「新会话（有 id 没消息）」），这里取它的反面。

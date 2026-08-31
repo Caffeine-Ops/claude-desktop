@@ -234,7 +234,9 @@ html[data-surface='chat'] .chat-app {
   /* app-region:drag 已删（2026-07-14）：.shell-chrome 是旧独立 shell-window
      架构（?shell=1 / ShellApp / TabBar）的左 rail，studio 改成 layout.tsx +
      RailShell 后该类零 className 消费者（整块死代码）。同 .header，drag 声明
-     是「唯一 drag 写手」纪律外的历史残留。 */
+     是「唯一 drag 写手」纪律外的历史残留。
+     2026-08-31：那套架构最后两个残留组件（TabBar / UserInfoBar）也已删除，
+     本段样式随之彻底无主——保留仅为记录，可随下次 CSS 清理一并退役。 */
 }
 
 /* Dark theme: a dark-friendly rail palette aligned with web's

@@ -509,10 +509,14 @@ export function EntryShell({
     changeView('home');
   }
 
-  // The Electron desktop shell already renders a persistent settings gear
-  // in its top tab strip (UserInfoBar), so showing our own settings cog
-  // here would be a duplicate. Render it only in a plain browser. See
-  // isEmbeddedInDesktopShell for how the embedded tab is detected.
+  // 嵌在桌面应用里时不画自己的齿轮——左栏底部账户菜单（AppRail）里已经有一个
+  // 常驻设置入口，再画一个是重复。只有在纯浏览器里（没有那条 rail）才渲染。
+  // 检测方式见 isEmbeddedInDesktopShell。
+  //
+  // 注：这段注释原先写的依据是「桌面壳顶部标签条的 UserInfoBar 有齿轮」——
+  // 那个组件（连同它所属的 ShellApp / ?shell=1 独立壳架构）早已不再渲染，
+  // 2026-08-31 随设置页合并一并删除。结论没变，只是那个「已有的入口」如今
+  // 是 AppRail 的齿轮，不是 UserInfoBar。
   const avatarMenu = isEmbeddedInDesktopShell() ? null : (
     <button
       type="button"
