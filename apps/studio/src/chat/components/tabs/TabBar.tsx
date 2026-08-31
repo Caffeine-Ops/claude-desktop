@@ -3,6 +3,7 @@ import { motion } from 'motion/react'
 import type { TabDescriptor } from '@desktop-shared/ipc-channels'
 import { NotificationBadge } from '../common/NotificationBadge'
 import { railGliderSpring } from '../../shell/railMotion'
+import { openSettingsOverlay } from '@/src/stores/surfaceOverlay'
 
 /**
  * Vertical navigation rail — rendered inside the shell window's own
@@ -116,18 +117,24 @@ export default function TabBar(): React.ReactElement {
       </div>
 
       {/* "更多" group — settings entry point. Settings isn't a tab (it's a
-          full-window overlay managed by main), so it's a plain nav row that
-          calls openSettingsWindow rather than switchTab. 定时任务 is NOT
+          full-screen overlay inside the studio tab), so it's a plain nav row
+          that opens the overlay rather than switchTab. 定时任务 is NOT
           listed: the desktop app has no cron page (that's a fusion-code
           /schedule capability with no UI), so a row here would be a dead
-          button. */}
+          button.
+
+          2026-08-31：这一行**本身**曾是死按钮。它原先调 tabApi.openSettingsWindow()
+          → SETTINGS_WINDOW_OPEN IPC，而设置早已从「main 管理的独立 WebContentsView」
+          搬进 studio tab 内部，main 侧那个 handler 被改成了空实现（no-op），于是点
+          它彻底没反应、且不报错。改直调根层 openSettingsOverlay()，与 rail 齿轮、
+          菜单栏「设置」、Cmd+, 同一条路径。 */}
       <div className="mt-3 mb-1 px-3 text-[11px] font-medium tracking-wide text-[color:var(--rail-muted)]">
         更多
       </div>
       <NavActionRow
         label="设置"
         icon={<GearGlyph />}
-        onClick={() => void window.tabApi?.openSettingsWindow()}
+        onClick={() => openSettingsOverlay()}
       />
       <NavActionRow
         label="搜索对话"

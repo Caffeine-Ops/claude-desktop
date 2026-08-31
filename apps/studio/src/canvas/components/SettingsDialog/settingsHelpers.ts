@@ -1,4 +1,5 @@
 import { validateBaseUrl } from '@open-design/contracts/api/connectionTest';
+import { useI18n } from '../../i18n';
 import type { Locale } from '../../i18n';
 import { KNOWN_PROVIDERS } from '../../state/config';
 import type { KnownProvider } from '../../state/config';
@@ -40,6 +41,10 @@ export type SettingsSection =
   | 'skills'
   | 'designSystems'
   | 'memory'
+  // 知识库（2026-08-31）：资料来源二选一（本地目录 / 远程服务器），面板组件
+  // KnowledgeBaseSection.tsx。从退役的 chat 设置页搬来——本设置页此前完全没有
+  // 配置知识库来源的入口，rail 上那个「知识库」面只管浏览内容、不管配来源。
+  | 'knowledgeBase'
   | 'logAnalysis'
   | 'privacy'
   // 「工作区」三节（2026-07-04 首页 rail 迁移）：项目 / 自动化 / 插件。
@@ -729,4 +734,24 @@ export function switchApiProtocolConfig(
     protocol,
     nextApiConfig,
   );
+}
+
+/**
+ * useTt —「翻译，缺 key 时回落到字面量」。
+ *
+ * canvas 的 `t()` 取值链是 `dict[key] ?? en[key] ?? key`——字典里没有的 key
+ * 会原样吐出 key 本身，界面上就是一行 `settings.foo.bar`。而加一个新 key 的
+ * 真实成本是 19 本字典 + 99KB 的 types.ts（Dict 是严格的字面量联合，`t()` 只
+ * 收 DictKey），对「先把功能搬过来」这种改动完全不成比例。
+ *
+ * 于是沿用 SettingsDialogV2 已在用的写法：传一个中文字面量兜底，key 一天没
+ * 进字典就显示中文，进了字典之后**不用改调用点**自动切到译文。原实现是 V2
+ * 内部的局部函数，这里提到公共层给新 section 复用（V2 已改为消费本 hook）。
+ */
+export function useTt(): (key: string, fallback: string) => string {
+  const { t } = useI18n();
+  return (key: string, fallback: string): string => {
+    const v = t(key as Parameters<typeof t>[0]);
+    return v === key ? fallback : v;
+  };
 }

@@ -124,6 +124,7 @@ import { ConnectorSection } from './ConnectorSection';
 import { OrbitSection } from './OrbitSection';
 import { MediaProvidersSection } from './MediaProvidersSection';
 import { IntegrationsSection } from './IntegrationsSection';
+import { KnowledgeBaseSection } from './KnowledgeBaseSection';
 import { AppearanceSection } from './AppearanceSection';
 import { CliBackendCard } from './CliBackendCard';
 import { LogAnalysisSection } from './LogAnalysisSection';
@@ -1291,6 +1292,9 @@ export function SettingsDialog({
       title: t('routines.title'),
       subtitle: t('routines.subtitle'),
     },
+    // 账号/使用记录同款：字典里还没有对应 key，先写中文字面量（加 key 要动
+    // 19 本字典 + types.ts，见 settingsHelpers 的 useTt 注释）。
+    knowledgeBase: { title: '知识库', subtitle: '「写方案」检索资料的来源' },
     integrations: { title: t('settings.mcpServerTitle'), subtitle: t('settings.mcpServerHint') },
     mcpClient: { title: t('settings.externalMcpTitle'), subtitle: t('settings.externalMcpHint') },
     language: { title: t('settings.language'), subtitle: t('settings.languageHint') },
@@ -2473,6 +2477,8 @@ export function SettingsDialog({
               }}
             />
           ) : null}
+          {activeSection === 'knowledgeBase' ? <KnowledgeBaseSection /> : null}
+
           {activeSection === 'integrations' ? <IntegrationsSection /> : null}
 
           {activeSection === 'mcpClient' ? <McpClientSection /> : null}

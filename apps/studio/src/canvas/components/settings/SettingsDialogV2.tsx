@@ -72,6 +72,7 @@ import {
   Image,
   Languages,
   LayoutGrid,
+  Library,
   Link,
   MessageSquare,
   Palette,
@@ -86,8 +87,7 @@ import {
 
 import { Button } from '@/src/components/ui/button';
 import { cn } from '@/src/lib/utils';
-import { useI18n } from '../../i18n';
-import { SettingsDialog } from '../SettingsDialog';
+import { SettingsDialog, useTt } from '../SettingsDialog';
 import type { SettingsDialogProps, SettingsSection } from '../SettingsDialog';
 
 /* V2 takes the SAME props as SettingsDialog (it forwards them straight into
@@ -132,6 +132,10 @@ const NAV_GROUPS: NavGroup[] = [
       { id: 'projects', labelKey: 'settingsV2.workspaceProjects', fallback: '项目', icon: Folder },
       { id: 'automations', labelKey: 'settingsV2.workspaceAutomations', fallback: '自动化', icon: Flag },
       { id: 'plugins', labelKey: 'settingsV2.workspacePlugins', fallback: '插件', icon: Blocks },
+      // 知识库（2026-08-31 两套设置页合并时补入）：配「写方案」检索资料的来源。
+      // 放工作区组是因为它和项目/自动化/插件一样，管的是「你的东西存在哪」，
+      // 而不是应用自身的行为开关。
+      { id: 'knowledgeBase', labelKey: 'settingsV2.workspaceKnowledgeBase', fallback: '知识库', icon: Library },
     ],
   },
   {
@@ -161,13 +165,10 @@ const NAV_GROUPS: NavGroup[] = [
 
 export function SettingsDialogV2(props: SettingsDialogV2Props): React.JSX.Element {
   const { initialSection = 'account', onClose } = props;
-  const { t } = useI18n();
-  // tt: translate with a literal fallback so a not-yet-added i18n key shows
-  // the Chinese label instead of the raw key.
-  const tt = (key: string, fallback: string): string => {
-    const v = t(key as Parameters<typeof t>[0]);
-    return v === key ? fallback : v;
-  };
+  // tt：字典里没这个 key 时回落到中文字面量，界面上不会露出 `settings.foo` 这种
+  // 生 key。原是本文件的局部实现，2026-08-31 提到 settingsHelpers 供新 section
+  // 共用（见那边 useTt 的注释：加一个 key 要动 19 本字典 + 99KB types.ts）。
+  const tt = useTt();
 
   // V2 owns the active section (its sidebar drives it); the embedded
   // SettingsDialog reads it via `controlledSection` and reports in-panel

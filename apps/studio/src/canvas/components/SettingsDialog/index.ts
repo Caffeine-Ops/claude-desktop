@@ -22,6 +22,9 @@ export {
   testStatusVariant,
   updateAgentCliEnvValue,
   updateCurrentApiProtocolConfig,
+  // useTt 是本次（2026-08-31）新增的唯一对外 helper：SettingsDialogV2 在 settings/
+  // 目录，与本目录内的新 section 共用它，走 barrel 而不是深导入内部文件。
+  useTt,
 } from './settingsHelpers';
 export type { ComposioCredentialState } from './ConnectorSection';
 export {

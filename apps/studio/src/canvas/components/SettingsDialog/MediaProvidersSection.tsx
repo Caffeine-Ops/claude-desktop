@@ -21,6 +21,7 @@ import type { MediaProvider } from '../../media/models';
 import { XaiOAuthControl } from '../settings/XaiOAuthControl';
 import type { AppConfig } from '../../types';
 import { sanitizeHttpsUrl } from './settingsHelpers';
+import { ProposalImageApiSubsection } from './ProposalImageApiSubsection';
 
 export function MediaProvidersSection({
   cfg,
@@ -417,6 +418,10 @@ export function MediaProvidersSection({
           </ul>
         </details>
       ) : null}
+      {/* 「写方案出图 API」——独立的一套配置（走 main 的 PROPOSAL_IMAGE_SETTINGS_*
+          IPC，不是上面那张 daemon 提供商表）。挂在这里是因为用户视角两者都是
+          「配出图」，分两处放就得找两次。详见该组件头注释。 */}
+      <ProposalImageApiSubsection />
     </section>
   );
 }

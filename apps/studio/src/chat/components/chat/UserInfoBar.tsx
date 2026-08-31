@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 
 import { useT } from '../../i18n'
+import { openSettingsOverlay } from '@/src/stores/surfaceOverlay'
 
 /**
  * UserInfoBar
@@ -13,9 +14,12 @@ import { useT } from '../../i18n'
  * horizontal tab strip. Now that the strip is a left rail, it became a
  * full-width footer row matching the rail's nav rhythm.
  *
- * The modal is a full-window transparent overlay managed by main (see
- * tabRegistry.openSettingsView), so it works over any tab — chat or web —
- * and renders as a dimmed backdrop + centered card.
+ * 点「设置」开的是 studio tab 内部的全屏设置页（根层 openSettingsOverlay，
+ * 与 rail 齿轮/菜单栏/Cmd+, 同一条路径）。
+ *
+ * 2026-08-31 前这里是死按钮：调的 tabApi.openSettingsWindow() 对应的 main 侧
+ * handler 早已改成空实现——设置从「main 管理的独立 WebContentsView」搬进 studio
+ * tab 之后没人再把这个入口接回去，点了没反应也不报错。
  *
  * Note: name/plan are placeholders — there is no signed-in user model in
  * the desktop app yet. They mirror the reference design's footer; wiring
@@ -28,7 +32,7 @@ export function UserInfoBar(): React.JSX.Element {
   const t = useT()
 
   const openSettings = useCallback((): void => {
-    void window.tabApi?.openSettingsWindow()
+    openSettingsOverlay()
   }, [])
 
   return (
