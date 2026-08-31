@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import {
   PROPOSAL_IMAGE_API_KEY_MASK,
@@ -6,6 +6,10 @@ import {
 } from '@desktop-shared/ipc-channels';
 import { Button } from '@/src/components/ui/button';
 import { Input } from '@/src/components/ui/input';
+import {
+  consumeSettingsOverlayAnchor,
+  useSettingsOverlayStore,
+} from '@/src/stores/surfaceOverlay';
 import { useTt } from './settingsHelpers';
 
 /*
@@ -42,6 +46,7 @@ const DEFAULT_MODEL = 'gpt-image-2';
 
 export function ProposalImageApiSubsection(): React.JSX.Element {
   const tt = useTt();
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const [apiKey, setApiKey] = useState('');
   const [baseURL, setBaseURL] = useState('');
   const [model, setModel] = useState(DEFAULT_MODEL);
@@ -89,6 +94,28 @@ export function ProposalImageApiSubsection(): React.JSX.Element {
     };
   }, []);
 
+  // 「去设置」直达：本小节挂在「媒体生成提供商」底部，上面排着 8 个提供商卡片，
+  // 落到分区顶部时它在视口下方约 1892px（视口高 800）——不滚过去的话用户点完
+  // 「去设置」还得自己找两屏半。锚点用掉即焚，理由见 store 里 anchor 的注释。
+  useEffect(() => {
+    if (useSettingsOverlayStore.getState().anchor !== 'proposalImageApi') return;
+    // rAF：mount 时同节的 8 张提供商卡片还在布局，立刻滚会按旧高度算错位置。
+    const id = requestAnimationFrame(() => {
+      rootRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      // ⚠️ 消费 anchor 必须在 rAF 回调**内部**、滚动之后——不能提到 effect 开头。
+      // React 开发模式会把每个组件 mount → unmount → mount 一遍（用来暴露副作用
+      // 清理写得对不对）。放在开头的话时序是：
+      //   ① mount1 读到 anchor → 清空 → 注册 rAF
+      //   ② 立刻 unmount → cleanup 里 cancelAnimationFrame，**滚动被取消**
+      //   ③ mount2 读 anchor → 已经是空 → 直接 return，永远不滚
+      // 实测就是这样（日志里 effect 跑两次、第二次 anchor 已空，页面纹丝不动）。
+      // 放进回调后，被取消的那次不算「用掉」，第二次挂载仍能读到 anchor 并真的
+      // 滚过去。原则：一次性令牌要在**动作真正完成时**核销，不是在打算做的时候。
+      consumeSettingsOverlayAnchor();
+    });
+    return () => cancelAnimationFrame(id);
+  }, []);
+
   const handleSave = async (): Promise<void> => {
     if (saving) return;
     const api = window.chatApi;
@@ -134,7 +161,7 @@ export function ProposalImageApiSubsection(): React.JSX.Element {
   };
 
   return (
-    <div className="mt-8 border-t border-border/50 pt-6">
+    <div ref={rootRef} className="mt-8 border-t border-border/50 pt-6">
       <h2 className="text-[15px] font-semibold text-foreground">
         {tt('settings.proposalImageApi.title', '写方案出图 API')}
       </h2>

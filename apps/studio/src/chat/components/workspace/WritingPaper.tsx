@@ -648,7 +648,7 @@ export function WritingPaper({
   /** 「去设置」直达（未配置出图 API 时用）：落到「媒体生成提供商」那一节，出图
    *  API 表单在它底部。理由与 ProposalPaper 的同名函数一致，见那边的注释。 */
   const openImageApiSettings = useCallback((): void => {
-    openSettingsOverlay('media')
+    openSettingsOverlay('media', 'proposalImageApi')
   }, [])
 
   /**

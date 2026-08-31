@@ -499,7 +499,7 @@ export function ProposalPaper(): React.JSX.Element {
   // 只能开到默认分类（分类是它的内部 state，外部传不进去）；现在统一走根层的
   // openSettingsOverlay，section 参数由 store 转交给设置页当 initialSection。
   function openImageApiSettings(): void {
-    openSettingsOverlay('media')
+    openSettingsOverlay('media', 'proposalImageApi')
   }
 
   // 重改：对同一 mode 重发同一条 Task 7 IPC，成功则原子替换审阅项（先摘旧、再以同样的落点
