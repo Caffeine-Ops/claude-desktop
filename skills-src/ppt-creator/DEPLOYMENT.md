@@ -27,14 +27,14 @@
 ```
 服务器   ningbo-cowork  114.66.17.142
 目录     /var/www/downloads/skills/
-URL      https://cowork.cntcn.com/downloads/skills/
+URL      https://coworkapi.lizhiyun.net/downloads/skills/
 文件     ppt-creator.json          ← 清单，客户端先读它
          ppt-creator-<版本>.zip    ← 包体
 ```
 
 ### 刻意没有新增 nginx location
 
-`cowork.cntcn.com` 同域挂着四样东西，其中 **`location /` 是付费的 sub2api 网关**
+`coworkapi.lizhiyun.net` 同域挂着三样东西（官网已迁到 cowork.lizhiyun.net），其中 **`location /` 是付费的 sub2api 网关**
 （SSE 长连接依赖它的 `proxy_buffering off` + 3600s 超时，别碰）。
 
 本方案复用**已存在的** `location /downloads/`（`alias /var/www/downloads/`），
@@ -65,7 +65,7 @@ ssh ningbo-cowork 'chmod 755 /var/www/downloads/skills && chmod 644 /var/www/dow
 
 ```bash
 curl -sS -o /dev/null -w "%{http_code} %{content_type}\n" \
-  https://cowork.cntcn.com/downloads/skills/ppt-creator.json
+  https://coworkapi.lizhiyun.net/downloads/skills/ppt-creator.json
 # 期望：200 application/json
 ```
 
@@ -77,7 +77,7 @@ curl -sS -o /dev/null -w "%{http_code} %{content_type}\n" \
 完整校验（确认包没在传输中损坏）：
 
 ```bash
-curl -sS -o /tmp/p.zip https://cowork.cntcn.com/downloads/skills/ppt-creator-1.0.0.zip
+curl -sS -o /tmp/p.zip https://coworkapi.lizhiyun.net/downloads/skills/ppt-creator-1.0.0.zip
 shasum -a 256 /tmp/p.zip   # 应与清单里的 sha256 一致
 ```
 

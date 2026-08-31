@@ -55,7 +55,7 @@ import { API_TIMEOUT_MS, fetchWithTimeout } from '../lib/http'
  * 另注：**同域漏配路径不会 404**，会被 sub2api 的 SPA 兜底吃成 200 + text/html
  * ——排查这条链路时看 content-type，别只看状态码。
  */
-const DEFAULT_BASE_URL = 'https://cowork.cntcn.com/downloads/skills'
+const DEFAULT_BASE_URL = 'https://coworkapi.lizhiyun.net/downloads/skills'
 
 /** 本地安装记账文件名（放在条目目录下，与 skill 内容同生共死）。 */
 const INSTALL_META = '.ppt-skill.json'
