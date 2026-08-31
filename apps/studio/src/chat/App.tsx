@@ -12,7 +12,6 @@ import { useWorkspaceStore } from './stores/workspace'
 import { useI18n } from './i18n'
 import { useDialogStore } from './stores/dialogs'
 import { openSettingsOverlay } from '@/src/stores/surfaceOverlay'
-import { SettingsView } from './components/settings/SettingsView'
 import { KbManagerView } from './components/kb/KbManagerView'
 import { ChatLoadingSkeleton } from '@/src/components/ChatLoadingSkeleton'
 import { MotionConfig } from 'motion/react'
@@ -84,9 +83,9 @@ function App(): React.JSX.Element {
   //
   // 2026-07-31：'open-settings' 改调根层 openSettingsOverlay()（canvas 全屏
   // 设置页），不再落 chat 树遗留的 useSettingsStore/SettingsView——菜单栏
-  // 「设置」与齿轮/Cmd+, 现在打开的是同一套 UI，不再是两套互不相通的设置页。
-  // SettingsView 组件本身与 ProposalPaper 的直达入口暂未退役，仍可用其它
-  // 方式触达。
+  // 「设置」与齿轮/Cmd+, 打开的是同一套 UI。2026-08-31 收口完成：那套遗留
+  // 设置页（SettingsView + chat/stores/settings.ts）连同它最后两个直达入口
+  // 一并删除，现在全应用只有这一条打开设置的路径。
   useEffect(() => {
     if (!window.chatApi?.onShellMenuAction) return
     return window.chatApi.onShellMenuAction((action) => {
@@ -249,11 +248,9 @@ function App(): React.JSX.Element {
           </div>
         </FusionRuntimeProvider>
         )}
-        {/* Settings overlay — `absolute inset-0` inside .main so it
-            covers the chat row but leaves the title-bar header
-            untouched. Renders null when the store says closed. */}
-        <SettingsView />
-        {/* KB 托管仓库管理页 overlay——与 SettingsView 平级，靠 useKbStore.open 门控，关闭时 render null */}
+        {/* KB 托管仓库管理页 overlay——靠 useKbStore.open 门控，关闭时 render null。
+            （此处原本还并排挂着 chat 树自己的 SettingsView 全屏设置页，
+            2026-08-31 两套设置合并后删除。） */}
         <KbManagerView />
       </main>
       {/* Permission bridge — headless component that subscribes the

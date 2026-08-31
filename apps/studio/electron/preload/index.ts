@@ -732,10 +732,6 @@ const chatApi: ChatApi = {
     }
   },
 
-  closeSettingsWindow(): Promise<void> {
-    return ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_WINDOW_CLOSE) as Promise<void>
-  },
-
   getUpdaterState(): Promise<UpdaterState> {
     return ipcRenderer.invoke(IPC_CHANNELS.UPDATER_GET_STATE) as Promise<UpdaterState>
   },
@@ -1265,10 +1261,6 @@ const tabApi: TabApi = {
     return ipcRenderer.invoke(IPC_CHANNELS.TAB_TRIGGER_MENU_ACTION, {
       action
     }) as Promise<void>
-  },
-
-  openSettingsWindow(): Promise<void> {
-    return ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_WINDOW_OPEN) as Promise<void>
   },
 
   getFullscreen(): Promise<boolean> {

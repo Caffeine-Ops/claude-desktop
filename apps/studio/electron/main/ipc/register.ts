@@ -615,8 +615,6 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_SESSION_SWITCH_REQUEST)
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_SESSION_RENAME)
   ipcMain.removeHandler(IPC_CHANNELS.SHELL_SESSION_DELETE)
-  ipcMain.removeHandler(IPC_CHANNELS.SETTINGS_WINDOW_OPEN)
-  ipcMain.removeHandler(IPC_CHANNELS.SETTINGS_WINDOW_CLOSE)
   ipcMain.removeHandler(IPC_CHANNELS.SETTINGS_CLI_BACKEND_GET)
   ipcMain.removeHandler(IPC_CHANNELS.SETTINGS_CLI_BACKEND_SET)
   ipcMain.removeHandler(IPC_CHANNELS.LOGS_GET)
@@ -2684,12 +2682,6 @@ export function registerIpcHandlers(): void {
       engine?.emit('sessionListChanged')
     }
   )
-
-  // SETTINGS_WINDOW_*：旧的全窗设置 overlay（加载 web ?settings=1）已随
-  // apps/web 物理下线——设置迁入 studio 内（/?settings=1，见 AppRail）。
-  // 通道保留为 no-op，理由同 TAB_NEW。
-  ipcMain.handle(IPC_CHANNELS.SETTINGS_WINDOW_OPEN, async (): Promise<void> => {})
-  ipcMain.handle(IPC_CHANNELS.SETTINGS_WINDOW_CLOSE, async (): Promise<void> => {})
 
   // Runtime-log read/clear for the「日志分析」settings section. Engine-free —
   // they touch the process-global logCollector directly. Live streaming is a
