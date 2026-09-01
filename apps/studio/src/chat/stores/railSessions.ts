@@ -130,17 +130,9 @@ export const useRailSessionsStore = create<RailSessionsState>((set) => ({
       set({ loaded: true })
       return
     }
-    // TODO(debug 2026-07-08): 「发送后列表不刷新」排查用临时日志，定位后删。
-    console.log('[RailSessionList] reload fired')
     window.tabApi
       .listShellSessions()
       .then((r) => {
-        console.log(
-          '[RailSessionList] got',
-          r.threads.length,
-          'threads, top3:',
-          r.threads.slice(0, 3).map((t) => `${t.id.slice(0, 8)}:${t.title || '(空)'}`)
-        )
         // 先过墓碑：删除窗口期内磁盘还含被删会话，过滤掉「删除中」的 id 才
         // 不会把乐观移除覆盖回来（见 tombstones 注释）。空集时是零成本直通。
         const visible = tombstones.size

@@ -242,7 +242,9 @@ export function MediaProvidersSection({
                       </span>
                     ) : null}
                   </div>
-                  <span className="media-provider-hint">{provider.hint}</span>
+                  <span className="media-provider-hint">
+                    {provider.hintKey ? t(provider.hintKey) : provider.hint}
+                  </span>
                 </div>
                 {/*
                   Right-side badges deliberately omitted now: every row
@@ -371,8 +373,9 @@ export function MediaProvidersSection({
         // but disabled placeholder cards in the main list were noise.
         // Closed by default — opens to a compact name + hint + docs
         // link list, no inputs because there's nothing to wire up yet.
-        // TODO(i18n): inline English placeholders; promote to locale
-        // keys when we touch this section again.
+        // 2026-09-01：这里的可见文案已全部走 t()。provider.label 是品牌名、
+        // 保持原样；provider.hint 走 models.ts 的 hintKey（只给成句的英文
+        // 建了键，纯模型名清单是专有名词不翻，见该字段注释）。
         <details className="library-group media-provider-coming-soon">
           <summary className="memory-details-summary">
             <span className="memory-details-title">
@@ -398,7 +401,7 @@ export function MediaProvidersSection({
                       {provider.label}
                     </span>
                     <span className="media-provider-hint">
-                      {provider.hint}
+                      {provider.hintKey ? t(provider.hintKey) : provider.hint}
                     </span>
                   </div>
                   {docsHref ? (

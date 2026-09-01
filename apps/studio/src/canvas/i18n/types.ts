@@ -338,6 +338,46 @@ export interface Dict {
   'settings.mediaProvidersHint': string;
   'settings.mcpServerTitle': string;
   'settings.mcpServerHint': string;
+
+  // 媒体提供商目录里「一句话说明」的译文（models.ts 的 hintKey 指过来）。
+  // 只给成句的英文建键；纯模型名清单（FLUX 1.1 Pro / Dev 之类）是专有
+  // 名词，保持原样不翻。
+  'settings.mediaProviderHint.grokNativeAudio': string;
+  'settings.mediaProviderHint.localHtmlRenderer': string;
+  'settings.mediaProviderHint.googleOfficialGateway': string;
+  'settings.mediaProviderHint.openaiCompatRouting': string;
+  'settings.mediaProviderHint.openaiCompatEndpoint': string;
+  'settings.mediaProviderHint.musicGeneration': string;
+  'settings.mediaProviderHint.voiceSfx': string;
+  'settings.mediaProviderHint.speechVoiceClone': string;
+
+  // xAI / SuperGrok OAuth panel (Settings → 媒体提供商 → Grok 行)
+  'settings.xaiOauth.signedIn': string;
+  'settings.xaiOauth.signedInExpiry': string;
+  'settings.xaiOauth.signedInConnected': string;
+  'settings.xaiOauth.awaiting': string;
+  'settings.xaiOauth.awaitingHint': string;
+  'settings.xaiOauth.notSignedIn': string;
+  'settings.xaiOauth.notSignedInHint': string;
+  'settings.xaiOauth.warningLead': string;
+  'settings.xaiOauth.warningBody': string;
+  'settings.xaiOauth.signIn': string;
+  'settings.xaiOauth.openingBrowser': string;
+  'settings.xaiOauth.reconnect': string;
+  'settings.xaiOauth.reconnectTitle': string;
+  'settings.xaiOauth.connecting': string;
+  'settings.xaiOauth.disconnect': string;
+  'settings.xaiOauth.disconnecting': string;
+  'settings.xaiOauth.disconnectFailed': string;
+  'settings.xaiOauth.refreshStatus': string;
+  'settings.xaiOauth.checking': string;
+  'settings.xaiOauth.fallbackPrompt': string;
+  'settings.xaiOauth.fallbackLink': string;
+  'settings.xaiOauth.pasteHint': string;
+  'settings.xaiOauth.pastePlaceholder': string;
+  'settings.xaiOauth.submitCode': string;
+  'settings.xaiOauth.submitting': string;
+  'settings.xaiOauth.grantedScopes': string;
   'settings.externalMcpTitle': string;
   'settings.externalMcpHint': string;
   'settings.mediaProviderApiKey': string;

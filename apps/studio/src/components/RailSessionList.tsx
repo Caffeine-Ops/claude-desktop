@@ -343,15 +343,8 @@ export function RailSessionList() {
     //     偶发不到位时，rail 就停在旧时间不刷新（2026-07-05：ppt 会话回复
     //     中 rail 时间卡在「7 分钟前」不动的根因）。补挂无条件的这条兜底，
     //     两条都触发 reload（reload 幂等，重复拉一次无害）。
-    // TODO(debug 2026-07-08): 同上，事件到达打点，定位后连箭头函数一起还原。
-    const offShellList = window.tabApi?.onShellSessionListChanged?.(() => {
-      console.log('[RailSessionList] evt: SHELL_SESSION_LIST_CHANGED')
-      reload()
-    })
-    const offEngineList = window.chatApi.onSessionListChanged?.(() => {
-      console.log('[RailSessionList] evt: SESSION_LIST_CHANGED')
-      reload()
-    })
+    const offShellList = window.tabApi?.onShellSessionListChanged?.(reload)
+    const offEngineList = window.chatApi.onSessionListChanged?.(reload)
     // 切换事件回流时同步高亮——无论切换是本组件发起（点击项）还是 chat
     // 页面内部发起后经 main 正规化，最终都汇到这一个事件上。切到哪个会话
     // 即视为看过它的回复，顺手清掉该会话的未读标记（这是权威清除点，

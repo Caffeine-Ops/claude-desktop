@@ -21,6 +21,7 @@
  */
 
 import type { AudioKind, MediaAspect } from '../types';
+import type { Dict } from '../i18n/types';
 
 /**
  * Provider identifier — used both as a grouping key in the picker and as
@@ -55,8 +56,15 @@ export interface MediaProvider {
   id: MediaProviderId;
   /** Display name shown in Settings + ModelPicker headers. */
   label: string;
-  /** Short marketing-style sub-label. */
+  /** Short marketing-style sub-label. Fallback when `hintKey` is absent. */
   hint: string;
+  /**
+   * 译文键（可选）。**只有成句的说明才建键**——`FLUX 1.1 Pro / Dev` 这类
+   * 纯模型名清单是专有名词，翻译反而更难认，故保持 `hint` 原样直出。
+   * 渲染方一律 `hintKey ? t(hintKey) : hint`，所以漏配只会退回英文原句，
+   * 不会渲染出一个裸键名。
+   */
+  hintKey?: keyof Dict;
   /** Whether the daemon ships a real integration for this provider. */
   integrated: boolean;
   /** Whether the provider needs user-supplied credentials. */
@@ -100,6 +108,7 @@ export const MEDIA_PROVIDERS: MediaProvider[] = [
     id: 'grok',
     label: 'xAI Grok Imagine',
     hint: 'grok-imagine — image + video with native audio',
+    hintKey: 'settings.mediaProviderHint.grokNativeAudio',
     integrated: true,
     defaultBaseUrl: 'https://api.x.ai/v1',
     docsUrl: 'https://docs.x.ai/developers/model-capabilities/video/generation',
@@ -108,6 +117,7 @@ export const MEDIA_PROVIDERS: MediaProvider[] = [
     id: 'hyperframes',
     label: 'HyperFrames',
     hint: 'Local HTML -> MP4 renderer',
+    hintKey: 'settings.mediaProviderHint.localHtmlRenderer',
     integrated: true,
     credentialsRequired: false,
     settingsVisible: false,
@@ -117,6 +127,7 @@ export const MEDIA_PROVIDERS: MediaProvider[] = [
     id: 'nanobanana',
     label: 'Nano Banana',
     hint: 'Google official by default; custom gateway configurable',
+    hintKey: 'settings.mediaProviderHint.googleOfficialGateway',
     integrated: true,
     defaultBaseUrl: 'https://generativelanguage.googleapis.com',
     docsUrl: 'https://ai.google.dev/gemini-api/docs/api-key',
@@ -126,6 +137,7 @@ export const MEDIA_PROVIDERS: MediaProvider[] = [
     id: 'imagerouter',
     label: 'ImageRouter',
     hint: 'OpenAI-compatible image + video routing',
+    hintKey: 'settings.mediaProviderHint.openaiCompatRouting',
     integrated: true,
     defaultBaseUrl: 'https://api.imagerouter.io/v1/openai',
     docsUrl: 'https://docs.imagerouter.io/api-reference/image-generation/',
@@ -136,6 +148,7 @@ export const MEDIA_PROVIDERS: MediaProvider[] = [
     id: 'custom-image',
     label: 'Custom Image API',
     hint: 'OpenAI-compatible /v1/images/generations endpoint',
+    hintKey: 'settings.mediaProviderHint.openaiCompatEndpoint',
     integrated: true,
     docsUrl: 'https://platform.openai.com/docs/api-reference/images',
     supportsCustomModel: true,
@@ -207,18 +220,21 @@ export const MEDIA_PROVIDERS: MediaProvider[] = [
     id: 'suno',
     label: 'Suno',
     hint: 'Music generation',
+    hintKey: 'settings.mediaProviderHint.musicGeneration',
     integrated: false,
   },
   {
     id: 'udio',
     label: 'Udio',
     hint: 'Music generation',
+    hintKey: 'settings.mediaProviderHint.musicGeneration',
     integrated: false,
   },
   {
     id: 'elevenlabs',
     label: 'ElevenLabs',
     hint: 'Voice / SFX',
+    hintKey: 'settings.mediaProviderHint.voiceSfx',
     integrated: true,
     defaultBaseUrl: 'https://api.elevenlabs.io',
     docsUrl: 'https://elevenlabs.io/app/settings/api-keys',
@@ -227,6 +243,7 @@ export const MEDIA_PROVIDERS: MediaProvider[] = [
     id: 'fishaudio',
     label: 'FishAudio',
     hint: 'Speech / voice clone',
+    hintKey: 'settings.mediaProviderHint.speechVoiceClone',
     integrated: true,
     defaultBaseUrl: 'https://api.fish.audio',
     docsUrl: 'https://fish.audio',

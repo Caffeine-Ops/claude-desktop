@@ -1357,9 +1357,10 @@ function McpOAuthControl({ serverId }: { serverId: string }) {
   const isAwaiting = busy === 'awaiting' || (Boolean(pendingAuthUrl) && !connected);
 
   return (
-    // 注意：legacy 的 .mcp-oauth-* CSS 仍留在 canvas 样式里——同名类被
-    // XaiOAuthControl.tsx 复用，删了会连坐打坏 xAI 授权面板。这里只是不再
-    // 引用它们，改用 utility；两者观感会暂时分叉，等 Xai 那侧一并迁移。
+    // 2026-09-01：XaiOAuthControl 也迁完了，.mcp-oauth-* / .xai-oauth-*
+    // 两族 CSS 已从 mcp-settings.css 整段删除（零消费者才动手）。这里与
+    // 那边的观感重新对齐——两个面板的 utility 结构是逐行同构的，改一边
+    // 记得看另一边。
     <div className="flex flex-col gap-2.5 rounded-lg border bg-background p-3 dark:bg-input/30">
       <div className="flex items-center gap-2" aria-live="polite">
         {connected ? (
