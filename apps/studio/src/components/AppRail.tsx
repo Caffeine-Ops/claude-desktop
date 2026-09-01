@@ -221,7 +221,8 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
   // 与「插件」按钮同一套视觉（都是 rail 上的目的地）。
   //  - 聊天面：**空态 = 有 id 没消息**，不是 sessionId === null。
   //    `switchShellSession(null)` 的语义是「让 main mint 一个新 session」
-  //    （见 TabBar 的注释），点完「新对话」store 里的 sessionId 是那个**新会话
+  //    （原见 TabBar 的注释，该组件已于 2026-08-31 删除），点完「新对话」store
+  //    里的 sessionId 是那个**新会话
   //    的 id**、不是 null——按 null 判定会永远点不亮（2026-07-17 实测栽过）。
   //    真正的空态信号与 ThreadView 同源（`messages.length > 0` 的 hasMessages，
   //    那边注释也写着「新会话（有 id 没消息）」），这里取它的反面。
@@ -315,7 +316,13 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
   // URL query：不动 pathname，不进历史栈，「返回应用」不再可能落错面（旧
   // URL 机制下 back() 落点依赖历史栈形状，出过好几次事故，2026-07-08 那次
   // 假切换是其中之一）。
-  const openSettings = openSettingsOverlay
+  //
+  // 2026-08-31 起包一层而不是直接把 openSettingsOverlay 当处理器传：它加了可选
+  // 的 section 参数（跨面直达某一节用），裸传会把事件对象顺位喂给 section——这
+  // 类「给回调加可选参数，调用点悄悄把事件当参数传进去」是经典坑，typecheck
+  // 这次当场抓到了（Event 不是 SettingsOverlaySection），但换成 any 类型的事件
+  // 就未必。包一层显式丢掉入参，永远只开默认落点。
+  const openSettings = (): void => openSettingsOverlay()
   // 打开订阅购买页 overlay（UpgradeScreen 常驻根 layout，store 翻开关即现）。
   const setUpgradeOpen = useUpgradeStore((s) => s.setOpen)
   const openUpgrade = () => setUpgradeOpen(true)

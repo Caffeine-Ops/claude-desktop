@@ -248,7 +248,10 @@ export function ThreadListSidebar(): React.JSX.Element {
         />
       </div>
 
-      {/* The settings menu (UserInfoBar) used to be pinned here at the
+      {/* 注：下面提到的 UserInfoBar 组件已于 2026-08-31 删除（零引用死代码，
+          所属的 ShellApp 独立壳架构早已下线）。保留这段历史说明是因为它解释了
+          「为什么这里没有设置入口」——今天的设置入口在 AppRail 底部。
+          The settings menu (UserInfoBar) used to be pinned here at the
           bottom-left of the sidebar. It moved to the shell's tab strip
           (ShellApp) so it's reachable from any tab — see UserInfoBar's
           header comment. Nothing replaces it here; the chat list now

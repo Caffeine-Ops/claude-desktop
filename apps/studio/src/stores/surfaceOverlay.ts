@@ -139,7 +139,48 @@ export const useSurfaceOverlayStore = create<{ open: SurfaceOverlayKind | null }
  * 故整组按 settings 隐藏。判定不能在 RailShell 里自己 useSearchParams——它不
  * 在 Suspense 内，理由同上一个 store。
  */
-export const useSettingsOverlayStore = create<{ open: boolean }>(() => ({ open: false }))
+export const useSettingsOverlayStore = create<{
+  open: boolean
+  /**
+   * 打开时要落到哪一节。**只在 openSettingsOverlay 那一刻写一次**，之后用户在
+   * 设置页里点左栏切节不回写这里——设置页自己的 activeSection 才是「现在看的是
+   * 哪节」的真相源，这里只是「这次打开的初始落点」。
+   *
+   * null = 用调用方（canvas App）的默认节。有具体值时 canvas App 会把它当
+   * `initialSection` 传给设置页组件，并在关闭时清空，免得下次从 rail 齿轮打开
+   * 还停在上次那一节。
+   */
+  section: SettingsOverlaySection | null
+  /**
+   * 落到分区后还要滚到分区**内部**的哪一小节。
+   *
+   * 为什么需要它：「写方案出图 API」按用户拍板挂在「媒体生成提供商」分区的底部，
+   * 而那一节上面排着 8 个提供商卡片——实测点「去设置」落到分区顶部时，目标表单
+   * 在视口下方 1892px（视口高 800），用户还得自己往下滚两屏半才看得见，"直达"
+   * 名存实亡。带 anchor 的调用方会让目标小节自己滚进视野。
+   *
+   * **一次性**：小节滚过之后立刻把它清成 null（见 ProposalImageApiSubsection）。
+   * 不清的话，用户在设置页里切到别的分区再切回来，会被莫名其妙地又滚一次——
+   * 那时他已经是在自己浏览，不是在被「去设置」引导。
+   */
+  anchor: SettingsOverlayAnchor | null
+}>(() => ({ open: false, section: null, anchor: null }))
+
+/**
+ * 分区内部的滚动锚点。目前只有一个：媒体分区底部的「写方案出图 API」小节。
+ * 与 SettingsOverlaySection 同理，不引用 canvas 内部类型——消费方按字符串比对。
+ */
+export type SettingsOverlayAnchor = 'proposalImageApi'
+
+/**
+ * 允许直达的设置分区。**故意不复用 canvas 的 SettingsSection 联合类型**：那个
+ * 类型住在 canvas 树里（`canvas/components/SettingsDialog/settingsHelpers`），
+ * 而本 store 在根层、要被 chat 树的组件消费——根层依赖 canvas 内部类型会把两面
+ * 的模块图黏在一起（chat 面加载时被迫拖进 canvas 的类型链）。这里只列真正有
+ * 跨面直达需求的那几个，取值必须是 SettingsSection 的子集，canvas App 传下去
+ * 时会做类型收窄，写错了 typecheck 当场报。
+ */
+export type SettingsOverlaySection = 'media' | 'knowledgeBase'
 
 /**
  * 打开设置页。**先关掉市场/知识库面**（`closeSurfaceOverlay`）再开：市场/
@@ -148,14 +189,29 @@ export const useSettingsOverlayStore = create<{ open: boolean }>(() => ({ open: 
  * 出来」（旧 URL 机制下的既有缺口，两个 store 从未真正互斥过，这次一并
  * 收口）。
  */
-export function openSettingsOverlay(): void {
+export function openSettingsOverlay(
+  section?: SettingsOverlaySection,
+  anchor?: SettingsOverlayAnchor
+): void {
   closeSurfaceOverlay()
-  useSettingsOverlayStore.setState({ open: true })
+  useSettingsOverlayStore.setState({
+    open: true,
+    section: section ?? null,
+    anchor: anchor ?? null
+  })
+}
+
+/** 锚点用掉即焚（滚过一次就清），理由见 store 里 anchor 字段的注释。 */
+export function consumeSettingsOverlayAnchor(): void {
+  useSettingsOverlayStore.setState({ anchor: null })
 }
 
 /** 关闭设置页。幂等——连点/连按 Esc 无需防重入。 */
 export function closeSettingsOverlay(): void {
-  useSettingsOverlayStore.setState({ open: false })
+  // section 一并清空：留着的话，下次从 rail 齿轮（不带 section）打开会停在上次
+  // 那一节，用户看到的是「设置页记住了我上次看哪」——但那是 canvas App 自己的
+  // 局部 state 该做的事，本 store 只表达「这次打开的落点」。
+  useSettingsOverlayStore.setState({ open: false, section: null, anchor: null })
 }
 
 /** 打开一个面（rail 的「插件」「知识库」按钮 + `/plugins` 斜杠命令共用）。 */

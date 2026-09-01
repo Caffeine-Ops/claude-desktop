@@ -8,7 +8,7 @@ import {
 } from '@/src/components/ui/dropdown-menu'
 import { useProposalStore, type ProposalSection, type ImageReview } from '../../stores/proposal'
 import { useChatStore } from '../../stores/chat'
-import { useSettingsStore } from '../../stores/settings'
+import { openSettingsOverlay } from '@/src/stores/surfaceOverlay'
 import { AssistantMarkdown } from '../chat/AssistantMarkdown'
 import { reviseProposalSection } from '../../lib/sendProposalSectionRevision'
 import { friendlyImageError } from '../../lib/imageErrorText'
@@ -494,11 +494,12 @@ export function ProposalPaper(): React.JSX.Element {
     pstore.removeImageReview(review.id)
   }
 
-  // 「去设置」直达：打开设置页（出图 API 表单所在）。studio 的 openSettings 不带
-  // 分类参数（分类是 SettingsView 内部 local state）——定位到具体分类待设置页
-  // 迁移收口后再接，先保证入口可达。
+  // 「去设置」直达：打开设置页并落到「媒体生成提供商」——出图 API 表单在那一节
+  // 底部。2026-08-31 两套设置页合并前，这里开的是 chat 树自己那套设置页、且
+  // 只能开到默认分类（分类是它的内部 state，外部传不进去）；现在统一走根层的
+  // openSettingsOverlay，section 参数由 store 转交给设置页当 initialSection。
   function openImageApiSettings(): void {
-    useSettingsStore.getState().openSettings()
+    openSettingsOverlay('media', 'proposalImageApi')
   }
 
   // 重改：对同一 mode 重发同一条 Task 7 IPC，成功则原子替换审阅项（先摘旧、再以同样的落点

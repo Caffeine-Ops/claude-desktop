@@ -124,6 +124,7 @@ import { ConnectorSection } from './ConnectorSection';
 import { OrbitSection } from './OrbitSection';
 import { MediaProvidersSection } from './MediaProvidersSection';
 import { IntegrationsSection } from './IntegrationsSection';
+import { KnowledgeBaseSection } from './KnowledgeBaseSection';
 import { AppearanceSection } from './AppearanceSection';
 import { CliBackendCard } from './CliBackendCard';
 import { LogAnalysisSection } from './LogAnalysisSection';
@@ -1291,6 +1292,9 @@ export function SettingsDialog({
       title: t('routines.title'),
       subtitle: t('routines.subtitle'),
     },
+    // 账号/使用记录同款：字典里还没有对应 key，先写中文字面量（加 key 要动
+    // 19 本字典 + types.ts，见 settingsHelpers 的 useTt 注释）。
+    knowledgeBase: { title: '知识库', subtitle: '「写方案」检索资料的来源' },
     integrations: { title: t('settings.mcpServerTitle'), subtitle: t('settings.mcpServerHint') },
     mcpClient: { title: t('settings.externalMcpTitle'), subtitle: t('settings.externalMcpHint') },
     language: { title: t('settings.language'), subtitle: t('settings.languageHint') },
@@ -1597,6 +1601,27 @@ export function SettingsDialog({
               <span>
                 <strong>{t('settings.privacy')}</strong>
                 <small>{t('settings.privacyHint')}</small>
+              </span>
+            </button>
+            {/* 知识库（2026-08-31）：V1 侧栏**必须**有这一行，不能只加在 V2。
+                V1 是 `localStorage.settingsV2='0'` 的降级出口（见 canvas/App.tsx
+                的 settingsV2Enabled 注释），而同一次改动里删掉了 chat 树那套设置
+                页——它原本是知识库来源配置的唯一去处。只加 V2 的话，降级用户会
+                彻底配不了本地/远程资料来源（review 发现）。V1 侧栏本就落后于 V2
+                （account/usage/appUpdate/projects 等都没有），但那几项在别处仍有
+                入口，知识库没有，所以这一行不能省。 */}
+            <button
+              type="button"
+              className={`settings-nav-item${activeSection === 'knowledgeBase' ? ' active' : ''}`}
+              onClick={() => setActiveSection('knowledgeBase')}
+            >
+              {/* Icon 的 IconName 联合里没有 book/library，folder 是最贴近的
+                  （本地目录本就是知识库的主形态）。V2 侧栏用的是 lucide 的
+                  Library——两套图标源不同，不强求一致。 */}
+              <Icon name="folder" size={18} />
+              <span>
+                <strong>知识库</strong>
+                <small>「写方案」检索资料的来源</small>
               </span>
             </button>
             <button
@@ -2473,6 +2498,8 @@ export function SettingsDialog({
               }}
             />
           ) : null}
+          {activeSection === 'knowledgeBase' ? <KnowledgeBaseSection /> : null}
+
           {activeSection === 'integrations' ? <IntegrationsSection /> : null}
 
           {activeSection === 'mcpClient' ? <McpClientSection /> : null}

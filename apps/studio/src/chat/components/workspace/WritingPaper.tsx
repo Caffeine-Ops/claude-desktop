@@ -8,7 +8,7 @@ import {
 } from '@desktop-shared/proposalGenImage'
 import { cn } from '@/src/lib/utils'
 import { useWritingStore } from '../../stores/writing'
-import { useSettingsStore } from '../../stores/settings'
+import { openSettingsOverlay } from '@/src/stores/surfaceOverlay'
 import { paperSkinClass } from '../../lib/writingGenreStyle'
 import type { WritingRevisionTarget } from '../../lib/writingRevision'
 import { blockSourceAt, isBlockUnchanged, locateBlockBySource } from '../../lib/writingEdit'
@@ -645,9 +645,10 @@ export function WritingPaper({
     })
   }, [imageReviews])
 
-  /** 「去设置」直达（未配置出图 API 时用）：设置页没有分类参数，先保证入口可达。 */
+  /** 「去设置」直达（未配置出图 API 时用）：落到「媒体生成提供商」那一节，出图
+   *  API 表单在它底部。理由与 ProposalPaper 的同名函数一致，见那边的注释。 */
   const openImageApiSettings = useCallback((): void => {
-    useSettingsStore.getState().openSettings()
+    openSettingsOverlay('media', 'proposalImageApi')
   }, [])
 
   /**

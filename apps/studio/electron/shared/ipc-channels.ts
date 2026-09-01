@@ -534,20 +534,6 @@ export const IPC_CHANNELS = {
    */
   TAB_TRIGGER_MENU_ACTION: 'tab:trigger-menu-action',
   /**
-   * Shell renderer → main (invoke). Open the settings modal — a transparent
-   * WebContentsView that main lays over the *whole* window (above the tab
-   * strip and every tab), loading the renderer with `?settings=1`. Works
-   * from any tab because the overlay lives in the shell's contentView tree,
-   * not inside a tab. Idempotent (re-opening just refocuses).
-   */
-  SETTINGS_WINDOW_OPEN: 'settings-window:open',
-  /**
-   * Settings-overlay renderer → main (invoke). Close the settings modal —
-   * main detaches and destroys the overlay view. Fired by the modal itself
-   * on scrim click / Escape / the ✕ button.
-   */
-  SETTINGS_WINDOW_CLOSE: 'settings-window:close',
-  /**
    * Settings-overlay renderer → main (invoke). Read the CLI backend state
    * (bundled fusion-code vs system claude) for the embedded web settings
    * page. Engine-free counterpart of CLI_BACKEND_GET: the overlay isn't
@@ -3615,13 +3601,6 @@ export interface ChatApi {
    */
   onShellSessionSwitch(handler: (sessionId: string | null) => void): () => void
 
-  /**
-   * Close the settings modal overlay. Called by the settings overlay
-   * renderer (`?settings=1`) on scrim click / Escape / the ✕ button.
-   * Resolves once main has torn the overlay view down.
-   */
-  closeSettingsWindow(): Promise<void>
-
   /** One-shot pull of the auto-updater state (see UPDATER_GET_STATE). */
   getUpdaterState(): Promise<UpdaterState>
 
@@ -4053,12 +4032,6 @@ export interface TabApi {
    * skipped). Fire-and-forget — resolves once main has dispatched.
    */
   triggerMenuAction(action: ShellMenuAction): Promise<void>
-
-  /**
-   * Open the settings modal — a full-window transparent overlay that works
-   * over any tab. Resolves once main has created/shown the overlay view.
-   */
-  openSettingsWindow(): Promise<void>
 
   /** One-shot query for the shell window's current fullscreen state. */
   getFullscreen(): Promise<boolean>

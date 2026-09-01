@@ -1,7 +1,7 @@
 import type { Transition } from 'motion/react'
 
 /**
- * 左侧 rail 的统一动效 token —— nav 行（TabBar）与会话行
+ * 左侧 rail 的统一动效 token —— nav 行（原 TabBar，已于 2026-08-31 删除）与会话行
  * （ShellSessionList）共用，保证整根 rail 的选中动画节奏一致。
  * 参数对齐设计原型 docs/shell-prototype-v3.html 的 --ease-spring /
  * --d-med，是那份原型「滑动 glider」动效的 React 落地。

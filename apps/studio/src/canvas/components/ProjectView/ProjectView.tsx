@@ -3414,11 +3414,13 @@ export function ProjectView({
         actions={(
           <>
             <HandoffButton projectId={project.id} />
-            {/* The Electron desktop shell pins its own settings gear in the
-                top tab strip (UserInfoBar), so the AvatarMenu's gear would be
-                a duplicate. Hide the whole menu when embedded — mode/agent/
-                model are still reachable from the settings page. In a plain
-                browser it stays (no shell chrome to duplicate). */}
+            {/* 嵌在桌面应用里时整个隐藏 AvatarMenu：左栏底部账户菜单已有常驻
+                设置入口，这里的齿轮是重复；模式/agent/模型仍可从设置页到达。
+                纯浏览器里保留（没有那条 rail，不存在重复）。
+
+                注：原注释的依据是「桌面壳顶部标签条的 UserInfoBar 有齿轮」，
+                那个组件已于 2026-08-31 删除（所属的 ShellApp 独立壳架构早已
+                下线）。结论不变，替代入口现在是 AppRail 的齿轮。 */}
             {isEmbeddedInDesktopShell() ? null : (
               <AvatarMenu
                 config={config}
