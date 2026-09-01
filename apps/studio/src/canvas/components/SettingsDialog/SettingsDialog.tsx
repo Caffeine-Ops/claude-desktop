@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from '@/src/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/src/components/ui/tabs';
+import { Textarea } from '@/src/components/ui/textarea';
 import { cn } from '@/src/lib/utils';
 import {
   agentIdToTracking,
@@ -2547,8 +2548,17 @@ export function SettingsDialog({
           ) : null}
 
           {activeSection === 'language' ? (
-          <section className="settings-section">
-            <div className="settings-language-grid" role="radiogroup" aria-label={t('settings.language')}>
+          /* 2026-09-01 迁 chat 栈：settings-section / settings-language-grid /
+             settings-language-tile 四件套退役，改 utility。裸 <button> 带
+             data-slot 逃逸 canvas 的裸元素 reset（同 AppearanceSection 的
+             背景主题格子）——radiogroup 语义是自定义的，Radix 没有对应原语，
+             不为它引新依赖。选中态照抄那边的 border-primary，不再自造一套色。 */
+          <section className="flex flex-col gap-3">
+            <div
+              className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(180px,1fr))]"
+              role="radiogroup"
+              aria-label={t('settings.language')}
+            >
               {LOCALES.map((code) => {
                 const active = locale === code;
                 return (
@@ -2557,7 +2567,14 @@ export function SettingsDialog({
                     type="button"
                     role="radio"
                     aria-checked={active}
-                    className={`settings-language-tile${active ? ' active' : ''}`}
+                    data-slot="settings-language-tile"
+                    className={cn(
+                      'grid min-w-0 grid-cols-[1fr_auto] items-center gap-2 rounded-md border px-3 py-2.5 text-left transition-colors',
+                      'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring',
+                      active
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-card text-foreground hover:border-input hover:bg-muted/50',
+                    )}
                     onClick={() => {
                       // P1 ui_click area=language — record the locale id
                       // that was picked, regardless of whether it differs
@@ -2570,11 +2587,16 @@ export function SettingsDialog({
                       setLocale(code as Locale);
                     }}
                   >
-                    <span className="settings-language-tile-text">
-                      <span className="settings-language-tile-title">
+                    <span className="flex min-w-0 flex-col gap-0.5">
+                      <span
+                        className={cn(
+                          'text-[13px] font-semibold [overflow-wrap:anywhere]',
+                          active ? 'text-primary' : 'text-foreground',
+                        )}
+                      >
                         {LOCALE_LABEL[code]}
                       </span>
-                      <span className="settings-language-tile-code">
+                      <span className="text-[11px] tabular-nums tracking-[0.02em] text-muted-foreground">
                         {code}
                       </span>
                     </span>
@@ -2632,16 +2654,21 @@ export function SettingsDialog({
           ) : null}
 
           {activeSection === 'instructions' ? (
-            <section className="settings-section settings-section-card instructions-rules-section">
-              <div className="memory-field-block instructions-rules-card">
-                <div className="memory-block-head">
-                  <div>
-                    <h4>{t('settings.customInstructionsTitle')}</h4>
-                    <p className="hint">{t('settings.customInstructionsHint')}</p>
-                  </div>
-                </div>
-                <textarea
-                  className="custom-instructions-input memory-global-rules-input instructions-rules-input"
+            /* 2026-09-01 迁 chat 栈：settings-section / settings-section-card /
+               memory-field-block / memory-block-head / hint /
+               custom-instructions-input 等 legacy 类退役，改 shadcn Textarea +
+               utility。卡片外观照抄 NotificationsSection 的 cardCls
+               （rounded-xl border bg-card p-4），保持设置页内各分区同构。 */
+            <section className="flex flex-col gap-3">
+              <div className="rounded-xl border border-border bg-card p-4">
+                <h4 className="text-sm font-medium text-foreground">
+                  {t('settings.customInstructionsTitle')}
+                </h4>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  {t('settings.customInstructionsHint')}
+                </p>
+                <Textarea
+                  className="mt-3 min-h-32 resize-y"
                   rows={5}
                   maxLength={5000}
                   placeholder={t('settings.customInstructionsPlaceholder')}
@@ -2676,62 +2703,83 @@ export function SettingsDialog({
           ) : null}
 
           {activeSection === 'about' ? (
-            <section className="settings-section">
+            /* 2026-09-01 迁 chat 栈：settings-about-* 全族 + empty-card + hint
+               退役，改 utility。「检查更新」那颗从裸 button 换 shadcn Button
+               size=xs（h-6/px-2/text-xs 与原来的 2px 9px + 11px 小药丸同量级，
+               不是把它放大成常规按钮）。dt/dd 保留语义标签、样式全部内联，
+               dl 结构不动——这是纯换皮，信息层级与顺序一律照旧。 */
+            <section className="flex flex-col gap-3">
               {appVersionInfo ? (
-                <dl className="settings-about-list">
-                  <div className="settings-about-version-row">
-                    <div className="settings-about-version-left">
-                      <dt>{t('settings.appVersion')}</dt>
-                      <span className="settings-about-version-num">{appVersionInfo.version}</span>
+                <dl className="m-0 flex flex-col gap-2">
+                  <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-card p-3">
+                    <div className="flex items-center gap-3">
+                      <dt className="shrink-0 text-xs text-muted-foreground">
+                        {t('settings.appVersion')}
+                      </dt>
+                      <span className="text-[13px] font-semibold text-foreground">
+                        {appVersionInfo.version}
+                      </span>
                     </div>
-                    <button
-                      type="button"
-                      className="settings-about-download-link"
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      className="font-normal whitespace-nowrap"
                       onClick={() => setActiveSection('appUpdate')}
                     >
                       {t('updateApp.check')}
-                    </button>
+                    </Button>
                   </div>
-                  <div>
-                    <dt>{t('settings.appChannel')}</dt>
-                    <dd>{appVersionInfo.channel}</dd>
-                  </div>
-                  <div>
-                    <dt>{t('settings.appRuntime')}</dt>
-                    <dd>
-                      {appVersionInfo.packaged
-                        ? t('settings.runtimePackaged')
-                        : t('settings.runtimeDevelopment')}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>{t('settings.appPlatform')}</dt>
-                    <dd>{appVersionInfo.platform}</dd>
-                  </div>
-                  <div>
-                    <dt>{t('settings.appArchitecture')}</dt>
-                    <dd>{appVersionInfo.arch}</dd>
-                  </div>
+                  {(
+                    [
+                      { label: t('settings.appChannel'), value: appVersionInfo.channel },
+                      {
+                        label: t('settings.appRuntime'),
+                        value: appVersionInfo.packaged
+                          ? t('settings.runtimePackaged')
+                          : t('settings.runtimeDevelopment'),
+                      },
+                      { label: t('settings.appPlatform'), value: appVersionInfo.platform },
+                      { label: t('settings.appArchitecture'), value: appVersionInfo.arch },
+                    ] as const
+                  ).map((row) => (
+                    <div
+                      key={row.label}
+                      className="flex items-center gap-3 rounded-md border border-border bg-card p-3"
+                    >
+                      <dt className="shrink-0 text-xs text-muted-foreground">{row.label}</dt>
+                      <dd className="m-0 text-[13px] font-semibold text-foreground [overflow-wrap:anywhere]">
+                        {row.value}
+                      </dd>
+                    </div>
+                  ))}
                 </dl>
               ) : (
-                <div className="empty-card">{t('settings.versionUnavailable')}</div>
+                <div className="rounded-md border border-dashed border-border bg-muted/40 p-4 text-xs text-muted-foreground">
+                  {t('settings.versionUnavailable')}
+                </div>
               )}
-              <div className="settings-about-diagnostics">
-                <div className="settings-about-diagnostics-text">
-                  <h4>{t('diagnostics.exportTitle')}</h4>
-                  <p className="hint">{t('diagnostics.exportHint')}</p>
+              <div className="flex items-start justify-between gap-4 rounded-md border border-border bg-card p-3">
+                <div className="flex min-w-0 flex-1 flex-col gap-1">
+                  <h4 className="text-[13px] font-semibold text-foreground">
+                    {t('diagnostics.exportTitle')}
+                  </h4>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    {t('diagnostics.exportHint')}
+                  </p>
                 </div>
                 <ExportDiagnosticsRow />
               </div>
-              {/* 新增行：shadcn 原语 + utility（本 about section 尚未整体迁移，
-                  但新 markup 一律走 shadcn，见 CLAUDE.md 设置页迁移纪律）。
-                  文案硬编码中文（不走 canvas i18n）：FeedbackDialog 本身也是
+              {/* 文案硬编码中文（不走 canvas i18n）：FeedbackDialog 本身也是
                   硬编码中文，见该文件头注释——它现在挂在根 layout 的
-                  RailShell.tsx，不在 canvas 的 I18nProvider 边界内。 */}
+                  RailShell.tsx，不在 canvas 的 I18nProvider 边界内。
+                  2026-09-01 本 section 整体迁完，这里最后一个 legacy 类 `hint`
+                  也换成 utility；分隔线保持 border-t、不改成卡片——换皮不动版式。 */}
               <div className="flex items-center justify-between gap-4 border-t border-border pt-4">
                 <div>
                   <h4 className="text-sm font-medium text-foreground">问题反馈</h4>
-                  <p className="hint">描述你遇到的问题，最多可以附 4 张截图。</p>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    描述你遇到的问题，最多可以附 4 张截图。
+                  </p>
                 </div>
                 {typeof window !== 'undefined' && window.chatApi ? (
                   <Button
