@@ -191,6 +191,17 @@ export function I18nProvider({ initial, children }: ProviderProps) {
     } catch {
       /* ignore */
     }
+    // 同 document 广播给 chat 面（监听方：src/chat/LocaleBridge.tsx）。
+    // chat 面自带另一套 i18n（zh/en 两本，独立持久化在
+    // `claude-desktop:lang`），本函数**不**触及它——两套 store 互不
+    // 知晓，不广播的话「设置页选中文、智能助手空态仍是英文」（2026-09-01
+    // 实锤：canvas 已是 zh-CN，chat 卡在 en，且 chat 那套当时已无任何 UI
+    // 入口可改）。做法照抄主题的 `od:theme-mode-applied` 即时广播通道
+    // （见 canvas/state/appearance.ts 那段注释），同为「canvas 是写手、
+    // chat 是订阅者」的单向桥。
+    window.dispatchEvent(
+      new CustomEvent('od:locale-applied', { detail: { locale: next } })
+    );
   }, []);
 
   const t = useCallback(

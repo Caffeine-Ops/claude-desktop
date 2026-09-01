@@ -58,6 +58,14 @@ const AppearanceBridge = dynamic(
   { ssr: false }
 )
 
+// 界面语言的同步桥（canvas 设置页 → chat 面）。挂这层的理由与上面那条
+// 逐字相同，且更硬：它唯一要在岗的时刻就是「设置页开着、用户改语言」，
+// 而那正是 chatShowing 翻 false、chat 面整棵被撤掉的时刻。详见组件头注释。
+const LocaleBridge = dynamic(
+  () => import('@/src/chat/LocaleBridge').then((m) => m.LocaleBridge),
+  { ssr: false }
+)
+
 // 插件市场面（?market=1）。ssr:false 与上面两个同理。它是**第三个面**而不是
 // canvas 内部的 overlay（设置页那样）：SurfaceHost 渲染在 rail 右侧的
 // shell-stage 里（app/layout.tsx），所以挂在这一层天然就是「rail 常驻 + 右侧
@@ -300,6 +308,8 @@ export function SurfaceHost() {
         * 包装 div 之外——它要在「chat 面被撤掉（设置页/知识库页开着）」时继续
         * 在岗，那正是 canvas 写手广播 themeMode 的时刻。 */}
       <AppearanceBridge />
+      {/* 语言同步桥：同上，零 DOM，必须在两个面的包装 div 之外。 */}
+      <LocaleBridge />
       {/* 全局更新就绪提示：fixed 定位 + 顶层 z，必须在两个（可能被
         * content-visibility:hidden 冻结的）面包装 div 之外。 */}
       <UpdateReadyToast />
