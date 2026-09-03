@@ -258,7 +258,6 @@ interface Props {
       | 'orbit'
       | 'integrations'
       | 'mcpClient'
-      | 'language'
       | 'appearance'
       | 'notifications'
       | 'pet'

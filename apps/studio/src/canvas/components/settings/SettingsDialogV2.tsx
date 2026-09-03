@@ -58,7 +58,7 @@
  *   注释同款事故。）
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
   BarChart3,
@@ -66,26 +66,30 @@ import {
   Blocks,
   CircleUserRound,
   Eye,
+  FileText,
   Flag,
   Folder,
   History,
   Image,
-  Languages,
+  Info,
   LayoutGrid,
   Library,
   Link,
   MessageSquare,
+  Package,
   Palette,
+  PawPrint,
   Pencil,
-  RefreshCw,
-  Settings,
+  Plug,
+  Search,
   SlidersHorizontal,
-  Sparkles,
   SunMoon,
+  X,
   type LucideIcon,
 } from 'lucide-react';
 
 import { Button } from '@/src/components/ui/button';
+import { Input } from '@/src/components/ui/input';
 import { cn } from '@/src/lib/utils';
 import { SettingsDialog, useTt } from '../SettingsDialog';
 import type { SettingsDialogProps, SettingsSection } from '../SettingsDialog';
@@ -103,62 +107,247 @@ type NavItem = {
   labelKey: string;
   fallback: string;
   icon: LucideIcon;
+  /* 搜索词表：让**面板内部**的控件名（「主题色」「密钥」「提示音」）也能
+     命中这一项。导航标题只有 2~4 个字，而用户搜的往往是他记得的那个控件
+     叫什么、而不是它被归在哪一区——只匹配标题的搜索基本等于没有。
+     空格分隔，匹配时统一小写化后做子串包含；中英文都放，英文界面下用户
+     多半仍按英文控件名搜。 */
+  keywords: string;
 };
 type NavGroup = { titleKey: string; fallback: string; items: NavItem[] };
 
+/* ── 信息架构（2026-09-02 重设计）──────────────────────────────────
+   改前是 4 组 24 项，其中「通用」9 项、「高级设置」6 项是两个杂物抽屉：
+   前者混着身份(account)、数据(usage)、AI 行为(execution/instructions/
+   memory)、外观(language/appearance)、系统(notifications/appUpdate)五类
+   毫不相干的东西，后者混着功能与系统信息。判据很简单——**一个分组好不好，
+   看你能不能用一句话说清它是什么**；「通用」和「高级」都说不清，所以它们
+   是抽屉而不是分组。
+
+   改后 6 组，每组的一句话定义写在下面每个 titleKey 上方，顺序按「先我是谁
+   → 再 AI 怎么干活 → 再我的东西 → 再接外部 → 最后应用自身」。组数变多反而
+   更好找：分组的价值来自「能一眼排除掉 5 个组」，而不是来自组少。
+
+   本次**刻意不动任何 SettingsSection token**（不删不合并），因为该类型是
+   穷举联合，被 App.tsx 的 openSettings 直达入口、stores/surfaceOverlay.ts
+   的跨面直达子集、以及 SettingsDialog.tsx 的 Record<SettingsSection, …>
+   同时消费——合并 section 是独立一步的改动（见文件头「后续」）。这里只重排
+   分组与顺序，改动范围严格锁在本文件内。为那一步做的铺垫是：三对候选合并
+   项已排成相邻位置（mcpClient↔composio、appearance↔language、
+   appUpdate↔about），合并时不需要再动位置。
+
+   图标去重：改前 execution 与 integrations 同为 SlidersHorizontal、
+   composio 与 pet 同为 Sparkles、memory 与 logAnalysis 同为 History——
+   三对撞车在旧分组下被距离掩盖了，重排后它们相邻或同组，一眼就能看出
+   「两行长得一样」。图标在导航里承担的是「不读字先定位」，撞车等于这个
+   功能失效，故一并修正。 ── */
 const NAV_GROUPS: NavGroup[] = [
   {
-    titleKey: 'settingsV2.groupGeneral',
-    fallback: '通用',
+    // 我是谁、我花了多少
+    titleKey: 'settingsV2.groupAccount',
+    fallback: '账户',
     items: [
-      { id: 'account', labelKey: 'settingsV2.account', fallback: '账号', icon: CircleUserRound },
-      { id: 'usage', labelKey: 'settingsV2.usage', fallback: '使用记录', icon: BarChart3 },
-      { id: 'execution', labelKey: 'settings.execution', fallback: '执行模式', icon: SlidersHorizontal },
-      { id: 'instructions', labelKey: 'settings.instructions', fallback: '全局规则', icon: Pencil },
-      { id: 'memory', labelKey: 'settings.memory', fallback: '记忆', icon: History },
-      { id: 'language', labelKey: 'settings.language', fallback: '界面语言', icon: Languages },
-      { id: 'appearance', labelKey: 'settings.appearance', fallback: '外观', icon: SunMoon },
-      { id: 'notifications', labelKey: 'settings.notifications', fallback: '通知', icon: Bell },
-      { id: 'appUpdate', labelKey: 'settings.appUpdate', fallback: '更新应用', icon: RefreshCw },
+      {
+        id: 'account',
+        labelKey: 'settingsV2.account',
+        fallback: '账号',
+        icon: CircleUserRound,
+        keywords: '登录 退出 注销 订阅 套餐 邮箱 会员 头像 余额 login logout profile',
+      },
+      {
+        id: 'usage',
+        labelKey: 'settingsV2.usage',
+        fallback: '使用记录',
+        icon: BarChart3,
+        keywords: '用量 花费 配额 统计 明细 账单 token usage billing quota',
+      },
     ],
   },
   {
-    // 「工作区」组（2026-07-04）：原首页 EntryNavRail 的 项目/自动化/插件
-    // 迁入设置页（设计系统/连接器本就有 section，rail 侧只删图标）。内容
-    // 宿主见 WorkspaceSections.tsx，数据经 workspaceHost prop 由 App 注入。
+    // AI 干活时听谁的 —— 本产品最核心的一组设置，改前埋在「通用」第 3~5 位
+    titleKey: 'settingsV2.groupBehavior',
+    fallback: 'AI 行为',
+    items: [
+      {
+        id: 'execution',
+        labelKey: 'settings.execution',
+        fallback: '执行模式',
+        icon: SlidersHorizontal,
+        keywords: '执行 模式 cli api 密钥 模型 后端 权限 byok fusion claude key model base url',
+      },
+      {
+        id: 'instructions',
+        labelKey: 'settings.instructions',
+        fallback: '全局规则',
+        icon: Pencil,
+        keywords: '规则 指令 提示词 全局 system prompt instructions claude.md',
+      },
+      {
+        id: 'memory',
+        labelKey: 'settings.memory',
+        fallback: '记忆',
+        icon: History,
+        keywords: '记忆 长期 记住 遗忘 memory',
+      },
+      {
+        id: 'critiqueTheater',
+        labelKey: 'settings.critiqueTheater',
+        fallback: '设计评审团',
+        icon: MessageSquare,
+        keywords: '评审 评论 角色 剧场 critique review',
+      },
+    ],
+  },
+  {
+    // 我攒下来的东西 —— skills/designSystems 从「扩展」「高级」搬进来：
+    // 它们是用户自己的资产，不是从外部接进来的能力
     titleKey: 'settingsV2.groupWorkspace',
     fallback: '工作区',
     items: [
-      { id: 'projects', labelKey: 'settingsV2.workspaceProjects', fallback: '项目', icon: Folder },
-      { id: 'automations', labelKey: 'settingsV2.workspaceAutomations', fallback: '自动化', icon: Flag },
-      { id: 'plugins', labelKey: 'settingsV2.workspacePlugins', fallback: '插件', icon: Blocks },
-      // 知识库（2026-08-31 两套设置页合并时补入）：配「写方案」检索资料的来源。
-      // 放工作区组是因为它和项目/自动化/插件一样，管的是「你的东西存在哪」，
-      // 而不是应用自身的行为开关。
-      { id: 'knowledgeBase', labelKey: 'settingsV2.workspaceKnowledgeBase', fallback: '知识库', icon: Library },
+      {
+        id: 'projects',
+        labelKey: 'settingsV2.workspaceProjects',
+        fallback: '项目',
+        icon: Folder,
+        keywords: '项目 目录 工作区 文件夹 project workspace',
+      },
+      {
+        id: 'automations',
+        labelKey: 'settingsV2.workspaceAutomations',
+        fallback: '自动化',
+        icon: Flag,
+        keywords: '自动化 定时 触发 任务 cron routine automation',
+      },
+      {
+        id: 'knowledgeBase',
+        labelKey: 'settingsV2.workspaceKnowledgeBase',
+        fallback: '知识库',
+        icon: Library,
+        keywords: '知识库 检索 资料 文档 向量 嵌入 rag embedding knowledge',
+      },
+      {
+        id: 'skills',
+        labelKey: 'settings.skills',
+        fallback: '技能',
+        icon: LayoutGrid,
+        keywords: '技能 写作 审标 文档 ppt 工作流 skill',
+      },
+      {
+        id: 'designSystems',
+        labelKey: 'settings.designSystems',
+        fallback: '设计系统',
+        icon: Palette,
+        keywords: '设计系统 品牌 配色 组件库 规范 token design system',
+      },
     ],
   },
   {
-    titleKey: 'settingsV2.groupExtensions',
-    fallback: '扩展与集成',
+    // 接进来的外部能力 —— mcpClient 与 composio 相邻，是下一步合并的候选
+    titleKey: 'settingsV2.groupConnect',
+    fallback: '连接',
     items: [
-      { id: 'media', labelKey: 'settings.media', fallback: '媒体生成提供商', icon: Image },
-      { id: 'skills', labelKey: 'settings.skills', fallback: '技能', icon: LayoutGrid },
-      { id: 'composio', labelKey: 'settings.composio', fallback: '外部 MCP', icon: Sparkles },
-      { id: 'integrations', labelKey: 'settings.integrations', fallback: '连接器', icon: SlidersHorizontal },
-      { id: 'mcpClient', labelKey: 'settings.mcpClient', fallback: 'MCP 服务器', icon: Link },
+      /* ── 这三项的标签在 2026-09-02 前**整体错位了一圈**（既有 bug）──
+         导航写「MCP 服务器」的其实是 mcpClient=外部 MCP，写「外部 MCP」的
+         其实是 composio=连接器，写「连接器」的其实是 integrations=MCP 服务器。
+         页面标题（SettingsDialog 的 sectionHeader）一直是**对的**，只有导航
+         贴错，于是「点进去标题和刚才点的名字不一样」。这正是「三个概念分不清」
+         的真病根——不是概念重叠，是名字贴错。
+         顺带把 labelKey 换成字典里**真实存在**的 key：原来的
+         settings.mcpClient / settings.composio / settings.integrations 三个
+         key 一个都没进字典，19 种语言全靠中文 fallback 顶着；换成下面这三个
+         已有 key 后，多语言一并补上。 */
+      {
+        id: 'mcpClient',
+        labelKey: 'settings.externalMcpTitle',
+        fallback: '外部 MCP',
+        icon: Link,
+        keywords: '外部 mcp 接入 工具 外挂 装 github higgsfield client 第三方工具',
+      },
+      {
+        id: 'composio',
+        labelKey: 'connectors.title',
+        fallback: '连接器',
+        icon: Package,
+        keywords: '连接器 授权 集成 notion 飞书 oauth composio connector 第三方账号',
+      },
+      {
+        id: 'integrations',
+        labelKey: 'settings.mcpServerTitle',
+        fallback: 'MCP 服务器',
+        icon: Plug,
+        keywords: 'mcp 服务器 暴露 对外 提供 cursor claude code antigravity 编码代理 server',
+      },
+      {
+        id: 'plugins',
+        labelKey: 'settingsV2.workspacePlugins',
+        fallback: '插件',
+        icon: Blocks,
+        keywords: '插件 扩展 plugin extension',
+      },
+      {
+        id: 'media',
+        labelKey: 'settings.media',
+        fallback: '媒体生成提供商',
+        icon: Image,
+        keywords: '媒体 出图 图片 视频 绘图 生成 提供商 image video provider',
+      },
     ],
   },
   {
-    titleKey: 'settingsV2.groupAdvanced',
-    fallback: '高级设置',
+    // 应用长什么样、怎么提醒我 —— appearance 与 language 相邻，合并候选
+    titleKey: 'settingsV2.groupApp',
+    fallback: '应用',
     items: [
-      { id: 'critiqueTheater', labelKey: 'settings.critiqueTheater', fallback: '设计评审团', icon: MessageSquare },
-      { id: 'pet', labelKey: 'settings.pet', fallback: '宠物', icon: Sparkles },
-      { id: 'designSystems', labelKey: 'settings.designSystems', fallback: '设计系统', icon: Palette },
-      { id: 'privacy', labelKey: 'settings.privacy', fallback: '隐私', icon: Eye },
-      { id: 'logAnalysis', labelKey: 'settings.logAnalysis', fallback: '日志分析', icon: History },
-      { id: 'about', labelKey: 'settings.about', fallback: '关于', icon: Settings },
+      {
+        id: 'appearance',
+        labelKey: 'settingsV2.appearanceAndLanguage',
+        fallback: '外观与语言',
+        icon: SunMoon,
+        keywords:
+          '外观 主题 深色 浅色 暗色 字号 背景 主题色 配色 语言 中文 英文 界面语言 theme dark light font language locale',
+      },
+      {
+        id: 'pet',
+        labelKey: 'settings.pet',
+        fallback: '宠物',
+        icon: PawPrint,
+        keywords: '宠物 桌宠 伙伴 pet',
+      },
+      {
+        id: 'notifications',
+        labelKey: 'settings.notifications',
+        fallback: '通知',
+        icon: Bell,
+        keywords: '通知 提示音 声音 桌面 铃声 notification sound',
+      },
+      {
+        id: 'privacy',
+        labelKey: 'settings.privacy',
+        fallback: '隐私',
+        icon: Eye,
+        keywords: '隐私 遥测 数据 收集 分析 privacy telemetry analytics',
+      },
+    ],
+  },
+  {
+    // 版本与排查 —— appUpdate 与 about 相邻，合并候选
+    titleKey: 'settingsV2.groupAbout',
+    fallback: '关于',
+    items: [
+      {
+        id: 'about',
+        labelKey: 'settingsV2.aboutAndUpdate',
+        fallback: '关于与更新',
+        icon: Info,
+        keywords: '关于 版本 更新 升级 许可 反馈 about version update upgrade license',
+      },
+      {
+        id: 'logAnalysis',
+        labelKey: 'settings.logAnalysis',
+        fallback: '日志分析',
+        icon: FileText,
+        keywords: '日志 诊断 排查 导出 log debug diagnostics',
+      },
     ],
   },
 ];
@@ -174,6 +363,58 @@ export function SettingsDialogV2(props: SettingsDialogV2Props): React.JSX.Elemen
   // SettingsDialog reads it via `controlledSection` and reports in-panel
   // jumps (e.g. Memory → Connectors) back through `onSectionChange`.
   const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection);
+
+  /* ── 搜索（2026-09-02）────────────────────────────────────────
+     24 个设置项此前只能靠眼睛在侧栏里从上往下扫。搜索放在导航上方而不是
+     内容区，因为它过滤的是**导航本身**。
+     没做防抖也没 useMemo：一次过滤是 24 项 × 一次 toLowerCase + includes，
+     比 React 自己这次重渲染便宜得多，加缓存只会多一份要维护的依赖数组。
+     （tt 每次渲染都是新函数引用，useMemo 挂它当依赖等于每次都失效。） */
+  const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
+  const q = query.trim().toLowerCase();
+  const filteredGroups = q
+    ? NAV_GROUPS.map((group) => ({
+        ...group,
+        items: group.items.filter((item) =>
+          `${tt(item.labelKey, item.fallback)} ${item.fallback} ${item.keywords}`
+            .toLowerCase()
+            .includes(q),
+        ),
+      })).filter((group) => group.items.length > 0)
+    : NAV_GROUPS;
+
+  /* ⌘F 聚焦搜索框。**刻意不用 ⌘K**——那个键已被会话搜索
+     （chat/components/dialogs/SessionSearchDialog.tsx）全局占用，在设置页
+     抢它会让用户按惯用键时弹出会话搜索。监听只在本组件挂载期间存在，
+     设置页一关就解绑，不给全局留残留。 */
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+        return;
+      }
+      /* Escape：搜索框里**有内容**时只清空搜索，不关设置页。
+         必须挂在 document 的 **capture** 阶段：SettingsDialog 有一个
+         document 冒泡监听「Escape 关闭整个设置页」，而 capture 早于所有
+         冒泡监听，在这里 stopPropagation 才拦得住它。
+         为什么不用 React 的 onKeyDown + stopPropagation（第一版这么写、
+         2026-09-02 真机走查证伪）：设置页渲染在 portal 里，原生事件的冒泡
+         路径不经过 React root container，合成事件那条路拦不住 document 上
+         的原生监听——探针实测 Escape 仍抵达 doc-bubble，设置页照关。
+         搜索框为空、或焦点不在搜索框时**故意不拦**：那时用户按 Escape 的
+         意图就是退出设置页，照常放行。 */
+      if (e.key === 'Escape' && query && document.activeElement === searchRef.current) {
+        e.stopPropagation();
+        e.preventDefault();
+        setQuery('');
+      }
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, [query]);
 
   const activeMeta = (() => {
     for (const g of NAV_GROUPS) {
@@ -209,8 +450,47 @@ export function SettingsDialogV2(props: SettingsDialogV2Props): React.JSX.Elemen
             <ArrowLeft aria-hidden="true" />
             {tt('settingsV2.back', '返回应用')}
           </Button>
-          <nav className="min-h-0 flex-1 overflow-y-auto px-2.5 pb-3.5 pt-1">
-            {NAV_GROUPS.map((group) => (
+          {/* 搜索框：shadcn Input + 绝对定位的图标/清除钮。这一层（设置页
+              侧栏）不在 canvas 裸元素 reset 的豁免范围内，裸 <input> 会被
+              填成描边卡片——所以用 shadcn 原语（自带 data-slot 逃逸）。 */}
+          <div className="relative mx-2.5 mb-2.5">
+            <Search
+              aria-hidden="true"
+              className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+            />
+            <Input
+              ref={searchRef}
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={tt('settingsV2.searchPlaceholder', '搜索设置')}
+              aria-label={tt('settingsV2.searchPlaceholder', '搜索设置')}
+              className="h-8 bg-card pl-8 pr-8 text-[13px]"
+            />
+            {query ? (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setQuery('');
+                  searchRef.current?.focus();
+                }}
+                aria-label={tt('settingsV2.searchClear', '清除搜索')}
+                className="absolute right-1 top-1/2 size-6 -translate-y-1/2 p-0 text-muted-foreground hover:text-foreground"
+              >
+                <X />
+              </Button>
+            ) : null}
+          </div>
+
+          {/* pb-16 而不是原来的 pb-3.5：AppRail 的账户头像按钮浮在设置页
+              overlay **之上**（左下角常驻），导航滚到底时会把最后一项压在
+              头像底下点不到——2026-09-02 真机走查实锤（改前同样存在，只是
+              当时末项是「关于」；本次重排把「日志分析」换到末位后更显眼）。
+              64px = 头像 36px + 上下呼吸，让最后一项能滚过它。
+              这里只加底部留白、不去动那个按钮的层级：让设置页打开时隐藏
+              rail 账户按钮要改 AppRail/App.tsx，属于另一件事。 */}
+          <nav className="min-h-0 flex-1 overflow-y-auto px-2.5 pb-16 pt-1">
+            {filteredGroups.map((group) => (
               <div key={group.titleKey} className="pt-4 first:pt-1.5">
                 <div className="px-3 pb-1.5 text-[11.5px] font-semibold tracking-[0.04em] text-muted-foreground">
                   {tt(group.titleKey, group.fallback)}
@@ -250,6 +530,11 @@ export function SettingsDialogV2(props: SettingsDialogV2Props): React.JSX.Elemen
                 </div>
               </div>
             ))}
+            {filteredGroups.length === 0 ? (
+              <p className="px-3 py-10 text-center text-xs text-muted-foreground">
+                {tt('settingsV2.searchEmpty', '没有匹配的设置项')}
+              </p>
+            ) : null}
           </nav>
         </aside>
 

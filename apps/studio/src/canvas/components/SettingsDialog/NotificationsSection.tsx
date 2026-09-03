@@ -3,6 +3,7 @@ import type { Dispatch, SetStateAction } from 'react';
 
 import { Button } from '@/src/components/ui/button';
 import { Switch } from '@/src/components/ui/switch';
+import { SettingCard, SettingGroup, SettingRow } from '../settings/SettingPrimitives';
 import { cn } from '@/src/lib/utils';
 import { useAnalytics } from '../../analytics/provider';
 import { trackSettingsNotificationsClick } from '../../analytics/events';
@@ -25,9 +26,6 @@ import {
    分段式裸 button + data-slot 逃逸 canvas reset（同 AppearanceSection 的
    cli-backend-tab 模式，Radix 组件对这种「选一个还带试听副作用」的组不贴）。 */
 
-const cardCls = 'rounded-xl border border-border bg-card p-4';
-const cardLabelCls = 'mb-3 text-xs font-medium text-muted-foreground';
-const hintCls = 'text-xs leading-relaxed text-muted-foreground';
 
 // Map the runtime SoundId (hyphenated, used by utils/notifications.ts) onto
 // the contract's underscored enum. Sounds that don't have a tracking entry
@@ -148,92 +146,107 @@ export function NotificationsSection({
   };
 
   return (
-    <section className="flex flex-col gap-3">
-      <div className="flex flex-col gap-3">
-        <div className={cardCls}>
-          <div className="flex items-center justify-between gap-4">
-            <h4 className="text-[13px] font-medium text-foreground">{t('settings.notifyCompletionSound')}</h4>
+    <section>
+      {/* 2026-09-02 P2 版式统一：原本每个设置项各占一张 rounded-xl 卡片，
+          一屏下来五六张卡各自浮着、边框数量等于设置项数量。改成「一组一张卡 +
+          内部发丝线分隔」（SettingCard/SettingRow，见 SettingPrimitives.tsx），
+          边框降到每组一圈。逻辑一行没动：handler、埋点、条件渲染全部照搬，
+          这是纯版式重构。 */}
+      <SettingGroup>
+        <SettingCard>
+          <SettingRow
+            title={t('settings.notifyCompletionSound')}
+            hint={t('settings.notifyCompletionSoundHint')}
+          >
             <Switch
               checked={notif.soundEnabled}
               onCheckedChange={toggleSound}
               aria-label={t('settings.notifyCompletionSound')}
             />
-          </div>
-          <p className={cn(hintCls, 'mt-2')}>{t('settings.notifyCompletionSoundHint')}</p>
-        </div>
+          </SettingRow>
 
-        {notif.soundEnabled ? (
-          <>
-            <div className={cardCls}>
-              <div className={cardLabelCls}>{t('settings.notifySuccessSound')}</div>
-              <SoundPicker
-                ariaLabel={t('settings.notifySuccessSound')}
-                sounds={SUCCESS_SOUNDS}
-                selectedId={notif.successSoundId}
-                onSelect={(sound) => {
-                  const trackingSoundId = soundIdToTracking(sound.id);
-                  trackSettingsNotificationsClick(analytics.track, {
-                    page_name: 'settings',
-                    area: 'notifications',
-                    element: 'success_sound',
-                    ...(trackingSoundId ? { sound_id: trackingSoundId } : {}),
-                  });
-                  updateNotif({ successSoundId: sound.id });
-                  playSound(sound.id);
-                }}
-                label={(sound) => t(sound.labelKey)}
-              />
-            </div>
+          {notif.soundEnabled ? (
+            <>
+              <SettingRow title={t('settings.notifySuccessSound')} stack>
+                <SoundPicker
+                  ariaLabel={t('settings.notifySuccessSound')}
+                  sounds={SUCCESS_SOUNDS}
+                  selectedId={notif.successSoundId}
+                  onSelect={(sound) => {
+                    const trackingSoundId = soundIdToTracking(sound.id);
+                    trackSettingsNotificationsClick(analytics.track, {
+                      page_name: 'settings',
+                      area: 'notifications',
+                      element: 'success_sound',
+                      ...(trackingSoundId ? { sound_id: trackingSoundId } : {}),
+                    });
+                    updateNotif({ successSoundId: sound.id });
+                    playSound(sound.id);
+                  }}
+                  label={(sound) => t(sound.labelKey)}
+                />
+              </SettingRow>
 
-            <div className={cardCls}>
-              <div className={cardLabelCls}>{t('settings.notifyFailureSound')}</div>
-              <SoundPicker
-                ariaLabel={t('settings.notifyFailureSound')}
-                sounds={FAILURE_SOUNDS}
-                selectedId={notif.failureSoundId}
-                onSelect={(sound) => {
-                  const trackingSoundId = soundIdToTracking(sound.id);
-                  trackSettingsNotificationsClick(analytics.track, {
-                    page_name: 'settings',
-                    area: 'notifications',
-                    element: 'failure_sound',
-                    ...(trackingSoundId ? { sound_id: trackingSoundId } : {}),
-                  });
-                  updateNotif({ failureSoundId: sound.id });
-                  playSound(sound.id);
-                }}
-                label={(sound) => t(sound.labelKey)}
-              />
-            </div>
-          </>
-        ) : null}
-      </div>
+              <SettingRow title={t('settings.notifyFailureSound')} stack>
+                <SoundPicker
+                  ariaLabel={t('settings.notifyFailureSound')}
+                  sounds={FAILURE_SOUNDS}
+                  selectedId={notif.failureSoundId}
+                  onSelect={(sound) => {
+                    const trackingSoundId = soundIdToTracking(sound.id);
+                    trackSettingsNotificationsClick(analytics.track, {
+                      page_name: 'settings',
+                      area: 'notifications',
+                      element: 'failure_sound',
+                      ...(trackingSoundId ? { sound_id: trackingSoundId } : {}),
+                    });
+                    updateNotif({ failureSoundId: sound.id });
+                    playSound(sound.id);
+                  }}
+                  label={(sound) => t(sound.labelKey)}
+                />
+              </SettingRow>
+            </>
+          ) : null}
+        </SettingCard>
+      </SettingGroup>
 
-      <div className="flex flex-col gap-3">
-        <div className={cardCls}>
-          <div className="flex items-center justify-between gap-4">
-            <h4 className="text-[13px] font-medium text-foreground">{t('settings.notifyDesktop')}</h4>
+      <SettingGroup>
+        <SettingCard>
+          <SettingRow
+            title={t('settings.notifyDesktop')}
+            hint={t('settings.notifyDesktopHint')}
+          >
             <Switch
               checked={notif.desktopEnabled}
               disabled={permission === 'unsupported'}
-              onCheckedChange={() => { void toggleDesktop(); }}
+              onCheckedChange={() => {
+                void toggleDesktop();
+              }}
               aria-label={t('settings.notifyDesktop')}
             />
-          </div>
-          <p className={cn(hintCls, 'mt-2')}>{t('settings.notifyDesktopHint')}</p>
-        </div>
-        {permission === 'unsupported' ? (
-          <p className={hintCls}>{t('settings.notifyDesktopUnsupported')}</p>
-        ) : null}
-        {permission === 'denied' ? (
-          <p className={hintCls}>{t('settings.notifyDesktopBlocked')}</p>
-        ) : null}
-        {notif.desktopEnabled && permission === 'granted' ? (
-          <>
-            <div>
+          </SettingRow>
+
+          {permission === 'unsupported' ? (
+            <SettingRow hint={t('settings.notifyDesktopUnsupported')} />
+          ) : null}
+          {permission === 'denied' ? (
+            <SettingRow hint={t('settings.notifyDesktopBlocked')} />
+          ) : null}
+
+          {notif.desktopEnabled && permission === 'granted' ? (
+            /* testStatus 保留 role="status"：它是发完测试通知后的结果播报，
+               读屏软件靠这个 live region 才会念出来。 */
+            <SettingRow
+              hint={
+                testStatus ? (
+                  <span role="status">{t(testStatus)}</span>
+                ) : undefined
+              }
+            >
               <Button
                 type="button"
-                variant="ghost"
+                variant="outline"
                 size="sm"
                 onClick={() => {
                   trackSettingsNotificationsClick(analytics.track, {
@@ -246,11 +259,10 @@ export function NotificationsSection({
               >
                 {t('settings.notifyTest')}
               </Button>
-            </div>
-            {testStatus ? <p className={hintCls} role="status">{t(testStatus)}</p> : null}
-          </>
-        ) : null}
-      </div>
+            </SettingRow>
+          ) : null}
+        </SettingCard>
+      </SettingGroup>
     </section>
   );
 }

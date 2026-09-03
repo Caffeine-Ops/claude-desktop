@@ -33,7 +33,8 @@ export type SettingsSection =
   | 'routines'
   | 'integrations'
   | 'mcpClient'
-  | 'language'
+  // 外观（2026-09-02 合并）：原独立的 'language' 分区并入这里——界面语言
+  // 只有一个选择器，独占导航位太浪费，而它本就属于「应用长什么样」。
   | 'appearance'
   | 'critiqueTheater'
   | 'notifications'
@@ -63,7 +64,8 @@ export type SettingsSection =
   // 自动更新（2026-07-05）：检查/下载/安装状态面。面板组件在
   // components/settings/UpdateAppSection.tsx（chat 栈），经 window.chatApi
   // 直连 main 的 appUpdater 状态流，不走 daemon。
-  | 'appUpdate'
+  // 关于（2026-09-02 合并）：原独立的 'appUpdate' 分区并入这里——about 里
+  // 那个「检查更新」按钮本来就是跳去 appUpdate 的，两者本是一件事。
   | 'about';
 
 export interface SettingsDialogProps {

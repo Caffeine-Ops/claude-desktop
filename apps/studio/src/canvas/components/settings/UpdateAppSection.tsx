@@ -148,10 +148,9 @@ export function UpdateAppSection({
           section 里一次即可，@keyframes 名加 updater- 前缀避免与他处撞名。 */}
       <style>{`@keyframes updater-pulse{0%{box-shadow:0 0 0 0 hsl(var(--primary)/0.5)}70%{box-shadow:0 0 0 6px hsl(var(--primary)/0)}100%{box-shadow:0 0 0 0 hsl(var(--primary)/0)}}`}</style>
 
-      <p className="-mt-3 text-sm leading-relaxed text-muted-foreground">
-        {t('updateApp.subtitle')}
-      </p>
-
+      {/* 2026-09-03：原独立页时代这里有一行副标题（updateApp.subtitle），
+          并入「关于与更新」后它成了卡片上方悬空的一句话——页面标题下已有
+          副标题，删。字典里的 key 留着不动（19 本字典，删 key 的收益为零）。 */}
       <div className="overflow-hidden rounded-xl border border-border bg-card">
         {/* ── 上半 hero：摘要在前 ── */}
         <div className="flex items-center gap-4 p-5">

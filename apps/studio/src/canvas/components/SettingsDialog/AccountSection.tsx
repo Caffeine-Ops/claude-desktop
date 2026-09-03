@@ -27,6 +27,7 @@ import { Button } from '@/src/components/ui/button';
 import { Input } from '@/src/components/ui/input';
 import { Label } from '@/src/components/ui/label';
 import { cn } from '@/src/lib/utils';
+import { SettingCard, SettingGroup, SettingRow } from '../settings/SettingPrimitives';
 import type { AccountProfile } from '@desktop-shared/ipc-channels';
 
 /** 头像最终 data URI 的字节上限（跟 sub2api 网页端的约定一致，压缩到
@@ -196,7 +197,14 @@ export function AccountSection(): React.JSX.Element {
       </p>
 
       {/* ── 头像 + 用户名卡 ── */}
-      <div className="rounded-xl border border-border bg-card p-5">
+      {/* 2026-09-02 P2：账号页这两张是**内容卡**（头像布局 / 数据网格），不是
+          「一行一个设置项」的列表，所以内部结构原样保留，只把外壳换成
+          SettingCard——目的是让卡片的圆角、边框、底色有唯一定义处，将来调
+          版式不用再逐文件找 rounded-xl。整块用一个 SettingRow(stack) 兜住，
+          这样 SettingCard 的 divide-y 不会在内部误画分隔线。 */}
+      <SettingGroup>
+        <SettingCard>
+          <SettingRow stack>
         <div className="flex items-center gap-4">
           <button
             type="button"
@@ -265,10 +273,14 @@ export function AccountSection(): React.JSX.Element {
         </div>
         {usernameError ? <p className="mt-2 text-xs text-destructive">{usernameError}</p> : null}
         {avatarError ? <p className="mt-2 text-xs text-destructive">{avatarError}</p> : null}
-      </div>
+          </SettingRow>
+        </SettingCard>
+      </SettingGroup>
 
       {/* ── 账户信息只读卡 ── */}
-      <div className="rounded-xl border border-border bg-card p-5">
+      <SettingGroup>
+        <SettingCard>
+          <SettingRow stack>
         <div className="mb-4 flex items-center gap-2">
           <Badge variant={profile.status === 'active' ? 'secondary' : 'destructive'}>
             {STATUS_LABEL[profile.status] ?? profile.status}
@@ -280,7 +292,9 @@ export function AccountSection(): React.JSX.Element {
           <InfoTile label="并发上限" value={String(profile.concurrency)} />
           <InfoTile label="注册时间" value={formatDate(profile.createdAt)} />
         </div>
-      </div>
+          </SettingRow>
+        </SettingCard>
+      </SettingGroup>
     </section>
   );
 }
