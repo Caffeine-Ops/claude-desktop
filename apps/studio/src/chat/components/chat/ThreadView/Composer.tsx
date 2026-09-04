@@ -10,6 +10,7 @@ import {
 import type { Attachment } from '@assistant-ui/core'
 import { useComposerSend } from '@assistant-ui/core/react'
 import { AnimatePresence, motion } from 'motion/react'
+import { RotateCw, TriangleAlert, X } from 'lucide-react'
 
 import type { SessionMeta } from '@desktop-shared/types'
 import type { ModelListEntry } from '@desktop-shared/ipc-channels'
@@ -18,6 +19,7 @@ import { useChatStore, useTeamMemberTasks, useTurnActivity } from '../../../stor
 import { isReplaySessionId } from '../../../replay/replayStore'
 import { useWorkspaceStore } from '../../../stores/workspace'
 import { matchProposalSlash } from '../../../lib/proposalSlash'
+import { retryFailedTurn } from '../../../lib/retryFailedTurn'
 import { attachFilesToComposer } from '../../../composer/attachFiles'
 import { useComposerOverlayStore } from '../../../stores/composerOverlay'
 import { useProposalStore } from '../../../stores/proposal'
@@ -253,6 +255,54 @@ function GapFillBanner({ sessionId }: { sessionId: string | null }): React.JSX.E
           onClick={() => useProposalStore.getState().setPendingGapFill(null)}
         >
           ✕
+        </button>
+      </div>
+      <div className="h-px bg-border/70" />
+    </>
+  )
+}
+
+/**
+ * TurnFailedBanner
+ * ----------------
+ * 「回复中断·重试」提示条：主进程发来 error（网络断流 / 子进程崩溃 / 网关报错）后，
+ * store 在会话槽位上打了 failedTurn 标记，本条即在输入框正上方弹出。「重试」把上一轮
+ * 的原始载荷（含图片 / 方案字段）原样再发一次并删掉那条失败的 AI 气泡；✕ 只关掉提示条，
+ * 消息里的红色错误卡片仍在。用户另起一轮时标记自动作废。用户主动 Esc 停止不会触发
+ * （engine abort 只发 end 不发 error）。红色调与 AssistantErrorBanner 同一套词汇。
+ * 状态逻辑在 lib/failedTurn.ts（有测试）。
+ */
+function TurnFailedBanner({ sessionId }: { sessionId: string | null }): React.JSX.Element | null {
+  const t = useT()
+  const failed = useChatStore((s) =>
+    sessionId ? s.perSession[sessionId]?.failedTurn ?? null : null
+  )
+  const streaming = useChatStore((s) => s.streaming)
+  if (!failed || !sessionId || streaming) return null
+  return (
+    <>
+      <div className="flex items-center gap-2 bg-red-500/[0.06] px-4 py-2 text-[12px] text-red-700 dark:text-red-400">
+        <TriangleAlert aria-hidden className="size-3.5 shrink-0" />
+        <div className="min-w-0 flex-1 leading-snug">
+          <span className="font-medium">{t('turnInterruptedTitle')}</span>
+          <span className="ml-1.5 text-red-700/75 dark:text-red-400/75">{t('turnInterruptedHint')}</span>
+        </div>
+        <button
+          type="button"
+          className="inline-flex shrink-0 items-center gap-1 rounded-md border border-red-500/30 bg-background/60 px-2 py-0.5 text-[12px] font-medium text-red-700 hover:bg-red-500/10 dark:text-red-300"
+          onClick={() => void retryFailedTurn(sessionId)}
+        >
+          <RotateCw aria-hidden className="size-3" />
+          {t('turnRetry')}
+        </button>
+        <button
+          type="button"
+          className="shrink-0 rounded p-0.5 text-red-600/70 hover:bg-red-500/15 hover:text-red-700 dark:text-red-400/70 dark:hover:text-red-300"
+          title={t('turnInterruptedDismiss')}
+          aria-label={t('turnInterruptedDismiss')}
+          onClick={() => useChatStore.getState().dismissFailedTurn(sessionId)}
+        >
+          <X aria-hidden className="size-3.5" />
         </button>
       </div>
       <div className="h-px bg-border/70" />
@@ -674,6 +724,10 @@ export function Composer({
           {/* Segment 0 — 资料缺失·补料提示条。仅当用户点了草稿里某处缺口的「去对话框补充」
               （pendingGapFill 属于本会话）时露出，指引其在下方输入资料并发送；自带底部 hairline。 */}
           <GapFillBanner sessionId={composerSessionId} />
+
+          {/* Segment 0.5 — 回复中断·重试条。收到 error 事件后露出，「重试」原样重发上一轮；
+              自带底部 hairline。 */}
+          <TurnFailedBanner sessionId={composerSessionId} />
 
           {/* Segment 1 — message queue. Renders null when empty; owns its own
               enter/exit height animation AND the hairline divider below it

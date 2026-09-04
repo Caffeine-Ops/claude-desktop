@@ -17,6 +17,7 @@
  * 且它不发 IPC、无持久副作用。
  */
 import type { ChatEvent } from '@desktop-shared/types'
+import type { ChatSendPayload } from '@desktop-shared/ipc-channels'
 import {
   useTodosStore,
   extractTodoWriteItems,
@@ -103,11 +104,24 @@ export function createChatEventCtx(): ChatEventCtx {
  * 抽取前的原文完全一致，不要改动相对位置。
  */
 export interface LiveHooks {
-  /** 'start'：取出（并移除）该轮暂存的队列 user 气泡内容；普通轮返回 undefined。 */
+  /**
+   * 'start'：取出（并移除）该轮暂存的队列 user 气泡内容 + 当初发出的载荷；
+   * 普通轮返回 undefined。
+   */
   takeQueuedTurn: (
     sid: string,
     messageId: string
-  ) => Array<{ type: string; [key: string]: unknown }> | undefined
+  ) =>
+    | {
+        content: Array<{ type: string; [key: string]: unknown }>
+        payload: ChatSendPayload
+      }
+    | undefined
+  /**
+   * 'start'（仅队列轮）：把 drain 出来的载荷记进 store，供「回复中断·重试」条原样重发。
+   * 必须在 appendUserMessage 之后调——appendUserMessage 会先清掉上一轮的载荷。
+   */
+  recordSentPayload: (sid: string, payload: ChatSendPayload) => void
   /** 'start'：transcript 即将增长，作废该会话的历史快照缓存。 */
   invalidateHistoryCache: (sid: string) => void
   /** 'chunk'：方案模式流式硬门（内部可能发真 chatApi.abort）。 */
@@ -154,9 +168,10 @@ export function applyChatEventToStore(
       // Replay it just before opening the assistant bubble so the pair
       // appears together and in order. Ordinary idle turns stashed
       // nothing here — the composer already appended their user bubble.
-      const queuedContent = live?.takeQueuedTurn(sid, event.messageId)
-      if (queuedContent) {
-        actions.appendUserMessage(sid, queuedContent)
+      const queued = live?.takeQueuedTurn(sid, event.messageId)
+      if (queued && live) {
+        actions.appendUserMessage(sid, queued.content)
+        live.recordSentPayload(sid, queued.payload)
       }
       // A new assistant turn is starting → this session's transcript is
       // about to grow. Drop any cached history snapshot so the next
