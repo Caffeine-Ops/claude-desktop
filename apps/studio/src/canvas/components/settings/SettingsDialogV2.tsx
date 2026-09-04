@@ -64,6 +64,7 @@ import {
   BarChart3,
   Bell,
   Blocks,
+  CircleHelp,
   CircleUserRound,
   Eye,
   FileText,
@@ -88,6 +89,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
+import { HELP_GROUPS, buildHelpKeywords } from '@/src/chat/lib/helpContent';
 import { Button } from '@/src/components/ui/button';
 import { Input } from '@/src/components/ui/input';
 import { cn } from '@/src/lib/utils';
@@ -335,6 +337,17 @@ const NAV_GROUPS: NavGroup[] = [
     titleKey: 'settingsV2.groupAbout',
     fallback: '关于',
     items: [
+      {
+        // 使用帮助（2026-09-04）放在关于组首位：用户找「怎么用」时会先往
+        // 「关于 / 帮助」这类词上看，比放进任何功能组都好找。关键词从内容
+        // 自动生成（每条问题标题 + 别名），不手写第二份词表——内容改了搜索
+        // 自动跟上。
+        id: 'help',
+        labelKey: 'settingsV2.help',
+        fallback: '使用帮助',
+        icon: CircleHelp,
+        keywords: buildHelpKeywords(HELP_GROUPS),
+      },
       {
         id: 'about',
         labelKey: 'settingsV2.aboutAndUpdate',
