@@ -46,6 +46,9 @@
  *     迁完、CSS 真能退役」的例子）。两 section 的其余 button 未迁，仍待收尾。
  *   ☐ language / about（SettingsDialog.tsx 内联，小）
  *   ☐ instructions / pet
+ *   ✓ HelpSection（2026-09-04 新增「使用帮助」分区，token 'help'，关于组首位：
+ *     内容 src/chat/lib/helpContent.ts、组件 settings/HelpSection.tsx，天生
+ *     chat 栈、不在待迁清单里。）
  *   ⚠️ 退役 legacy CSS 的纪律（2026-07-14 实测）：上面 10 个 section 腾出的
  *     legacy 类（field/hint/ghost/primary/settings-section/seg-btn 等）**几乎全是
  *     跨 section/跨视图共享类，实测仍有大量其它消费者（hint 67、ghost 70、
