@@ -8,14 +8,14 @@
  *
  * 纪律：
  * - 本文件不得 import src/canvas/**（跨面 import 是坑源），所以 section 跳转
- *   目标收窄成三个字面量而不是引用 SettingsSection。
+ *   目标收窄成两个字面量而不是引用 SettingsSection。
  * - 文案是大白话，面向不懂技术的用户；每一句界面事实都要能在「依据」指向的
  *   组件里找到，不许凭印象添加功能。
  * - 设计文档：docs/superpowers/specs/2026-09-04-help-section-design.md
  */
 
-/** 帮助条目可以跳去的设置分区。刻意只列帮助用到的三个，见文件头。 */
-export type HelpSectionTarget = 'skills' | 'knowledgeBase' | 'execution'
+/** 帮助条目可以跳去的设置分区。刻意只列帮助用到的两个，见文件头。 */
+export type HelpSectionTarget = 'skills' | 'knowledgeBase'
 
 export type HelpAction =
   /** 切到设置页的另一个分区（设置页不关） */
@@ -93,7 +93,7 @@ export const HELP_GROUPS: HelpGroup[] = [
           '技能是为某类任务准备好的专家流程，比如做 PPT、写方案、处理表格。',
           '在输入框里输入 /，会弹出技能列表；也可以点输入框旁边的技能按钮来挑选。',
           '空白对话页上方也有常用场景的入口，点一下就会把对应技能填进输入框。',
-          '想看全部技能、或关掉某个技能，去设置里的「技能」分区。',
+          '设置里的「技能」分区可以查看已安装的技能，也能新建、编辑或关掉某个技能。',
         ],
         keywords: '斜杠 / 场景 ppt 方案 表格 skill',
         action: { kind: 'section', section: 'skills', label: '去看技能列表' },
@@ -153,18 +153,18 @@ export const HELP_GROUPS: HelpGroup[] = [
         question: '知识库是干什么的？',
         answer: [
           '知识库是 AI 写东西时可以翻阅的资料柜。像「写方案」这类技能，会先到知识库里找相关资料再动笔。',
-          '你放进去的是自己电脑上的文档，AI 只在需要时读取，不会把它们发到别处。',
+          '文件本身一直留在你的电脑上；AI 需要时只把检索到的相关片段随你的提问一起处理，不会整份上传。',
         ],
         keywords: '资料 检索 文档 rag knowledge',
       },
       {
-        // 依据：AllFilesPanel.tsx 目录管理弹层——预设「下载/桌面」开关 + 「添加文件夹…」，
+        // 依据：AllFilesPanel.tsx 「扫描目录」图标按钮（FolderCog，右上工具栏，仅图标无文字）弹层——预设「下载/桌面」开关 + 「添加文件夹…」，
         // 是扫描本机目录，没有上传功能。
         id: 'kb-add',
         question: '怎么把资料放进知识库？',
         answer: [
-          '点左侧栏的「知识库」，再点上方的「目录管理」，把装资料的文件夹加进去。',
-          '它不是上传，而是让应用去读你指定的文件夹；之后往那个文件夹里放新文件，点「重新扫描」就能被收进来。',
+          '点左侧栏的「知识库」，在右上角的小图标里找到「扫描目录」（文件夹加齿轮的图标，鼠标悬停会显示名字），把装资料的文件夹加进去。',
+          '它不是上传，而是让应用去读你指定的文件夹；之后往那个文件夹里放新文件，点右上角的「重新扫描」图标就能被收进来。',
           '「下载」和「桌面」两个常用文件夹可以直接打开开关。',
         ],
         keywords: '添加 文件夹 目录 扫描 导入 上传',
@@ -215,11 +215,12 @@ export const HELP_GROUPS: HelpGroup[] = [
         action: { kind: 'surface', surface: 'market', label: '打开插件市场' },
       },
       {
-        // 依据：SkillsSection.tsx 每行技能有启用开关。
+        // 依据：SkillsSection.tsx 每行技能有启用开关。disabledSkills 只在 canvas 侧消费（App.tsx
+        // enabledSkills/designTemplates 过滤），不影响聊天输入框的 / 菜单——所以文案不提 / 菜单。
         id: 'plugins-disable-skill',
         question: '怎么关掉不想要的技能？',
         answer: [
-          '打开设置的「技能」分区，每个技能前面都有一个开关，关掉它就不会再出现在 / 列表里。',
+          '打开设置的「技能」分区，每个技能前面都有一个开关，关掉后它就不再出现在设置和工作画布的技能列表里。',
           '关掉不会删除，随时可以再打开。',
         ],
         keywords: '禁用 关闭 开关 启用',
@@ -259,7 +260,7 @@ export const HELP_GROUPS: HelpGroup[] = [
         id: 'faq-rename-delete',
         question: '怎么重命名或删除对话？',
         answer: [
-          '在左侧栏的对话列表里，右键点某个对话，选「重命名」或「删除」。',
+          '在左侧栏的对话列表里，右键点某个对话，或把鼠标放上去点右侧出现的「···」，选「重命名」或「删除」。',
           '删除之前会再问你一次，确认后这个对话和里面的消息就没了，不能恢复。',
         ],
         keywords: '重命名 删除 会话 对话 历史',

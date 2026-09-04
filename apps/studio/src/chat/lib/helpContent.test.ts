@@ -21,16 +21,16 @@ describe('HELP_GROUPS 数据完整性', () => {
     }
   })
 
-  it('section 跳转目标只允许三个值（防止有人把类型放宽）', () => {
-    const allowed = new Set(['skills', 'knowledgeBase', 'execution'])
+  it('section 跳转目标只允许两个值（防止有人把类型放宽）', () => {
+    const allowed = new Set(['skills', 'knowledgeBase'])
     for (const item of HELP_GROUPS.flatMap((g) => g.items)) {
       if (item.action?.kind === 'section') expect(allowed.has(item.action.section)).toBe(true)
     }
   })
 
-  it('共 5 组 17 条（与设计文档对齐；改内容时同步改这里）', () => {
-    expect(HELP_GROUPS.length).toBe(5)
-    expect(HELP_GROUPS.reduce((n, g) => n + g.items.length, 0)).toBe(17)
+  it('至少 5 组、至少 15 条（下限防误删整组，不钉死精确数免得改文案就红）', () => {
+    expect(HELP_GROUPS.length).toBeGreaterThanOrEqual(5)
+    expect(HELP_GROUPS.reduce((n, g) => n + g.items.length, 0)).toBeGreaterThanOrEqual(15)
   })
 })
 
@@ -55,9 +55,12 @@ describe('buildHelpKeywords', () => {
     expect(out.includes('\n')).toBe(false)
   })
 
-  it('对真实数据输出非空且包含「权限」「重试」（走查用的两个搜索词）', () => {
+  it('对真实数据：包含每个组标题和每条问题（侧栏搜索靠它命中），且含走查用的「权限」「重试」', () => {
     const out = buildHelpKeywords(HELP_GROUPS)
-    expect(out.length).toBeGreaterThan(0)
+    for (const g of HELP_GROUPS) {
+      expect(out).toContain(g.title)
+      for (const item of g.items) expect(out).toContain(item.question)
+    }
     expect(out).toContain('权限')
     expect(out).toContain('重试')
   })

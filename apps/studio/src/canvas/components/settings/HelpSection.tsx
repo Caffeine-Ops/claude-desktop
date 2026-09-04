@@ -13,8 +13,8 @@
  * - section：切设置分区，走父组件的 setActiveSection（embedded 模式下会经
  *   onSectionChange 回报给 V2 壳，与「记忆 → 连接器」的既有面内跳转同一条路）。
  * - surface：设置页是盖住 rail 的全屏 overlay，必须**先关设置再开面**，否则面
- *   开了也被设置页盖着看不见。openSurfaceOverlay 来自根层 store，canvas App.tsx
- *   已有同样的跨树 import 先例。
+ *   开了也被设置页盖着看不见。openSurfaceOverlay 来自根层 store（src/stores/surfaceOverlay.ts），
+ *   chat 树的 FusionRuntimeProvider.tsx（/plugins 斜杠命令）已有同样的跨树调用先例。
  * - feedback：与关于分区「问题反馈」行同一调用（useDialogStore.openDialog）。
  *
  * 样式纪律（CLAUDE.md）：只用 shadcn 原语 + Tailwind utility；裸 <details>/<summary>

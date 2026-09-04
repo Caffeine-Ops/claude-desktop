@@ -60,7 +60,8 @@
 
 ### 组 3　知识库
 8. 知识库是干什么的？——「写方案」等技能检索资料的地方（`KnowledgeBaseSection.tsx`）。
-9. 怎么把资料放进去？——侧栏「知识库」→ 目录管理 → 添加文件夹；**是扫描本机
+   隐私措辞只说「文件留在本机、检索到的片段随提问交给 AI」，不写「不会发到别处」。
+9. 怎么把资料放进去？——侧栏「知识库」→ 右上角「扫描目录」图标按钮（仅图标，悬停显示名字）→ 添加文件夹；**是扫描本机
    文件夹，不是上传**（`AllFilesPanel.tsx`）。→ 去看看：打开知识库面。
 10. 本地目录和远程服务器有什么区别？——设置 → 知识库 里二选一；远程要填地址后
     点「保存并同步」。→ 去看看：设置「知识库」分区。
@@ -70,7 +71,8 @@
     专家流程（`MarketView.tsx` 副标题）。
 12. 怎么安装？——侧栏「插件」（只在智能助手面显示）→ 搜索 → 安装 → 新对话生效
     （`InstallButton.tsx`、`MarketDetailPage.tsx`）。→ 去看看：打开插件面。
-13. 怎么关掉不想要的技能？——设置 → 技能 → 每行开关（`SkillsSection.tsx`）。
+13. 怎么关掉不想要的技能？——设置 → 技能 → 每行开关（`SkillsSection.tsx`；`disabledSkills`
+    只在 canvas 侧消费，不影响 / 菜单，文案不得声称影响 / 菜单）。
     → 去看看：设置「技能」分区。
 
 ### 组 5　常见问题
@@ -97,7 +99,7 @@
 
 ```ts
 export type HelpAction =
-  | { kind: 'section'; section: 'skills' | 'knowledgeBase' | 'execution'; label?: string }
+  | { kind: 'section'; section: 'skills' | 'knowledgeBase'; label?: string }
   | { kind: 'surface'; surface: 'kb' | 'market'; label?: string }
   | { kind: 'feedback'; label?: string };
 
@@ -115,8 +117,8 @@ export const HELP_GROUPS: HelpGroup[];
 export function buildHelpKeywords(groups: HelpGroup[]): string;  // 供 NAV_GROUPS 用
 ```
 
-`section` 的取值刻意收窄成三个字面量而不是整个 `SettingsSection`：
-chat/lib 不该 import canvas 的类型（跨面 import 是坑源），且帮助只跳这三处。
+`section` 的取值刻意收窄成两个字面量而不是整个 `SettingsSection`：
+chat/lib 不该 import canvas 的类型（跨面 import 是坑源），且帮助只跳这两处。
 `HelpSection.tsx` 里把它赋给 `SettingsSection` 时靠 TS 子类型自动兼容。
 
 ### 4.2 组件：`apps/studio/src/canvas/components/settings/HelpSection.tsx`
