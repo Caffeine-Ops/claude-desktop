@@ -216,11 +216,12 @@ export const HELP_GROUPS: HelpGroup[] = [
       },
       {
         // 依据：SkillsSection.tsx 每行技能有启用开关。disabledSkills 只在 canvas 侧消费（App.tsx
-        // enabledSkills/designTemplates 过滤），不影响聊天输入框的 / 菜单——所以文案不提 / 菜单。
+        // enabledSkills/designTemplates 过滤），设置里的行不过滤（SkillsSection 只用它算开关状态），
+        // 也不影响聊天输入框的 / 菜单——所以文案不提 / 菜单。
         id: 'plugins-disable-skill',
         question: '怎么关掉不想要的技能？',
         answer: [
-          '打开设置的「技能」分区，每个技能前面都有一个开关，关掉后它就不再出现在设置和工作画布的技能列表里。',
+          '打开设置的「技能」分区，每个技能前面都有一个开关。关掉后它不再出现在工作画布（新建对话、项目）的技能列表里；设置里的这一行还在，只是变成关闭状态，方便你随时再打开。',
           '关掉不会删除，随时可以再打开。',
         ],
         keywords: '禁用 关闭 开关 启用',
