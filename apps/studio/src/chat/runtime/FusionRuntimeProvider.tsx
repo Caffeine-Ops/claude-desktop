@@ -29,7 +29,7 @@ import { createOpenAIWhisperDictationAdapter } from './openaiWhisperDictationAda
 import { useDialogStore, type DialogKind } from '../stores/dialogs'
 import { openSurfaceOverlay } from '@/src/stores/surfaceOverlay'
 import type { ChatEvent, ThreadSummary } from '@desktop-shared/types'
-import type { ChatImagePayload } from '@desktop-shared/ipc-channels'
+import type { ChatImagePayload, ChatSendPayload } from '@desktop-shared/ipc-channels'
 import {
   applyChatEventToStore,
   createChatEventCtx,
@@ -854,17 +854,19 @@ export function FusionRuntimeProvider({
       if (isStreaming) {
         try {
           const proposalFields = await buildProposalFields()
-          const { messageId } = await window.chatApi.send({
+          const queuedPayload = {
             sessionId: targetSid,
             // 补料落地时发【包装后的重写指令】，否则发用户原文（见上方 sentTextOverride 注释）。
             text: sentTextOverride ?? text,
             images: images.length > 0 ? images : undefined,
             ...proposalFields
-          })
+          }
+          const { messageId } = await window.chatApi.send(queuedPayload)
           // Stash the exact content-part array so the drained turn
           // renders identically to an idle send (text + image thumbs),
-          // not a text-only reconstruction.
-          rememberQueuedTurn(targetSid, messageId, storeContent)
+          // not a text-only reconstruction. 载荷一起暂存：这轮真正开跑（start）时
+          // 才记进 store——现在就记会把「回复中断·重试」条的重发目标指到还在排队的它。
+          rememberQueuedTurn(targetSid, messageId, storeContent, queuedPayload)
           // Optimistic panel row keyed by the engine's real messageId, so
           // the follow-up `queue_changed` snapshot (same id) reconciles
           // instead of duplicating.
@@ -904,7 +906,7 @@ export function FusionRuntimeProvider({
         // 方案产品匹配在【预翻转之后】跑，保住「spinner 立刻亮、匹配在其后」的时序；
         // 其内 await 抛错也由本 catch 兜底。
         const proposalFields = await buildProposalFields()
-        await window.chatApi.send({
+        const payload = {
           sessionId: targetSid,
           // Engine validator accepts empty strings when images are present.
           // We still pass an empty string (not undefined) so the wire
@@ -913,7 +915,10 @@ export function FusionRuntimeProvider({
           text: sentTextOverride ?? text,
           images: images.length > 0 ? images : undefined,
           ...proposalFields
-        })
+        }
+        // 留一份最终载荷：失败后 Composer 顶部的「回复中断·重试」条据此原样重发。
+        useChatStore.getState().recordSentPayload(targetSid, payload)
+        await window.chatApi.send(payload)
       } catch (err) {
         console.error('[runtime] send failed', err)
         const msg = err instanceof Error ? err.message : String(err)
@@ -1100,22 +1105,25 @@ export function invalidateHistoryCache(id: string): void {
  * identical to an idle send (same content parts, including image
  * thumbnails), just deferred.
  */
-const pendingQueuedTurns = new Map<
-  string,
-  Map<string, Array<{ type: string; [key: string]: unknown }>>
->()
+interface QueuedTurnStash {
+  content: Array<{ type: string; [key: string]: unknown }>
+  /** 当初 chatApi.send 的载荷，drain 时记进 store 供重试条原样重发。 */
+  payload: ChatSendPayload
+}
+const pendingQueuedTurns = new Map<string, Map<string, QueuedTurnStash>>()
 
 function rememberQueuedTurn(
   sid: string,
   messageId: string,
-  content: Array<{ type: string; [key: string]: unknown }>
+  content: Array<{ type: string; [key: string]: unknown }>,
+  payload: ChatSendPayload
 ): void {
   let perSession = pendingQueuedTurns.get(sid)
   if (!perSession) {
     perSession = new Map()
     pendingQueuedTurns.set(sid, perSession)
   }
-  perSession.set(messageId, content)
+  perSession.set(messageId, { content, payload })
 }
 
 /**
@@ -1133,15 +1141,19 @@ export function updateQueuedTurnText(
   text: string
 ): void {
   const perSession = pendingQueuedTurns.get(sid)
-  const content = perSession?.get(messageId)
-  if (!perSession || !content) return
+  const stash = perSession?.get(messageId)
+  if (!perSession || !stash) return
   const next = text.trim()
   if (!next) {
     perSession.delete(messageId)
     return
   }
-  const withoutText = content.filter((p) => p.type !== 'text')
-  perSession.set(messageId, [{ type: 'text', text: next }, ...withoutText])
+  const withoutText = stash.content.filter((p) => p.type !== 'text')
+  perSession.set(messageId, {
+    content: [{ type: 'text', text: next }, ...withoutText],
+    // 载荷的正文同步改，重试条重发的才是用户改过的那句。
+    payload: { ...stash.payload, text: next }
+  })
 }
 
 /**
@@ -1153,12 +1165,12 @@ export function updateQueuedTurnText(
 function takeQueuedTurn(
   sid: string,
   messageId: string
-): Array<{ type: string; [key: string]: unknown }> | undefined {
+): QueuedTurnStash | undefined {
   const perSession = pendingQueuedTurns.get(sid)
   if (!perSession) return undefined
-  const content = perSession.get(messageId)
-  if (content) perSession.delete(messageId)
-  return content
+  const stash = perSession.get(messageId)
+  if (stash) perSession.delete(messageId)
+  return stash
 }
 
 /**
@@ -1753,6 +1765,8 @@ function makeSessionEventHandler(
   const ctx = createChatEventCtx()
   const live: LiveHooks = {
     takeQueuedTurn,
+    recordSentPayload: (s, payload) =>
+      useChatStore.getState().recordSentPayload(s, payload),
     invalidateHistoryCache,
     maybeAbortOnTocSkip,
     syncProposalDraftFromInflight,

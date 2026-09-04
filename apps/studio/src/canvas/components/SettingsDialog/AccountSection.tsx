@@ -20,13 +20,12 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { Camera, Loader2 } from 'lucide-react';
+import { BadgeCheck, CalendarDays, Camera, Check, Copy, Layers, Loader2, Phone, UserRound, Wallet } from 'lucide-react';
 
 import { Badge } from '@/src/components/ui/badge';
 import { Button } from '@/src/components/ui/button';
 import { Input } from '@/src/components/ui/input';
-import { Label } from '@/src/components/ui/label';
-import { cn } from '@/src/lib/utils';
+import { SettingCard, SettingGroup, SettingRow } from '../settings/SettingPrimitives';
 import type { AccountProfile } from '@desktop-shared/ipc-channels';
 
 /** 头像最终 data URI 的字节上限（跟 sub2api 网页端的约定一致，压缩到
@@ -68,15 +67,6 @@ function formatDate(epochMs: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function InfoTile({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-muted-foreground">{label}</span>
-      <span className="text-[13px] font-medium tabular-nums text-foreground">{value}</span>
-    </div>
-  );
-}
-
 export function AccountSection(): React.JSX.Element {
   const [profile, setProfile] = useState<AccountProfile | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -85,6 +75,10 @@ export function AccountSection(): React.JSX.Element {
   const [usernameDraft, setUsernameDraft] = useState('');
   const [usernameSaving, setUsernameSaving] = useState(false);
   const [usernameError, setUsernameError] = useState<string | null>(null);
+  // 用户名行的「编辑态」：平时只显示名字 + 编辑按钮，点了才展开输入框——
+  // 一张资料卡里常驻一个输入框看起来像未完成的表单（2026-09-04 精细化）。
+  const [editingName, setEditingName] = useState(false);
+  const [phoneCopied, setPhoneCopied] = useState(false);
 
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [avatarError, setAvatarError] = useState<string | null>(null);
@@ -134,6 +128,7 @@ export function AccountSection(): React.JSX.Element {
         if (result.ok) {
           setProfile(result.profile);
           setUsernameDraft(result.profile.username);
+          setEditingName(false);
         } else {
           setUsernameError(result.error);
         }
@@ -142,6 +137,20 @@ export function AccountSection(): React.JSX.Element {
         setUsernameSaving(false);
         setUsernameError('保存失败，请稍后重试');
       });
+  };
+
+  const cancelEditName = () => {
+    if (profile) setUsernameDraft(profile.username);
+    setUsernameError(null);
+    setEditingName(false);
+  };
+
+  const copyPhone = () => {
+    if (!profile) return;
+    void navigator.clipboard?.writeText(profile.phone).then(() => {
+      setPhoneCopied(true);
+      window.setTimeout(() => setPhoneCopied(false), 1500);
+    });
   };
 
   const handlePickAvatar = () => fileInputRef.current?.click();
@@ -191,96 +200,151 @@ export function AccountSection(): React.JSX.Element {
 
   return (
     <section className="flex flex-col gap-6">
-      <p className="-mt-3 text-sm leading-relaxed text-muted-foreground">
-        你的 sub2api 账户资料，数据来自后端接口。
-      </p>
+      {/* 页面副标题（「你的 sub2api 账户资料…」）已由壳的页头统一渲染
+          （useSectionHeaders），这里不再自己画一遍。 */}
 
-      {/* ── 头像 + 用户名卡 ── */}
-      <div className="rounded-xl border border-border bg-card p-5">
-        <div className="flex items-center gap-4">
-          <button
-            type="button"
-            data-slot="avatar-picker"
-            onClick={handlePickAvatar}
-            disabled={avatarUploading}
-            aria-label="更换头像"
-            className="group relative size-16 shrink-0 overflow-hidden rounded-full border border-border bg-muted disabled:opacity-70"
-          >
-            {profile.avatarUrl ? (
-              <img src={profile.avatarUrl} alt="" className="size-full object-cover" />
-            ) : (
-              <span className="grid size-full place-items-center text-xl font-semibold text-muted-foreground">
-                {(profile.username || profile.phone).charAt(0).toUpperCase()}
-              </span>
-            )}
-            <span className="absolute inset-0 hidden items-center justify-center bg-black/45 group-hover:flex">
-              {avatarUploading ? (
-                <Loader2 aria-hidden="true" className="size-5 animate-spin text-white" />
-              ) : (
-                <Camera aria-hidden="true" className="size-5 text-white" />
-              )}
-            </span>
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            data-slot="avatar-file-input"
-            className="hidden"
-            onChange={(e) => {
-              handleAvatarFile(e.target.files?.[0]);
-              e.target.value = '';
-            }}
-          />
-
-          <div className="min-w-0 flex-1">
-            <Label htmlFor="account-username" className="text-xs text-muted-foreground">
-              用户名
-            </Label>
-            <div className="mt-1.5 flex items-center gap-2">
-              <Input
-                id="account-username"
-                value={usernameDraft}
-                disabled={usernameSaving}
-                onChange={(e) => setUsernameDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleSaveUsername();
+      {/* ── 资料：头像行 + 用户名行 + 手机号行 ── */}
+      {/* 2026-09-04 精细化第二轮：原先是「头像 + 常驻输入框」一整块，头像要悬停
+          才露出相机、输入框像张没填完的表单。改成三行组卡，与下面「套餐与额度」
+          同一节奏：① 头像行——44px 头像右下角常驻相机角标（一眼知道能换）+ 大字
+          用户名 + 一行灰字来源；② 用户名行——平时是值 + 「编辑」，点开才是输入框
+          + 保存/取消，回车保存、Esc 取消；③ 手机号行——值 + 复制钮。
+          改名 / 传头像的 IPC 逻辑与错误提示一行没动。 */}
+      <SettingGroup label="资料">
+        <SettingCard>
+          <SettingRow size="hero">
+            <div className="flex min-w-0 flex-1 items-center gap-4">
+              <button
+                type="button"
+                data-slot="avatar-picker"
+                onClick={handlePickAvatar}
+                disabled={avatarUploading}
+                aria-label="更换头像"
+                title="更换头像"
+                className="group relative size-11 shrink-0 rounded-full disabled:opacity-70"
+              >
+                <span className="block size-full overflow-hidden rounded-full border border-border bg-muted">
+                  {profile.avatarUrl ? (
+                    <img src={profile.avatarUrl} alt="" className="size-full object-cover" />
+                  ) : (
+                    <span className="grid size-full place-items-center text-base font-semibold text-muted-foreground">
+                      {(profile.username || profile.phone).charAt(0).toUpperCase()}
+                    </span>
+                  )}
+                </span>
+                {/* 常驻相机角标：悬停时整个头像盖一层深色、角标变亮，双重提示可点。 */}
+                <span className="absolute -bottom-0.5 -right-0.5 grid size-[18px] place-items-center rounded-full border-2 border-card bg-secondary text-muted-foreground transition-colors group-hover:bg-foreground group-hover:text-card">
+                  {avatarUploading ? (
+                    <Loader2 aria-hidden="true" className="size-2.5 animate-spin" />
+                  ) : (
+                    <Camera aria-hidden="true" className="size-2.5" />
+                  )}
+                </span>
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                data-slot="avatar-file-input"
+                className="hidden"
+                onChange={(e) => {
+                  handleAvatarFile(e.target.files?.[0]);
+                  e.target.value = '';
                 }}
-                className="h-8 max-w-[220px]"
               />
-              {usernameDirty ? (
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[15px] font-semibold text-foreground">
+                  {profile.username || profile.phone}
+                </div>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  手机号登录 · {profile.phone}
+                </p>
+                {avatarError ? <p className="mt-1 text-xs text-destructive">{avatarError}</p> : null}
+              </div>
+            </div>
+          </SettingRow>
+
+          {editingName ? (
+            <SettingRow icon={<UserRound />} title="用户名" stack>
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  id="account-username"
+                  autoFocus
+                  value={usernameDraft}
+                  disabled={usernameSaving}
+                  aria-label="用户名"
+                  onChange={(e) => setUsernameDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSaveUsername();
+                    if (e.key === 'Escape') cancelEditName();
+                  }}
+                  className="h-8 max-w-[240px]"
+                />
                 <Button
                   size="sm"
-                  variant="outline"
-                  disabled={usernameSaving}
+                  disabled={usernameSaving || !usernameDirty}
                   onClick={handleSaveUsername}
-                  className="h-8 shrink-0"
+                  className="h-8"
                 >
                   {usernameSaving ? <Loader2 aria-hidden="true" className="size-3.5 animate-spin" /> : '保存'}
                 </Button>
-              ) : null}
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">{profile.phone}</p>
-          </div>
-        </div>
-        {usernameError ? <p className="mt-2 text-xs text-destructive">{usernameError}</p> : null}
-        {avatarError ? <p className="mt-2 text-xs text-destructive">{avatarError}</p> : null}
-      </div>
+                <Button size="sm" variant="ghost" disabled={usernameSaving} onClick={cancelEditName} className="h-8">
+                  取消
+                </Button>
+              </div>
+              {usernameError ? <p className="text-xs text-destructive">{usernameError}</p> : null}
+            </SettingRow>
+          ) : (
+            <SettingRow icon={<UserRound />} title="用户名" value={profile.username}>
+              <Button size="sm" variant="outline" className="h-7" onClick={() => setEditingName(true)}>
+                编辑
+              </Button>
+            </SettingRow>
+          )}
 
-      {/* ── 账户信息只读卡 ── */}
-      <div className="rounded-xl border border-border bg-card p-5">
-        <div className="mb-4 flex items-center gap-2">
-          <Badge variant={profile.status === 'active' ? 'secondary' : 'destructive'}>
-            {STATUS_LABEL[profile.status] ?? profile.status}
-          </Badge>
-          <Badge variant="outline">{ROLE_LABEL[profile.role] ?? profile.role}</Badge>
-        </div>
-        <div className={cn('grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-3')}>
-          <InfoTile label="账户余额" value={`$${profile.balance.toFixed(2)}`} />
-          <InfoTile label="并发上限" value={String(profile.concurrency)} />
-          <InfoTile label="注册时间" value={formatDate(profile.createdAt)} />
-        </div>
-      </div>
+          <SettingRow icon={<Phone />} title="手机号" value={profile.phone} mono>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="size-7 p-0 text-muted-foreground"
+              aria-label={phoneCopied ? '已复制' : '复制手机号'}
+              title={phoneCopied ? '已复制' : '复制手机号'}
+              onClick={copyPhone}
+            >
+              {phoneCopied ? (
+                <Check aria-hidden="true" className="size-3.5 text-[var(--brand)]" />
+              ) : (
+                <Copy aria-hidden="true" className="size-3.5" />
+              )}
+            </Button>
+          </SettingRow>
+        </SettingCard>
+      </SettingGroup>
+
+      {/* ── 套餐与额度：只读信息，一行一项 ── */}
+      {/* 原是一张「徽章 + 三列数据网格」的内容卡；改成组卡四行后每项有了
+          自己的标题和右侧对齐的值，金额用等宽字。状态/角色徽章合到第一行。 */}
+      <SettingGroup
+        label="套餐与额度"
+        footnote="余额与并发上限由后台管理员分配，如需调整请联系管理员。"
+      >
+        <SettingCard>
+          <SettingRow icon={<BadgeCheck />} title="账户状态">
+            <Badge variant={profile.status === 'active' ? 'secondary' : 'destructive'}>
+              {STATUS_LABEL[profile.status] ?? profile.status}
+            </Badge>
+            <Badge variant="outline">{ROLE_LABEL[profile.role] ?? profile.role}</Badge>
+          </SettingRow>
+          <SettingRow icon={<Wallet />} title="账户余额" value={`$${profile.balance.toFixed(2)}`} mono />
+          <SettingRow
+            icon={<Layers />}
+            title="并发上限"
+            hint="同时运行的任务数。"
+            value={String(profile.concurrency)}
+          />
+          <SettingRow icon={<CalendarDays />} title="注册时间" value={formatDate(profile.createdAt)} />
+        </SettingCard>
+      </SettingGroup>
     </section>
   );
 }

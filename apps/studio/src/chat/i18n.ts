@@ -376,6 +376,11 @@ const STRINGS = {
     // native message `status` error channel, replacing the old inline
     // "⚠️ ..." text bubble.
     assistantErrorTitle: '请求失败',
+    // Composer 顶部的「回复中断·重试」条（TurnFailedBanner）。
+    turnInterruptedTitle: '回复中断了',
+    turnInterruptedHint: '可能是网络波动或服务异常，可以原样重发上一条消息。',
+    turnRetry: '重试',
+    turnInterruptedDismiss: '关闭',
     toolRawDataSummary: '原始数据',
     toolWorkflowTasksLabel: '子任务',
     toolStatusRunning: '运行中',
@@ -756,6 +761,10 @@ const STRINGS = {
     toolPaneInputLabel: 'Input',
     toolPaneOutputLabel: 'Output',
     assistantErrorTitle: 'Request failed',
+    turnInterruptedTitle: 'Reply interrupted',
+    turnInterruptedHint: 'Possibly a network hiccup or a service error. You can resend your last message as-is.',
+    turnRetry: 'Retry',
+    turnInterruptedDismiss: 'Dismiss',
     toolRawDataSummary: 'Raw data',
     toolWorkflowTasksLabel: 'Subtasks',
     toolStatusRunning: 'running',

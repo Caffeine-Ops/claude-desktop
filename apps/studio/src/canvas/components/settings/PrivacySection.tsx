@@ -1,8 +1,7 @@
 import type { Dispatch, SetStateAction, JSX } from 'react';
-import { useId } from 'react';
 import { Button } from '@/src/components/ui/button';
 import { Input } from '@/src/components/ui/input';
-import { Switch } from '@/src/components/ui/switch';
+import { SettingCard, SettingGroup, SettingRow, SettingSwitchRow } from './SettingPrimitives';
 import { useAnalytics } from '../../analytics/provider';
 import { trackSettingsPrivacyClick } from '../../analytics/events';
 import { useT } from '../../i18n';
@@ -76,12 +75,17 @@ export function PrivacySection({ cfg, setCfg }: Props): JSX.Element {
   }
 
   return (
-    <section className="flex flex-col gap-3">
+    <section>
       {!hasMadeConsentDecision ? (
         <ConsentCard onShare={shareUsage} onDecline={declineUsage} />
       ) : (
         <>
-          <div className="flex flex-col gap-2">
+          {/* 2026-09-02 P2：三个遥测开关原本各是一张 rounded-md 边框卡，
+              改为共用一张组卡、内部发丝线分隔（见 SettingPrimitives.tsx）。
+              ToggleRow 的两个交互特性都保住了：整行文字可点切换（labelFor）
+              与选中后整行变底色。 */}
+          <SettingGroup>
+            <SettingCard>
             <ToggleRow
               label={t('settings.privacyMetrics')}
               hint={t('settings.privacyMetricsHint')}
@@ -124,30 +128,29 @@ export function PrivacySection({ cfg, setCfg }: Props): JSX.Element {
                 patchTelemetry({ artifactManifest: v });
               }}
             />
-          </div>
+            </SettingCard>
+          </SettingGroup>
 
-          <div className="flex flex-col gap-2">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 max-w-full">
-                <h4 className="m-0 text-[13px] font-semibold tracking-[0.01em] text-foreground">
-                  {t('settings.privacyInstallationId')}
-                </h4>
-                <p className="m-0 mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                  {t('settings.privacyDataDeletionHint')}
-                </p>
-              </div>
-            </div>
-            <Input
-              type="text"
-              readOnly
-              value={cfg.installationId ?? t('settings.privacyOptedOut')}
-              aria-label={t('settings.privacyInstallationId')}
-            />
+          <SettingGroup>
+            <SettingCard>
+            <SettingRow
+              title={t('settings.privacyInstallationId')}
+              hint={t('settings.privacyDataDeletionHint')}
+              stack
+            >
+              <Input
+                type="text"
+                readOnly
+                value={cfg.installationId ?? t('settings.privacyOptedOut')}
+                aria-label={t('settings.privacyInstallationId')}
+              />
+            </SettingRow>
+            <SettingRow stack>
             <Button
               type="button"
-              variant="ghost"
+              variant="outline"
               size="sm"
-              className="mt-3 self-start"
+              className="self-start"
               onClick={() => {
                 trackSettingsPrivacyClick(analytics.track, {
                   page_name: 'settings',
@@ -160,7 +163,9 @@ export function PrivacySection({ cfg, setCfg }: Props): JSX.Element {
               <Icon name="trash" size={13} />
               <span>{t('settings.privacyDataDeletion')}</span>
             </Button>
-          </div>
+            </SettingRow>
+            </SettingCard>
+          </SettingGroup>
         </>
       )}
     </section>
@@ -181,20 +186,9 @@ interface ToggleRowProps {
 // "click anywhere in the row" affordance. Radix Switch already carries
 // role="switch" + aria-checked, so the old aria-pressed is redundant.
 function ToggleRow({ label, hint, checked, onChange }: ToggleRowProps): JSX.Element {
-  const id = useId();
-  return (
-    <div
-      className={`flex items-center gap-3 rounded-md border px-3.5 py-3 transition-colors ${
-        checked ? 'border-input bg-muted/50' : 'border-border'
-      }`}
-    >
-      <label htmlFor={id} className="flex min-w-0 flex-1 cursor-pointer flex-col gap-0.5">
-        <span className="text-[13px] text-foreground">{label}</span>
-        <span className="text-[11.5px] leading-snug text-muted-foreground">{hint}</span>
-      </label>
-      <Switch id={id} checked={checked} onCheckedChange={onChange} />
-    </div>
-  );
+  // 2026-09-04：整行可点 + 开启后浅底这两个行为已抽进 SettingSwitchRow（tint），
+  // 本地只剩一层 prop 改名，保留是为了不动下面的调用点。
+  return <SettingSwitchRow title={label} hint={hint} checked={checked} onCheckedChange={onChange} tint />;
 }
 
 interface ConsentProps {
@@ -204,46 +198,57 @@ interface ConsentProps {
 
 function ConsentCard({ onShare, onDecline }: ConsentProps): JSX.Element {
   const t = useT();
+  /* 2026-09-02 P2：同意书原本是一段裸文字 + 两个按钮，没有任何卡片容器，
+     在其余页面都统一成组卡之后显得像"还没做完的那一页"。收进 SettingCard，
+     与开关态（用户做过决定后看到的那屏）用同一套版式。
+     dl/dt/dd 的语义结构保留——这两条是对"我们会收集什么"的正式说明，
+     描述列表是正确的语义标签，只是搬进了 SettingRow 的排版里。 */
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 max-w-full">
-          <h4 className="m-0 text-[13px] font-semibold tracking-[0.01em] text-foreground">
-            {t('settings.privacyConsentKicker')}
-          </h4>
-          <p className="m-0 mt-0.5 text-xs leading-relaxed text-muted-foreground">
-            {t('settings.privacyConsentLead')}
-          </p>
-        </div>
-      </div>
+    <SettingGroup>
+      <SettingCard>
+        <SettingRow
+          title={t('settings.privacyConsentKicker')}
+          hint={t('settings.privacyConsentLead')}
+        />
 
-      <dl className="m-0 flex flex-col gap-2.5">
-        <div className="flex flex-col gap-0.5">
-          <dt className="text-[13px] font-semibold text-foreground">{t('settings.privacyMetrics')}</dt>
-          <dd className="m-0 text-xs text-muted-foreground">{t('settings.privacyMetricsHint')}</dd>
-        </div>
-        <div className="flex flex-col gap-0.5">
-          <dt className="text-[13px] font-semibold text-foreground">{t('settings.privacyContent')}</dt>
-          <dd className="m-0 text-xs text-muted-foreground">{t('settings.privacyContentHint')}</dd>
-        </div>
-      </dl>
+        <SettingRow stack>
+          <dl className="m-0 flex flex-col gap-3">
+            <div className="flex flex-col gap-0.5">
+              <dt className="text-[13px] font-medium text-foreground">
+                {t('settings.privacyMetrics')}
+              </dt>
+              <dd className="m-0 text-xs leading-relaxed text-muted-foreground">
+                {t('settings.privacyMetricsHint')}
+              </dd>
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <dt className="text-[13px] font-medium text-foreground">
+                {t('settings.privacyContent')}
+              </dt>
+              <dd className="m-0 text-xs leading-relaxed text-muted-foreground">
+                {t('settings.privacyContentHint')}
+              </dd>
+            </div>
+          </dl>
+        </SettingRow>
 
-      <p className="m-0 text-xs leading-relaxed text-muted-foreground">
-        {t('settings.privacyConsentFooter')}
-      </p>
+        <SettingRow hint={t('settings.privacyConsentFooter')} />
 
-      <div
-        className="grid grid-cols-2 gap-2"
-        role="group"
-        aria-label={t('settings.privacyConsentKicker')}
-      >
-        <Button type="button" variant="outline" onClick={onDecline}>
-          {t('settings.privacyConsentDecline')}
-        </Button>
-        <Button type="button" variant="default" onClick={onShare}>
-          {t('settings.privacyConsentShare')}
-        </Button>
-      </div>
-    </div>
+        <SettingRow stack>
+          <div
+            className="grid grid-cols-2 gap-2"
+            role="group"
+            aria-label={t('settings.privacyConsentKicker')}
+          >
+            <Button type="button" variant="outline" onClick={onDecline}>
+              {t('settings.privacyConsentDecline')}
+            </Button>
+            <Button type="button" variant="default" onClick={onShare}>
+              {t('settings.privacyConsentShare')}
+            </Button>
+          </div>
+        </SettingRow>
+      </SettingCard>
+    </SettingGroup>
   );
 }

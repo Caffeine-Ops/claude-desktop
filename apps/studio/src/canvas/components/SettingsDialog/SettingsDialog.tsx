@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ChevronRight, Loader2, RotateCw } from 'lucide-react';
+import { Box, ChevronRight, Cpu, GitBranch, Loader2, MessageSquare, MonitorSmartphone, RotateCw, Terminal, Upload } from 'lucide-react';
 
 import { Badge } from '@/src/components/ui/badge';
 import { Button } from '@/src/components/ui/button';
@@ -76,6 +76,7 @@ import { IMAGE_MODELS } from '../../media/models';
 import { PetSettings } from '../pet/PetSettings';
 import { McpClientSection } from '../settings/McpClientSection';
 import { SkillsSection } from '../settings/SkillsSection';
+import { HelpSection } from '../settings/HelpSection';
 import { DesignSystemsSection } from '../design-system/DesignSystemsSection';
 import {
   WorkspaceAutomationsSection,
@@ -121,6 +122,8 @@ import type {
   SettingsSection,
   TestState,
 } from './settingsHelpers';
+import { useSectionHeaders, useTt } from './settingsHelpers';
+import { SettingCard, SettingGroup, SettingRow } from '../settings/SettingPrimitives';
 import { ConnectorSection } from './ConnectorSection';
 import { OrbitSection } from './OrbitSection';
 import { MediaProvidersSection } from './MediaProvidersSection';
@@ -206,6 +209,7 @@ export function SettingsDialog({
   workspaceHost,
 }: SettingsDialogProps) {
   const { t, locale, setLocale } = useI18n();
+  const tt = useTt();
   const analytics = useAnalytics();
   const [cfg, setCfg] = useState<AppConfig>(initial);
   const [pendingMediaProviderEditIds, setPendingMediaProviderEditIds] = useState<
@@ -1278,53 +1282,7 @@ export function SettingsDialog({
   // as the section heading — there is no inner h3 inside the Local CLI /
   // BYOK content so "Local CLI" only renders once (in the seg-control tab),
   // not twice (heading + tab).
-  const sectionHeader: Record<SettingsSection, { title: string; subtitle: string }> = {
-    account: { title: '账号', subtitle: '个人资料与账户信息' },
-    usage: { title: '使用记录', subtitle: '查看和分析您的 API 使用历史' },
-    execution: { title: t('settings.title'), subtitle: t('settings.subtitle') },
-    instructions: {
-      title: t('settings.instructions'),
-      subtitle: t('settings.instructionsHint'),
-    },
-    media: { title: t('settings.mediaProviders'), subtitle: t('settings.mediaProvidersHint') },
-    composio: { title: t('connectors.title'), subtitle: t('connectors.subtitle') },
-    orbit: { title: t('settings.orbit.title'), subtitle: t('settings.orbit.lede') },
-    routines: {
-      title: t('routines.title'),
-      subtitle: t('routines.subtitle'),
-    },
-    // 账号/使用记录同款：字典里还没有对应 key，先写中文字面量（加 key 要动
-    // 19 本字典 + types.ts，见 settingsHelpers 的 useTt 注释）。
-    knowledgeBase: { title: '知识库', subtitle: '「写方案」检索资料的来源' },
-    integrations: { title: t('settings.mcpServerTitle'), subtitle: t('settings.mcpServerHint') },
-    mcpClient: { title: t('settings.externalMcpTitle'), subtitle: t('settings.externalMcpHint') },
-    language: { title: t('settings.language'), subtitle: t('settings.languageHint') },
-    appearance: { title: t('settings.appearance'), subtitle: t('settings.appearanceHint') },
-    critiqueTheater: {
-      title: t('critiqueTheater.settingsNav'),
-      subtitle: t('critiqueTheater.settingsNavHint'),
-    },
-    notifications: { title: t('settings.notifications'), subtitle: t('settings.notificationsHint') },
-    privacy: { title: t('settings.privacy'), subtitle: t('settings.privacyHint') },
-    pet: { title: t('pet.title'), subtitle: t('pet.subtitle') },
-    skills: { title: t('settings.skills'), subtitle: t('settings.skillsHint') },
-    designSystems: {
-      title: t('settings.designSystems'),
-      subtitle: t('settings.designSystemsHint'),
-    },
-    memory: { title: t('settings.memory'), subtitle: t('settings.memoryHint') },
-    logAnalysis: { title: '日志分析', subtitle: '查看与分析会话日志' },
-    // 「工作区」三节（2026-07-04 首页 rail 迁移）。标题沿用首页 rail 的
-    // i18n key，副标题一句话说明来处。
-    projects: { title: t('entry.navProjects'), subtitle: '' },
-    automations: { title: t('entry.navTasks'), subtitle: '' },
-    plugins: { title: t('entry.navPlugins'), subtitle: '' },
-    // 'library' is opened via EntryShell route — SettingsDialog doesn't
-    // render it but SettingsSection must accept the token (see type def).
-    library: { title: '', subtitle: '' },
-    appUpdate: { title: t('settings.appUpdate'), subtitle: t('settings.appUpdateHint') },
-    about: { title: t('settings.about'), subtitle: t('settings.aboutHint') },
-  };
+  const sectionHeader = useSectionHeaders();
   const activeHeader = sectionHeader[activeSection];
 
   // Embedded mode renders ONLY the section content pane (no dialog chrome),
@@ -1525,17 +1483,6 @@ export function SettingsDialog({
               <span>
                 <strong>{t('settings.mcpServerTitle')}</strong>
                 <small>{t('settings.mcpServerHint')}</small>
-              </span>
-            </button>
-            <button
-              type="button"
-              className={`settings-nav-item${activeSection === 'language' ? ' active' : ''}`}
-              onClick={() => setActiveSection('language')}
-            >
-              <Icon name="languages" size={18} />
-              <span>
-                <strong>{t('settings.language')}</strong>
-                <small>{t('settings.languageHint')}</small>
               </span>
             </button>
             <button
@@ -2547,69 +2494,77 @@ export function SettingsDialog({
             />
           ) : null}
 
-          {activeSection === 'language' ? (
-          /* 2026-09-01 迁 chat 栈：settings-section / settings-language-grid /
-             settings-language-tile 四件套退役，改 utility。裸 <button> 带
-             data-slot 逃逸 canvas 的裸元素 reset（同 AppearanceSection 的
-             背景主题格子）——radiogroup 语义是自定义的，Radix 没有对应原语，
-             不为它引新依赖。选中态照抄那边的 border-primary，不再自造一套色。 */
-          <section className="flex flex-col gap-3">
-            <div
-              className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(180px,1fr))]"
-              role="radiogroup"
-              aria-label={t('settings.language')}
-            >
-              {LOCALES.map((code) => {
-                const active = locale === code;
-                return (
-                  <button
-                    key={code}
-                    type="button"
-                    role="radio"
-                    aria-checked={active}
-                    data-slot="settings-language-tile"
-                    className={cn(
-                      'grid min-w-0 grid-cols-[1fr_auto] items-center gap-2 rounded-md border px-3 py-2.5 text-left transition-colors',
-                      'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring',
-                      active
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border bg-card text-foreground hover:border-input hover:bg-muted/50',
-                    )}
-                    onClick={() => {
-                      // P1 ui_click area=language — record the locale id
-                      // that was picked, regardless of whether it differs
-                      // from the current one (user clicked = signal).
-                      trackSettingsLanguageClick(analytics.track, {
-                        page_name: 'settings',
-                        area: 'language',
-                        element: code,
-                      });
-                      setLocale(code as Locale);
-                    }}
-                  >
-                    <span className="flex min-w-0 flex-col gap-0.5">
-                      <span
-                        className={cn(
-                          'text-[13px] font-semibold [overflow-wrap:anywhere]',
-                          active ? 'text-primary' : 'text-foreground',
-                        )}
-                      >
-                        {LOCALE_LABEL[code]}
-                      </span>
-                      <span className="text-[11px] tabular-nums tracking-[0.02em] text-muted-foreground">
-                        {code}
-                      </span>
-                    </span>
-                    {active ? <Icon name="check" size={16} /> : null}
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-          ) : null}
-
+          {/* 外观 + 语言合并渲染（2026-09-02 信息架构重组）。
+              语言网格于 2026-09-02 的 P2 一并迁走了 legacy 类
+              （.settings-language-grid / -tile → utility + SettingCard），
+              与页面其余部分同一套版式。裸 <button> 带 data-slot 逃逸 canvas
+              的裸元素 reset（见 CLAUDE.md 样式分层铁律）；埋点与 setLocale
+              一字未动。 */}
           {activeSection === 'appearance' ? (
-            <AppearanceSection cfg={cfg} setCfg={setCfg} />
+            <>
+              <AppearanceSection cfg={cfg} setCfg={setCfg} />
+              {/* mt-8 不能省：AppearanceSection 里最后一组吃了 SettingGroup 的
+                  last:mb-0，而这一组是拼在它 <section> 外面的兄弟节点，靠不上
+                  那边的组间距——真机截图里语言卡曾直接贴在字号卡底边上。 */}
+              <SettingGroup className="mt-8">
+                <SettingCard>
+                  <SettingRow title={t('settings.language')} stack>
+                    <div
+                      className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3"
+                      role="radiogroup"
+                      aria-label={t('settings.language')}
+                    >
+                      {LOCALES.map((code) => {
+                        const active = locale === code;
+                        return (
+                          <button
+                            key={code}
+                            type="button"
+                            role="radio"
+                            data-slot="language-tile"
+                            aria-checked={active}
+                            className={cn(
+                              'flex cursor-pointer items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left transition-colors',
+                              // 键盘焦点环沿用 main 侧 09-01 迁移版（PR #52）的写法：自定义 radio
+                              // 没有 Radix 原语兜底，不写这条 Tab 到格子上就看不见焦点在哪。
+                              'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring',
+                              active
+                                ? 'border-primary/40 bg-primary/5'
+                                : 'border-border hover:bg-muted/50',
+                            )}
+                            onClick={() => {
+                              // P1 ui_click area=language — record the locale id
+                              // that was picked, regardless of whether it differs
+                              // from the current one (user clicked = signal).
+                              trackSettingsLanguageClick(analytics.track, {
+                                page_name: 'settings',
+                                area: 'language',
+                                element: code,
+                              });
+                              setLocale(code as Locale);
+                            }}
+                          >
+                            <span className="min-w-0">
+                              <span className="block truncate text-[13px] font-medium text-foreground">
+                                {LOCALE_LABEL[code]}
+                              </span>
+                              <span className="block text-[11px] text-muted-foreground">
+                                {code}
+                              </span>
+                            </span>
+                            {active ? (
+                              <span className="shrink-0 text-primary">
+                                <Icon name="check" size={16} />
+                              </span>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </SettingRow>
+                </SettingCard>
+              </SettingGroup>
+            </>
           ) : null}
 
           {activeSection === 'critiqueTheater' ? (
@@ -2698,98 +2653,86 @@ export function SettingsDialog({
             <PrivacySection cfg={cfg} setCfg={setCfg} />
           ) : null}
 
-          {activeSection === 'appUpdate' ? (
-            <UpdateAppSection fallbackVersion={appVersionInfo?.version ?? null} />
+          {activeSection === 'help' ? (
+            /* 使用帮助（2026-09-04）：内容与渲染都在别处（helpContent.ts / HelpSection.tsx），
+               这里只做接线。setActiveSection 在 embedded 模式下经 onSectionChange 回报
+               给 V2 壳；onClose 给「跳侧栏面」用（先关设置再开面）。 */
+            <HelpSection onSelectSection={setActiveSection} onClose={onClose} />
           ) : null}
 
           {activeSection === 'about' ? (
             /* 2026-09-01 迁 chat 栈：settings-about-* 全族 + empty-card + hint
-               退役，改 utility。「检查更新」那颗从裸 button 换 shadcn Button
-               size=xs（h-6/px-2/text-xs 与原来的 2px 9px + 11px 小药丸同量级，
-               不是把它放大成常规按钮）。dt/dd 保留语义标签、样式全部内联，
-               dl 结构不动——这是纯换皮，信息层级与顺序一律照旧。 */
-            <section className="flex flex-col gap-3">
+               退役，改 utility。dt/dd 保留语义标签、样式全部内联。
+               2026-09-03 更新页并入后重排成三组（SettingGroup 带小标题）：
+               「应用」= 更新卡（electron-updater 报的才是真正的应用版本）、
+               「后台服务」= daemon /api/version 那五行、「诊断与反馈」。
+               为什么必须分组标注：那五行的 version/packaged 描述的是**守护
+               进程自己**（apps/daemon/package.json 的 0.7.0、它自己的 execPath
+               是否在 resources/ 里），与应用版本（0.0.54）根本不是一个东西。
+               两者原本各占一页从没同框，并到一页后真机截图里就成了「版本
+               0.7.0」和「当前版本 0.0.54」并排——不标清是谁的版本，用户只能
+               当成 bug。原 about 面板里那个跳去 appUpdate 的按钮已删——目标
+               就在同一页。 */
+            <section>
+              <SettingGroup label={tt('settings.aboutAppGroup', '应用')}>
+                <UpdateAppSection fallbackVersion={appVersionInfo?.version ?? null} />
+              </SettingGroup>
+              {/* 2026-09-04 精细化：五行版本信息从「一行一张卡」收成一张组卡，
+                  值用等宽字右对齐（版本号/平台名要逐字读），行首图标做扫读锚点。
+                  脚注把「这是守护进程的版本、不是应用版本」说清，替代原先靠
+                  组标题一个词硬扛的做法。 */}
+              <SettingGroup
+                label={tt('settings.aboutDaemonGroup', '后台服务（守护进程）')}
+                footnote={tt(
+                  'settings.aboutDaemonFootnote',
+                  '这里的版本号描述的是后台服务自己，与上面的应用版本不是一回事。',
+                )}
+              >
               {appVersionInfo ? (
-                <dl className="m-0 flex flex-col gap-2">
-                  <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-card p-3">
-                    <div className="flex items-center gap-3">
-                      <dt className="shrink-0 text-xs text-muted-foreground">
-                        {t('settings.appVersion')}
-                      </dt>
-                      <span className="text-[13px] font-semibold text-foreground">
-                        {appVersionInfo.version}
-                      </span>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="xs"
-                      className="font-normal whitespace-nowrap"
-                      onClick={() => setActiveSection('appUpdate')}
-                    >
-                      {t('updateApp.check')}
-                    </Button>
-                  </div>
-                  {(
-                    [
-                      { label: t('settings.appChannel'), value: appVersionInfo.channel },
-                      {
-                        label: t('settings.appRuntime'),
-                        value: appVersionInfo.packaged
-                          ? t('settings.runtimePackaged')
-                          : t('settings.runtimeDevelopment'),
-                      },
-                      { label: t('settings.appPlatform'), value: appVersionInfo.platform },
-                      { label: t('settings.appArchitecture'), value: appVersionInfo.arch },
-                    ] as const
-                  ).map((row) => (
-                    <div
-                      key={row.label}
-                      className="flex items-center gap-3 rounded-md border border-border bg-card p-3"
-                    >
-                      <dt className="shrink-0 text-xs text-muted-foreground">{row.label}</dt>
-                      <dd className="m-0 text-[13px] font-semibold text-foreground [overflow-wrap:anywhere]">
-                        {row.value}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
+                <SettingCard>
+                  <SettingRow icon={<Box />} title={t('settings.appVersion')} value={appVersionInfo.version} mono />
+                  <SettingRow icon={<GitBranch />} title={t('settings.appChannel')} value={appVersionInfo.channel} mono />
+                  <SettingRow
+                    icon={<Terminal />}
+                    title={t('settings.appRuntime')}
+                    value={
+                      appVersionInfo.packaged
+                        ? t('settings.runtimePackaged')
+                        : t('settings.runtimeDevelopment')
+                    }
+                  />
+                  <SettingRow icon={<MonitorSmartphone />} title={t('settings.appPlatform')} value={appVersionInfo.platform} mono />
+                  <SettingRow icon={<Cpu />} title={t('settings.appArchitecture')} value={appVersionInfo.arch} mono />
+                </SettingCard>
               ) : (
                 <div className="rounded-md border border-dashed border-border bg-muted/40 p-4 text-xs text-muted-foreground">
                   {t('settings.versionUnavailable')}
                 </div>
               )}
-              <div className="flex items-start justify-between gap-4 rounded-md border border-border bg-card p-3">
-                <div className="flex min-w-0 flex-1 flex-col gap-1">
-                  <h4 className="text-[13px] font-semibold text-foreground">
-                    {t('diagnostics.exportTitle')}
-                  </h4>
-                  <p className="text-xs leading-relaxed text-muted-foreground">
-                    {t('diagnostics.exportHint')}
-                  </p>
-                </div>
-                <ExportDiagnosticsRow />
-              </div>
-              {/* 文案硬编码中文（不走 canvas i18n）：FeedbackDialog 本身也是
-                  硬编码中文，见该文件头注释——它现在挂在根 layout 的
-                  RailShell.tsx，不在 canvas 的 I18nProvider 边界内。
-                  2026-09-01 本 section 整体迁完，这里最后一个 legacy 类 `hint`
-                  也换成 utility；分隔线保持 border-t、不改成卡片——换皮不动版式。 */}
-              <div className="flex items-center justify-between gap-4 border-t border-border pt-4">
-                <div>
-                  <h4 className="text-sm font-medium text-foreground">问题反馈</h4>
-                  <p className="text-xs leading-relaxed text-muted-foreground">
-                    描述你遇到的问题，最多可以附 4 张截图。
-                  </p>
-                </div>
-                {typeof window !== 'undefined' && window.chatApi ? (
-                  <Button
-                    variant="outline"
-                    onClick={() => useDialogStore.getState().openDialog('feedback')}
+              </SettingGroup>
+              <SettingGroup label={tt('settings.aboutSupportGroup', '诊断与反馈')}>
+                <SettingCard>
+                  <SettingRow
+                    icon={<Upload />}
+                    title={t('diagnostics.exportTitle')}
+                    hint={t('diagnostics.exportHint')}
                   >
-                    反馈问题
-                  </Button>
-                ) : null}
-              </div>
+                    <ExportDiagnosticsRow />
+                  </SettingRow>
+                  {/* 文案硬编码中文（不走 canvas i18n）：FeedbackDialog 本身也是
+                      硬编码中文，见该文件头注释——它挂在根 layout 的 RailShell.tsx，
+                      不在 canvas 的 I18nProvider 边界内。无 chatApi（纯浏览器）时
+                      整行不渲染而不是只藏按钮——一行只有标题没有动作会像坏了。 */}
+                  {typeof window !== 'undefined' && window.chatApi ? (
+                    <SettingRow
+                      icon={<MessageSquare />}
+                      title="问题反馈"
+                      hint="描述你遇到的问题，最多可以附 4 张截图。"
+                      onClick={() => useDialogStore.getState().openDialog('feedback')}
+                    />
+                  ) : null}
+                </SettingCard>
+              </SettingGroup>
             </section>
           ) : null}
           </div>

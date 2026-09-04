@@ -5,6 +5,8 @@ import type { ThreadMessageLike } from '@assistant-ui/react'
 
 import { sampleSpinnerVerb } from '../constants/spinnerVerbs'
 import type { ChatEvent, WorkflowTask } from '@desktop-shared/types'
+import type { ChatSendPayload } from '@desktop-shared/ipc-channels'
+import { markTurnFailed, prepareRetry } from '../lib/failedTurn'
 
 /**
  * Renderer-side chat state, shaped to feed assistant-ui's
@@ -115,6 +117,13 @@ interface PerSessionState {
     cacheReadTokens: number
     cacheCreateTokens: number
   } | null
+  /**
+   * 最近一次 chatApi.send 的完整载荷 + 最近一轮失败标记，驱动 Composer 顶部的
+   * 「回复中断·重试」条。逻辑在 lib/failedTurn.ts（有测试），这里只是落点。
+   * 不镜像到顶层字段：只有 Composer 一个读者，按 sessionId 直接读槽位即可。
+   */
+  lastSentPayload: ChatSendPayload | null
+  failedTurn: { messageId: string; error: string } | null
 }
 
 const EMPTY_SLOT: PerSessionState = {
@@ -124,7 +133,9 @@ const EMPTY_SLOT: PerSessionState = {
   turnVerb: null,
   turnHasText: false,
   retryInfo: null,
-  usage: null
+  usage: null,
+  lastSentPayload: null,
+  failedTurn: null
 }
 
 interface ChatState {
@@ -262,6 +273,20 @@ interface ChatState {
   ) => void
   setError: (sessionId: string, messageId: string, error: string) => void
   endAssistantMessage: (sessionId: string) => void
+
+  // 回复中断·重试 ─────────────────────────────────────────────────────
+  /**
+   * 每次真正调 chatApi.send 之前记一份最终载荷（发送方负责调用：onNew /
+   * dispatchChatTurn）。同时清掉上一轮的失败标记——用户已经另起一轮了。
+   */
+  recordSentPayload: (sessionId: string, payload: ChatSendPayload) => void
+  /** 用户点 ✕ 关掉重试条。 */
+  dismissFailedTurn: (sessionId: string) => void
+  /**
+   * 用户点「重试」：删掉失败的 AI 气泡、清标记，返回要原样重发的载荷；
+   * 没有待重试的失败时返回 null。真正的发送由调用方（lib/retryFailedTurn）做。
+   */
+  takeFailedTurnForRetry: (sessionId: string) => ChatSendPayload | null
   /**
    * Store the context/output token counts reported at the end of an
    * assistant turn. Replaces the previous value (we only show the
@@ -449,7 +474,12 @@ export const useChatStore = create<ChatState>((set) => ({
     set((s) => {
       const patch = updateSlot(s, sessionId, (slot) => ({
         ...slot,
-        messages: [...slot.messages, message]
+        messages: [...slot.messages, message],
+        // 用户另起一轮：上一轮的失败标记作废（重试条收起），上一轮的载荷也作废——
+        // 新载荷要等异步求值（buildProposalFields / thunk）之后才记录，中间若抛错，
+        // 不能让失败标记指向【上一轮】的载荷（评审发现）。
+        failedTurn: null,
+        lastSentPayload: null
       }))
       return patch ?? {}
     })
@@ -879,6 +909,7 @@ export const useChatStore = create<ChatState>((set) => ({
       }
       const patch = updateSlot(s, sessionId, (slot) => {
         const existing = slot.messages.find((m) => m.id === messageId)
+        let next: PerSessionState
         if (!existing) {
           const newMessage = {
             id: messageId,
@@ -886,15 +917,53 @@ export const useChatStore = create<ChatState>((set) => ({
             content: [],
             status
           } as unknown as ThreadMessageLike
-          return { ...slot, messages: [...slot.messages, newMessage] }
+          next = { ...slot, messages: [...slot.messages, newMessage] }
+        } else {
+          const messages = slot.messages.map((m) =>
+            m.id === messageId ? { ...m, status } : m
+          )
+          next = { ...slot, messages }
         }
-        const messages = slot.messages.map((m) =>
-          m.id === messageId ? { ...m, status } : m
-        )
-        return { ...slot, messages }
+        // 顺手打失败标记，Composer 顶部弹「回复中断·重试」条。用户主动 Esc 走的是
+        // abort → 只发 end 不发 error，所以不会误弹（见 engine.ts abort）。
+        return markTurnFailed(next, messageId, error)
       })
       return patch ?? {}
     })
+  },
+
+  recordSentPayload: (sessionId, payload) => {
+    set((s) => {
+      const patch = updateSlot(s, sessionId, (slot) => ({
+        ...slot,
+        lastSentPayload: payload,
+        failedTurn: null
+      }))
+      return patch ?? {}
+    })
+  },
+
+  dismissFailedTurn: (sessionId) => {
+    set((s) => {
+      const patch = updateSlot(s, sessionId, (slot) =>
+        slot.failedTurn ? { ...slot, failedTurn: null } : slot
+      )
+      return patch ?? {}
+    })
+  },
+
+  takeFailedTurnForRetry: (sessionId) => {
+    let payload: ChatSendPayload | null = null
+    set((s) => {
+      const patch = updateSlot(s, sessionId, (slot) => {
+        const r = prepareRetry(slot)
+        if (!r) return slot
+        payload = r.payload
+        return r.slot
+      })
+      return patch ?? {}
+    })
+    return payload
   },
 
   endAssistantMessage: (sessionId) => {
@@ -942,7 +1011,11 @@ export const useChatStore = create<ChatState>((set) => ({
           turnStartedAt: null,
           turnVerb: null,
           turnHasText: false,
-          retryInfo: null
+          retryInfo: null,
+          // 这一轮若不是以 error 收场（正常完成 / 用户 Esc），载荷就没有重发的理由，
+          // 清掉。否则引擎后台自起的合成轮次（beginSyntheticTurn，比如后台任务完成时
+          // 的追加轮）出错会拿着早已成功的旧载荷弹重试条、把旧消息再发一遍（评审发现）。
+          lastSentPayload: slot.failedTurn ? slot.lastSentPayload : null
         }
       })
       return patch ?? {}
@@ -1003,15 +1076,7 @@ export const useChatStore = create<ChatState>((set) => ({
       const slot: PerSessionState =
         existing && existing.messages.length > 0
           ? existing
-          : {
-              messages,
-              streaming: false,
-              turnStartedAt: null,
-              turnVerb: null,
-              turnHasText: false,
-              retryInfo: null,
-              usage: null
-            }
+          : { ...EMPTY_SLOT, messages }
       return {
         sessionId,
         // Mounting the target transcript ends the switch window — the

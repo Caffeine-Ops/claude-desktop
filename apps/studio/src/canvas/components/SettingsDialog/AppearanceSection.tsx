@@ -1,11 +1,10 @@
 import { useEffect, useLayoutEffect, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import { ImagePlus, Minus, Moon, Plus, Sun, Trash2 } from 'lucide-react';
+import { Code, ImagePlus, Minus, Moon, MousePointer2, Plus, Sun, Trash2, Type } from 'lucide-react';
 import type { BackgroundThemeMeta } from '@desktop-shared/ipc-channels';
 
 import { Button } from '@/src/components/ui/button';
 import { Slider } from '@/src/components/ui/slider';
-import { Switch } from '@/src/components/ui/switch';
 import { Tabs, TabsList, TabsTrigger } from '@/src/components/ui/tabs';
 import { cn } from '@/src/lib/utils';
 import { useAppearanceStore } from '@/src/chat/stores/appearance';
@@ -19,6 +18,8 @@ import { BACKGROUND_PRESETS } from '@/src/lib/backgroundArt/presets';
 import { useAnalytics } from '../../analytics/provider';
 import { trackSettingsAppearanceClick } from '../../analytics/events';
 import { useI18n } from '../../i18n';
+import { SettingCard, SettingGroup, SettingRow, SettingSwitchRow } from '../settings/SettingPrimitives';
+import { useTt } from './settingsHelpers';
 import {
   ACCENT_SWATCHES,
   DEFAULT_ACCENT_COLOR,
@@ -42,8 +43,6 @@ const THEMES: Array<{
   { value: 'dark', labelKey: 'settings.themeDark', icon: 'moon' },
 ];
 
-const cardCls = 'rounded-xl border border-border bg-card p-4';
-const cardLabelCls = 'mb-3 text-xs font-medium text-muted-foreground';
 
 export function AppearanceSection({
   cfg,
@@ -74,9 +73,13 @@ export function AppearanceSection({
   };
 
   return (
-    <section className="flex flex-col gap-3">
-      <div className={cardCls}>
-        <div className={cardLabelCls}>{t('settings.appearanceThemeMode')}</div>
+    <section>
+      {/* 2026-09-02 P2：主题模式与主题色原本各占一张卡，现在共用一张组卡——
+          它们回答的是同一个问题（这个应用长什么样），拆成两张卡只是多画了
+          一圈边框。两块内容一字未动，只换了外面的包装。 */}
+      <SettingGroup>
+        <SettingCard>
+          <SettingRow title={t('settings.appearanceThemeMode')} stack>
         <Tabs
           value={current}
           onValueChange={(v) => {
@@ -104,10 +107,9 @@ export function AppearanceSection({
             ))}
           </TabsList>
         </Tabs>
-      </div>
+          </SettingRow>
 
-      <div className={cardCls}>
-        <div className={cardLabelCls}>{accentLabel}</div>
+          <SettingRow title={accentLabel} stack>
         <div className="flex flex-wrap items-center gap-2" role="radiogroup" aria-label={accentLabel}>
           {ACCENT_SWATCHES.map((color) => {
             const active = currentAccent === color;
@@ -154,7 +156,9 @@ export function AppearanceSection({
             />
           </label>
         </div>
-      </div>
+          </SettingRow>
+        </SettingCard>
+      </SettingGroup>
 
       {/* 背景图（壁纸）——独立于上面 theme/accent 的草稿+Save+取消回滚流程：
           直接读写 chat 侧 useAppearanceStore.background，点击即生效即持久化
@@ -249,8 +253,12 @@ function BackgroundArtSection({
   };
 
   return (
-    <div className={cardCls}>
-      <div className={cardLabelCls}>{t('settings.background')}</div>
+    /* 2026-09-02 P2：换成 SettingCard/SettingRow 外壳（内部的背景图网格、
+       遮罩滑块、焦点选择一字未动）。这样本文件最后两个 cardCls/cardLabelCls
+       消费者也没了，两个常量随之退役——版式定义收敛到 SettingPrimitives 一处。 */
+    <SettingGroup>
+      <SettingCard>
+        <SettingRow title={t('settings.background')} stack>
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
@@ -385,7 +393,9 @@ function BackgroundArtSection({
           </Button>
         </div>
       )}
-    </div>
+        </SettingRow>
+      </SettingCard>
+    </SettingGroup>
   );
 }
 
@@ -437,47 +447,49 @@ function DesktopAppearanceControls({
       ...c,
       codeFontSize: clampFont(n, CODE_FONT_MIN, CODE_FONT_MAX),
     }));
+  /* 这三行的标签原本是**硬编码英文字面量**（2026-09-02 修）：中文界面下
+     夹着「UI font size」「Use pointer cursor on clickable elements」三行英文，
+     和周围的中文标签格格不入。走 tt(key, 中文) 而不是直接换成中文字面量——
+     key 一天没进 19 本字典就显示中文兜底，进了字典之后调用点不用改，自动
+     切到各语言译文（见 settingsHelpers 的 useTt 注释）。 */
+  const tt = useTt();
   const setPointer = (v: boolean) =>
     setCfg((c) => ({ ...c, usePointerCursor: v }));
 
   return (
     <>
       {/* 字号 + 指针三行共一张卡，divide-y 分隔（截图版式） */}
-      <div className="divide-y divide-border/60 rounded-xl border border-border bg-card px-4">
-        <div className="flex items-center justify-between gap-4 py-3">
-          <span className="text-[13px] font-medium text-foreground">UI font size</span>
-          <FontStepper
-            value={uiFont}
-            min={UI_FONT_MIN}
-            max={UI_FONT_MAX}
-            onChange={setUiFont}
-            ariaLabel="UI font size"
-          />
-        </div>
-        <div className="flex items-center justify-between gap-4 py-3">
-          <span className="text-[13px] font-medium text-foreground">Code font size</span>
-          <FontStepper
-            value={codeFont}
-            min={CODE_FONT_MIN}
-            max={CODE_FONT_MAX}
-            onChange={setCodeFont}
-            ariaLabel="Code font size"
-          />
-        </div>
-        <div className="flex items-center justify-between gap-4 py-3.5">
-          <label
-            className="cursor-pointer text-[13px] font-medium text-foreground"
-            htmlFor="appearance-pointer-cursor"
-          >
-            Use pointer cursor on clickable elements
-          </label>
-          <Switch
-            id="appearance-pointer-cursor"
+      {/* 2026-09-02 P2：这张卡本来就是「一组一张卡 + divide-y 分隔」的写法——
+          P2 推广的正是它。改用 SettingCard/SettingRow 后行为不变，但版式定义
+          不再是本文件里的一串手写类名，而是和其它 section 共用同一个原语。 */}
+      <SettingGroup>
+        <SettingCard>
+          <SettingRow icon={<Type />} title={tt('settings.uiFontSize', '界面字号')}>
+            <FontStepper
+              value={uiFont}
+              min={UI_FONT_MIN}
+              max={UI_FONT_MAX}
+              onChange={setUiFont}
+              ariaLabel={tt('settings.uiFontSize', '界面字号')}
+            />
+          </SettingRow>
+          <SettingRow icon={<Code />} title={tt('settings.codeFontSize', '代码字号')}>
+            <FontStepper
+              value={codeFont}
+              min={CODE_FONT_MIN}
+              max={CODE_FONT_MAX}
+              onChange={setCodeFont}
+              ariaLabel={tt('settings.codeFontSize', '代码字号')}
+            />
+          </SettingRow>
+          <SettingSwitchRow
+            icon={<MousePointer2 />}
+            title={tt('settings.usePointerCursor', '可点击元素使用手型光标')}
             checked={pointer}
             onCheckedChange={setPointer}
           />
-        </div>
-      </div>
+        </SettingCard>
+      </SettingGroup>
     </>
   );
 }

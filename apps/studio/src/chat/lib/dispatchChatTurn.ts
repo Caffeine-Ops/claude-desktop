@@ -17,20 +17,25 @@ type UserStoreContent = Parameters<
  * payload 允许是 thunk：onNew 需在【预翻转之后】再异步求值（方案首发要先 readKbIndex +
  * 匹配产品），用 thunk 保住「spinner 立刻亮、产品匹配在其后」的原时序；thunk 抛错也照样
  * 落进下面的 catch 兜底，与原行为一致。
+ *
+ * storeContent 传 null = 不追加用户气泡：「回复中断·重试」走这条——用户气泡还在，
+ * 只是把同一份载荷原样再发一次（lib/retryFailedTurn）。
  */
 export async function dispatchChatTurn(opts: {
   sessionId: string
-  storeContent: UserStoreContent
+  storeContent: UserStoreContent | null
   payload: ChatSendPayload | (() => Promise<ChatSendPayload>)
   logTag?: string
 }): Promise<void> {
   const { sessionId, storeContent, payload, logTag = '[chat]' } = opts
   const chat = useChatStore.getState()
-  chat.appendUserMessage(sessionId, storeContent)
+  if (storeContent) chat.appendUserMessage(sessionId, storeContent)
   // 预翻转 spinner：startAssistantMessage 幂等，真正的 'start' 事件到达时对 turn meta 是 no-op。
   chat.startAssistantMessage(sessionId, `pending_${Date.now()}`)
   try {
     const p = typeof payload === 'function' ? await payload() : payload
+    // 记下最终载荷，失败后 Composer 的重试条才有东西可以原样重发。
+    chat.recordSentPayload(sessionId, p)
     await window.chatApi.send(p)
   } catch (err) {
     console.error(`${logTag} send failed`, err)

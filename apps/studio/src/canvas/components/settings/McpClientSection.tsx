@@ -437,18 +437,20 @@ export const McpClientSection = forwardRef<McpClientSectionHandle, Props>(
   if (!loaded) {
     return (
       <section>
-        <h3 className="text-[15px] font-[650] tracking-[-0.005em]">{t('mcpClient.title')}</h3>
-        <p className="mt-0.5 text-muted-foreground">{t('common.loading')}</p>
+        <p className="text-muted-foreground">{t('common.loading')}</p>
       </section>
     );
   }
 
   return (
     <section>
+      {/* 2026-09-02 走查实锤：这里原有 <h3>{mcpClient.title}</h3>＝「外部 MCP
+          服务器」，而外层页面标题是「外部 MCP」——两行叠在一起近乎重复念了
+          两遍。删 h3 留副标题（副标题才是真正解释这页干嘛的那句）。
+          同 CritiqueTheaterSection 的同款修正。 */}
       <div className="mb-4 flex items-start justify-between gap-6">
         <div>
-          <h3 className="text-[15px] font-[650] tracking-[-0.005em]">{t('mcpClient.title')}</h3>
-          <p className="mt-0.5 text-muted-foreground">{t('mcpClient.subtitle')}</p>
+          <p className="text-muted-foreground">{t('mcpClient.subtitle')}</p>
         </div>
         <Button
           type="button"

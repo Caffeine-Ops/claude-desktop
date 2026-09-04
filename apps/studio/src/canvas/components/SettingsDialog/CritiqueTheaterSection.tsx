@@ -1,4 +1,5 @@
-import { Switch } from '@/src/components/ui/switch';
+import { MessageSquare } from 'lucide-react';
+import { SettingCard, SettingGroup, SettingRow, SettingSwitchRow } from '../settings/SettingPrimitives';
 
 import { useI18n } from '../../i18n';
 import { useRoute } from '../../router';
@@ -47,42 +48,34 @@ export function CritiqueTheaterSection() {
     }
   };
   return (
-    <section className="flex flex-col gap-3">
-      <div>
-        <h3 className="text-sm font-semibold text-foreground">
-          {t('critiqueTheater.settingsNav')}
-        </h3>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {t('critiqueTheater.settingsNavHint')}
-        </p>
-      </div>
-      <div className="rounded-xl border border-border bg-card p-4">
-        <div className="flex items-center justify-between gap-4">
-          <label
-            className="cursor-pointer text-[13px] font-medium text-foreground"
-            htmlFor="critique-theater-enabled"
-          >
-            {t('critiqueTheater.settingsEnabledLabel')}
-          </label>
-          <Switch
-            id="critique-theater-enabled"
+    <section>
+      {/* 2026-09-02 走查实锤：这里原本还有一个 <h3>{settingsNav}</h3>，与外层
+          渲染的页面标题**一字不差地重复**，删掉。2026-09-04 再删掉紧跟的说明
+          <p>{settingsNavHint}——壳的页头现在会画同一句副标题（useSectionHeaders），
+          留着就是第二次「说了两遍」。 */}
+      {/* 2026-09-02 P2：换 SettingCard/SettingRow。原本开关行下面挂着两段
+          说明 <p>，现在拆成两行——第二段（项目相关提示）本就是独立的一条
+          信息，单独占一行比堆在开关底下更好读。
+          注意不能把两段都塞进同一个 hint：SettingRow 的 hint 渲染在 <p> 里，
+          里面再放 <p> 是非法嵌套，浏览器会自动拆开、间距全乱。 */}
+      <SettingGroup>
+        <SettingCard>
+          <SettingSwitchRow
+            icon={<MessageSquare />}
+            title={t('critiqueTheater.settingsEnabledLabel')}
+            hint={t('critiqueTheater.settingsEnabledDescription')}
             checked={enabled}
             onCheckedChange={setEnabled}
           />
-        </div>
-        <p className="mt-2.5 text-xs leading-relaxed text-muted-foreground">
-          {t('critiqueTheater.settingsEnabledDescription')}
-        </p>
-        {activeProjectId !== null ? (
-          <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-            {t('critiqueTheater.settingsEnabledProjectHint')}
-          </p>
-        ) : (
-          <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-            {t('critiqueTheater.settingsEnabledNoProjectHint')}
-          </p>
-        )}
-      </div>
+          <SettingRow
+            hint={
+              activeProjectId !== null
+                ? t('critiqueTheater.settingsEnabledProjectHint')
+                : t('critiqueTheater.settingsEnabledNoProjectHint')
+            }
+          />
+        </SettingCard>
+      </SettingGroup>
     </section>
   );
 }
