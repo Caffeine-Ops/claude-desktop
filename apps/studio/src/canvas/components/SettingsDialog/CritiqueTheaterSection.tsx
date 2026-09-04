@@ -1,5 +1,5 @@
-import { Switch } from '@/src/components/ui/switch';
-import { SettingCard, SettingGroup, SettingRow } from '../settings/SettingPrimitives';
+import { MessageSquare } from 'lucide-react';
+import { SettingCard, SettingGroup, SettingRow, SettingSwitchRow } from '../settings/SettingPrimitives';
 
 import { useI18n } from '../../i18n';
 import { useRoute } from '../../router';
@@ -50,12 +50,9 @@ export function CritiqueTheaterSection() {
   return (
     <section>
       {/* 2026-09-02 走查实锤：这里原本还有一个 <h3>{settingsNav}</h3>，与外层
-          渲染的页面标题**一字不差地重复**——V2 壳画 <h1>{activeLabel}</h1>，
-          V1 走 sectionHeader.title，两种模式下都重复。删掉 h3、只留说明文字：
-          说明本身有信息量（讲清楚这个开关是干嘛的），标题不需要说两遍。 */}
-      <p className="mb-4 text-xs text-muted-foreground">
-        {t('critiqueTheater.settingsNavHint')}
-      </p>
+          渲染的页面标题**一字不差地重复**，删掉。2026-09-04 再删掉紧跟的说明
+          <p>{settingsNavHint}——壳的页头现在会画同一句副标题（useSectionHeaders），
+          留着就是第二次「说了两遍」。 */}
       {/* 2026-09-02 P2：换 SettingCard/SettingRow。原本开关行下面挂着两段
           说明 <p>，现在拆成两行——第二段（项目相关提示）本就是独立的一条
           信息，单独占一行比堆在开关底下更好读。
@@ -63,17 +60,13 @@ export function CritiqueTheaterSection() {
           里面再放 <p> 是非法嵌套，浏览器会自动拆开、间距全乱。 */}
       <SettingGroup>
         <SettingCard>
-          <SettingRow
+          <SettingSwitchRow
+            icon={<MessageSquare />}
             title={t('critiqueTheater.settingsEnabledLabel')}
             hint={t('critiqueTheater.settingsEnabledDescription')}
-            labelFor="critique-theater-enabled"
-          >
-            <Switch
-              id="critique-theater-enabled"
-              checked={enabled}
-              onCheckedChange={setEnabled}
-            />
-          </SettingRow>
+            checked={enabled}
+            onCheckedChange={setEnabled}
+          />
           <SettingRow
             hint={
               activeProjectId !== null

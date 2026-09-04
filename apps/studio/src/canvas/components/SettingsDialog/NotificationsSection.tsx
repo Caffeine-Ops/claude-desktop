@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
+import { Monitor, Send, Volume2 } from 'lucide-react';
 
 import { Button } from '@/src/components/ui/button';
-import { Switch } from '@/src/components/ui/switch';
-import { SettingCard, SettingGroup, SettingRow } from '../settings/SettingPrimitives';
+import { SettingCard, SettingGroup, SettingRow, SettingSwitchRow } from '../settings/SettingPrimitives';
+import { useTt } from './settingsHelpers';
 import { cn } from '@/src/lib/utils';
 import { useAnalytics } from '../../analytics/provider';
 import { trackSettingsNotificationsClick } from '../../analytics/events';
@@ -69,6 +70,7 @@ export function NotificationsSection({
   setCfg: Dispatch<SetStateAction<AppConfig>>;
 }) {
   const { t } = useI18n();
+  const tt = useTt();
   const analytics = useAnalytics();
   const notif = cfg.notifications ?? DEFAULT_NOTIFICATIONS;
   const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>(
@@ -152,18 +154,25 @@ export function NotificationsSection({
           内部发丝线分隔」（SettingCard/SettingRow，见 SettingPrimitives.tsx），
           边框降到每组一圈。逻辑一行没动：handler、埋点、条件渲染全部照搬，
           这是纯版式重构。 */}
-      <SettingGroup>
+      {/* 2026-09-04 精细化（样稿 v4）：提示音与桌面通知原是两张卡，合成「提醒
+          方式」一张组卡；开关行换 SettingSwitchRow（整行可点，此前这页两处漏了
+          labelFor）；行首图标；脚注说明触发时机。测试通知单独成组，标题常驻——
+          原先标题跟着 testStatus 才出现，点一下按钮会从左边跳到右边。 */}
+      <SettingGroup
+        label={tt('settings.notifyGroupWays', '提醒方式')}
+        footnote={tt(
+          'settings.notifyFootnote',
+          '提示音与桌面通知只在你没盯着这个窗口时出现，前台工作不会被打断。',
+        )}
+      >
         <SettingCard>
-          <SettingRow
+          <SettingSwitchRow
+            icon={<Volume2 />}
             title={t('settings.notifyCompletionSound')}
             hint={t('settings.notifyCompletionSoundHint')}
-          >
-            <Switch
-              checked={notif.soundEnabled}
-              onCheckedChange={toggleSound}
-              aria-label={t('settings.notifyCompletionSound')}
-            />
-          </SettingRow>
+            checked={notif.soundEnabled}
+            onCheckedChange={toggleSound}
+          />
 
           {notif.soundEnabled ? (
             <>
@@ -208,24 +217,17 @@ export function NotificationsSection({
               </SettingRow>
             </>
           ) : null}
-        </SettingCard>
-      </SettingGroup>
 
-      <SettingGroup>
-        <SettingCard>
-          <SettingRow
+          <SettingSwitchRow
+            icon={<Monitor />}
             title={t('settings.notifyDesktop')}
             hint={t('settings.notifyDesktopHint')}
-          >
-            <Switch
-              checked={notif.desktopEnabled}
-              disabled={permission === 'unsupported'}
-              onCheckedChange={() => {
-                void toggleDesktop();
-              }}
-              aria-label={t('settings.notifyDesktop')}
-            />
-          </SettingRow>
+            checked={notif.desktopEnabled}
+            disabled={permission === 'unsupported'}
+            onCheckedChange={() => {
+              void toggleDesktop();
+            }}
+          />
 
           {permission === 'unsupported' ? (
             <SettingRow hint={t('settings.notifyDesktopUnsupported')} />
@@ -233,15 +235,23 @@ export function NotificationsSection({
           {permission === 'denied' ? (
             <SettingRow hint={t('settings.notifyDesktopBlocked')} />
           ) : null}
+        </SettingCard>
+      </SettingGroup>
 
-          {notif.desktopEnabled && permission === 'granted' ? (
-            /* testStatus 保留 role="status"：它是发完测试通知后的结果播报，
-               读屏软件靠这个 live region 才会念出来。 */
+      {notif.desktopEnabled && permission === 'granted' ? (
+        <SettingGroup label={tt('settings.notifyTestGroup', '测试')}>
+          <SettingCard>
+            {/* testStatus 保留 role="status"：它是发完测试通知后的结果播报，
+               读屏软件靠这个 live region 才会念出来。 */}
             <SettingRow
+              icon={<Send />}
+              title={tt('settings.notifyTestTitle', '发送一条测试通知')}
               hint={
                 testStatus ? (
                   <span role="status">{t(testStatus)}</span>
-                ) : undefined
+                ) : (
+                  tt('settings.notifyTestHint', '确认提示音与系统通知都能正常弹出。')
+                )
               }
             >
               <Button
@@ -260,9 +270,9 @@ export function NotificationsSection({
                 {t('settings.notifyTest')}
               </Button>
             </SettingRow>
-          ) : null}
-        </SettingCard>
-      </SettingGroup>
+          </SettingCard>
+        </SettingGroup>
+      ) : null}
     </section>
   );
 }

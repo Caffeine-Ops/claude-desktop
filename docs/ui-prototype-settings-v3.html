@@ -1,0 +1,1326 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>设置页重设计 v3 · Claude Desktop</title>
+<!--
+  设置页重设计原型 v3 —— 2026-09-02
+  ================================================================
+  这份原型解决现有 SettingsDialogV2 的三个问题：
+    1. 信息架构：24 项 / 4 组里有两个「杂物抽屉」（通用 9 项、高级 6 项），
+       且 composio「外部 MCP」/ mcpClient「MCP 服务器」两个概念平级并列，
+       用户分不清该点哪个。→ 重组为 6 组 21 项，每组能用一句话说清；
+       三处合并（MCP 两页合一 / 语言并进外观 / 更新并进关于）。
+    2. 视觉密度：现状「一项一张卡」(rounded-xl border p-4)，一屏七八张
+       独立卡浮着，边框噪音重。→ 改「一组一张卡 + 内部发丝线分隔」
+       （macOS 系统设置 / Linear 的做法）。Tweaks 里可切回旧法直接对比。
+    3. 新旧样式打架：迁移中途一半 shadcn 一半 legacy CSS。→ 原型收敛
+       字号到 5 档、圆角到 3 档、阴影到 1 级。
+
+  色彩 token 全部照抄 packages/design-tokens/tokens.css 的真实值（HSL
+  三元组写法也保持一致），零新增色——重设计的力气花在秩序上，不是换皮。
+
+  纯手写 CSS + vanilla JS，无构建、无框架、无 CDN 依赖。直接双击打开。
+-->
+<style>
+/* ═══════════════════════════════════════════════════════════════
+   1. TOKENS —— 与 packages/design-tokens/tokens.css 同源同值
+   ═══════════════════════════════════════════════════════════════ */
+:root {
+  color-scheme: light;
+  --background: 240 7% 97%;
+  --foreground: 240 3% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 3% 12%;
+  --popover: 0 0% 100%;
+  --muted: 0 0% 95.3%;
+  --muted-foreground: 240 4% 40%;
+  --hover: 240 6% 90%;
+  --secondary: 240 6% 94%;
+  --primary: 211 100% 45%;
+  --primary-foreground: 0 0% 100%;
+  --destructive: 0 72% 50%;
+  --border: 240 6% 84%;
+  --input: 240 6% 86%;
+  --sidebar: 240 7% 96%;
+  --sidebar-accent: 240 6% 90%;
+  --brand: 142 76% 36%;
+  --warn: 38 92% 45%;
+
+  /* 阴影：全页只有一级卡片阴影 + 一级弹层阴影 */
+  --shadow-card: 0 1px 2px hsl(240 6% 10% / 0.04);
+  --shadow-pop: 0 8px 24px hsl(240 6% 10% / 0.12);
+  --shadow-raised: 0 1px 3px hsl(240 6% 10% / 0.12), 0 0 0 1px hsl(240 6% 10% / 0.04);
+
+  /* 圆角：收敛到 3 档 */
+  --r-card: 12px;
+  --r-ctl: 8px;
+  --r-pill: 999px;
+
+  /* 密度（Tweaks 可调） */
+  --row-py: 14px;
+  --card-gap: 16px;
+  --group-gap: 32px;
+
+  /* 动效 */
+  --ease: cubic-bezier(.32,.72,0,1);
+  --dur: 140ms;
+
+  --sans: -apple-system, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+  --mono: "JetBrains Mono", "SF Mono", Menlo, monospace;
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --background: 40 6% 10%;
+  --foreground: 40 21% 89%;
+  --card: 30 3% 13%;
+  --card-foreground: 39 35% 92%;
+  --popover: 36 6% 15%;
+  --muted: 36 6% 17%;
+  --muted-foreground: 36 5% 58%;
+  --hover: 36 6% 17%;
+  --secondary: 30 5% 15%;
+  --primary: 210 100% 58%;
+  --destructive: 0 72% 55%;
+  --border: 49 12% 18%;
+  --input: 42 8% 25%;
+  --sidebar: 36 6% 11%;
+  --sidebar-accent: 30 5% 15%;
+  --brand: 142 60% 45%;
+  --warn: 38 85% 55%;
+  --shadow-card: 0 1px 2px hsl(0 0% 0% / 0.3);
+  --shadow-pop: 0 8px 24px hsl(0 0% 0% / 0.5);
+  --shadow-raised: 0 1px 3px hsl(0 0% 0% / 0.4), 0 0 0 1px hsl(0 0% 0% / 0.2);
+}
+[data-density="compact"] { --row-py: 9px; --card-gap: 12px; --group-gap: 24px; }
+[data-motion="off"] * { transition: none !important; animation: none !important; }
+
+/* ═══════════════════════════════════════════════════════════════
+   2. RESET + 页面外壳
+   ═══════════════════════════════════════════════════════════════ */
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.5;
+  color: hsl(var(--foreground));
+  background: hsl(var(--background));
+  -webkit-font-smoothing: antialiased;
+  text-wrap: pretty;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  transition: background var(--dur) var(--ease);
+}
+button, input, select { font: inherit; color: inherit; }
+h1,h2,h3,h4,p { margin: 0; }
+
+/* 模拟 Electron 窗口：这是桌面应用，原型必须带窗口语境才看得准比例 */
+.window {
+  width: min(1180px, 100%);
+  height: min(760px, calc(100vh - 56px));
+  display: flex;
+  overflow: hidden;
+  border-radius: 12px;
+  background: hsl(var(--sidebar));
+  box-shadow: 0 24px 60px hsl(240 10% 10% / .18), 0 0 0 1px hsl(var(--border));
+}
+[data-theme="dark"] .window { box-shadow: 0 24px 60px hsl(0 0% 0% / .5), 0 0 0 1px hsl(var(--border)); }
+
+/* ─── 红绿灯（装饰，标出 macOS 原生窗口按钮占位） ─── */
+.traffic { display: flex; gap: 8px; padding: 13px 0 0 13px; height: 40px; }
+.traffic i { width: 12px; height: 12px; border-radius: var(--r-pill); display: block; }
+.traffic i:nth-child(1) { background: #ff5f57; }
+.traffic i:nth-child(2) { background: #febc2e; }
+.traffic i:nth-child(3) { background: #28c840; }
+[data-theme="dark"] .traffic i { opacity: .9; }
+
+/* ═══════════════════════════════════════════════════════════════
+   3. 侧栏 —— 244px，与 AppRail 同宽（改这里要同步改 AppRail）
+   ═══════════════════════════════════════════════════════════════ */
+.sidebar {
+  width: 244px;
+  flex: 0 0 244px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: hsl(var(--sidebar));
+}
+.back-btn {
+  display: flex; align-items: center; gap: 9px;
+  margin: 0 10px 6px; padding: 0 11px;
+  height: 34px; border: 0; border-radius: var(--r-ctl);
+  background: transparent; color: hsl(var(--muted-foreground));
+  cursor: pointer; text-align: left;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.back-btn:hover { background: hsl(var(--sidebar-accent)); color: hsl(var(--foreground)); }
+
+/* ─── 搜索：24 项设置最便宜也最有效的一招 ─── */
+.search-wrap { position: relative; margin: 0 10px 10px; }
+.search-wrap > svg:first-child {
+  position: absolute; left: 9px; top: 50%; transform: translateY(-50%);
+  color: hsl(var(--muted-foreground)); pointer-events: none;
+}
+.search {
+  width: 100%; height: 32px;
+  padding: 0 30px 0 30px;
+  border: 1px solid hsl(var(--input));
+  border-radius: var(--r-ctl);
+  background: hsl(var(--card));
+  outline: none;
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.search::placeholder { color: hsl(var(--muted-foreground)); }
+.search:focus {
+  border-color: hsl(var(--primary));
+  box-shadow: 0 0 0 3px hsl(var(--primary) / .16);
+}
+.search-kbd {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  font-size: 10.5px; font-family: var(--mono);
+  color: hsl(var(--muted-foreground));
+  border: 1px solid hsl(var(--border)); border-radius: 4px;
+  padding: 1px 4px; pointer-events: none;
+  transition: opacity var(--dur) var(--ease);
+}
+.search:focus ~ .search-kbd { opacity: 0; }
+.search-clear {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  width: 20px; height: 20px; display: none; place-items: center;
+  border: 0; border-radius: var(--r-pill); background: transparent;
+  color: hsl(var(--muted-foreground)); cursor: pointer;
+}
+.search-clear:hover { background: hsl(var(--hover)); color: hsl(var(--foreground)); }
+body[data-searching="1"] .search-clear { display: grid; }
+body[data-searching="1"] .search-kbd { display: none; }
+
+.nav { flex: 1; min-height: 0; overflow-y: auto; padding: 0 10px 14px; }
+.nav::-webkit-scrollbar { width: 8px; }
+.nav::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: var(--r-pill); border: 2px solid transparent; background-clip: padding-box; }
+
+.nav-group { padding-top: 16px; }
+.nav-group:first-child { padding-top: 2px; }
+.nav-group-title {
+  padding: 0 12px 6px;
+  font-size: 11.5px; font-weight: 600; letter-spacing: .04em;
+  color: hsl(var(--muted-foreground));
+}
+.nav-items { display: flex; flex-direction: column; gap: 4px; }
+.nav-item {
+  display: flex; align-items: center; gap: 11px;
+  width: 100%; height: 36px; padding: 0 12px;
+  border: 0; border-radius: var(--r-ctl);
+  background: transparent;
+  color: hsl(var(--foreground) / .75);
+  cursor: pointer; text-align: left;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.nav-item svg { flex: 0 0 auto; }
+.nav-item span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-item:hover { background: hsl(var(--sidebar-accent)); color: hsl(var(--foreground)); }
+.nav-item:focus-visible { outline: 2px solid hsl(var(--primary)); outline-offset: -2px; }
+/* 选中态用中性底 + 字重区分，不跟主题色走——设置导航项不需要 accent
+   （2026-07-21 实锤：绿色选中态在 rail 里像"成功"徽章而非选中态）。 */
+.nav-item[aria-current="page"] {
+  background: hsl(var(--sidebar-accent));
+  color: hsl(var(--foreground));
+  font-weight: 600;
+}
+.nav-item.hidden, .nav-group.hidden { display: none; }
+.nav-empty {
+  padding: 20px 12px; text-align: center;
+  font-size: 12px; color: hsl(var(--muted-foreground));
+  display: none;
+}
+body[data-noresult="1"] .nav-empty { display: block; }
+
+/* ═══════════════════════════════════════════════════════════════
+   4. 内容区
+   ═══════════════════════════════════════════════════════════════ */
+.content {
+  flex: 1; min-width: 0;
+  overflow-y: auto;
+  border-left: 1px solid hsl(var(--border) / .5);
+  background: hsl(var(--card));
+}
+.content::-webkit-scrollbar { width: 10px; }
+.content::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: var(--r-pill); border: 3px solid transparent; background-clip: padding-box; }
+.content-inner { max-width: 760px; margin: 0 auto; padding: 44px 40px 60px; }
+
+.page-title {
+  font-size: 26px; font-weight: 600; letter-spacing: -.015em;
+  margin-bottom: 4px;
+}
+.page-sub { font-size: 13px; color: hsl(var(--muted-foreground)); margin-bottom: 26px; }
+
+@keyframes panel-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.panel { display: none; }
+.panel.active { display: block; animation: panel-in 120ms var(--ease); }
+
+/* ─── 分组：一组设置一张卡，内部发丝线分隔 ─── */
+.group { margin-bottom: var(--group-gap); }
+.group:last-child { margin-bottom: 0; }
+.group-label {
+  font-size: 11.5px; font-weight: 600; letter-spacing: .04em;
+  color: hsl(var(--muted-foreground));
+  margin-bottom: 8px; padding-left: 2px;
+}
+.card {
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--r-card);
+  background: hsl(var(--card));
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+  transition: border-color var(--dur) var(--ease);
+}
+/* Tweaks「独立卡」模式 = 还原现状写法，用来直接对比 */
+[data-cards="separate"] .card { border: 0; box-shadow: none; background: transparent; }
+[data-cards="separate"] .row {
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--r-card);
+  background: hsl(var(--card));
+  box-shadow: var(--shadow-card);
+  margin-bottom: 10px;
+  padding-left: 16px; padding-right: 16px;
+}
+[data-cards="separate"] .row:last-child { margin-bottom: 0; }
+[data-cards="separate"] .row + .row { border-top: 1px solid hsl(var(--border)); }
+
+.row {
+  display: flex; align-items: center; gap: 16px;
+  padding: var(--row-py) 16px;
+  transition: padding var(--dur) var(--ease);
+}
+.row + .row { border-top: 1px solid hsl(var(--border)); }
+.row-stack { flex-direction: column; align-items: stretch; gap: 10px; }
+.row-main { flex: 1; min-width: 0; }
+.row-title { font-size: 13px; font-weight: 500; }
+.row-hint { font-size: 12px; line-height: 1.6; color: hsl(var(--muted-foreground)); margin-top: 2px; }
+.row-ctl { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
+
+/* ═══════════════════════════════════════════════════════════════
+   5. 控件原语
+   ═══════════════════════════════════════════════════════════════ */
+/* 开关 */
+.switch {
+  position: relative; width: 40px; height: 24px; flex: 0 0 auto;
+  border: 0; border-radius: var(--r-pill); padding: 0;
+  background: hsl(var(--input)); cursor: pointer;
+  transition: background var(--dur) var(--ease);
+}
+.switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 20px; height: 20px; border-radius: var(--r-pill);
+  background: #fff; box-shadow: 0 1px 3px hsl(0 0% 0% / .2);
+  transition: transform var(--dur) var(--ease);
+}
+.switch[aria-checked="true"] { background: hsl(var(--primary)); }
+.switch[aria-checked="true"]::after { transform: translateX(16px); }
+.switch:focus-visible { outline: 2px solid hsl(var(--primary)); outline-offset: 2px; }
+.switch:disabled { opacity: .45; cursor: not-allowed; }
+
+/* 分段控件 */
+.seg {
+  display: inline-flex; padding: 3px; gap: 2px;
+  border-radius: 10px; background: hsl(var(--secondary));
+}
+.seg button {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 12px; border: 0; border-radius: var(--r-ctl);
+  background: transparent; color: hsl(var(--muted-foreground));
+  font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.seg button:hover { color: hsl(var(--foreground) / .8); }
+.seg button[aria-selected="true"] {
+  background: hsl(var(--card)); color: hsl(var(--foreground));
+  box-shadow: var(--shadow-raised);
+}
+.seg button:focus-visible { outline: 2px solid hsl(var(--primary)); outline-offset: 1px; }
+
+/* 大双档 Tab（执行模式，两行式） */
+.bigtabs { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 4px; border-radius: var(--r-card); background: hsl(var(--secondary)); }
+.bigtabs button {
+  display: flex; flex-direction: column; gap: 2px; align-items: center;
+  padding: 10px 8px; border: 0; border-radius: 9px;
+  background: transparent; cursor: pointer;
+  transition: background var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.bigtabs button:hover:not([aria-selected="true"]):not(:disabled) { background: hsl(var(--hover) / .5); }
+.bigtabs button[aria-selected="true"] { background: hsl(var(--card)); box-shadow: var(--shadow-raised); }
+.bigtabs button:disabled { opacity: .45; cursor: not-allowed; }
+.bigtabs b { font-size: 13.5px; font-weight: 500; }
+.bigtabs small { font-size: 11px; color: hsl(var(--muted-foreground)); }
+
+/* 输入框 */
+.input {
+  width: 100%; height: 32px; padding: 0 10px;
+  border: 1px solid hsl(var(--input)); border-radius: var(--r-ctl);
+  background: hsl(var(--card)); outline: none;
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.input:focus { border-color: hsl(var(--primary)); box-shadow: 0 0 0 3px hsl(var(--primary) / .16); }
+.input:disabled { background: hsl(var(--muted)); color: hsl(var(--muted-foreground)); cursor: not-allowed; }
+.input.mono { font-family: var(--mono); font-size: 12px; }
+.input[aria-invalid="true"] { border-color: hsl(var(--destructive)); }
+.input[aria-invalid="true"]:focus { box-shadow: 0 0 0 3px hsl(var(--destructive) / .16); }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field-label { font-size: 12px; font-weight: 500; color: hsl(var(--muted-foreground)); }
+.field-err { font-size: 12px; color: hsl(var(--destructive)); display: flex; align-items: center; gap: 5px; }
+.secret { position: relative; }
+.secret .input { padding-right: 34px; }
+.secret button {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  width: 24px; height: 24px; display: grid; place-items: center;
+  border: 0; border-radius: 6px; background: transparent;
+  color: hsl(var(--muted-foreground)); cursor: pointer;
+}
+.secret button:hover { background: hsl(var(--hover)); color: hsl(var(--foreground)); }
+
+/* 下拉 */
+.select {
+  height: 32px; padding: 0 30px 0 10px;
+  border: 1px solid hsl(var(--input)); border-radius: var(--r-ctl);
+  background: hsl(var(--card)); cursor: pointer; outline: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 9px center;
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.select:focus { border-color: hsl(var(--primary)); box-shadow: 0 0 0 3px hsl(var(--primary) / .16); }
+
+/* 按钮 */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 30px; padding: 0 12px;
+  border: 1px solid transparent; border-radius: 9px;
+  background: transparent; font-size: 12.5px; font-weight: 500;
+  cursor: pointer; white-space: nowrap;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease), opacity var(--dur) var(--ease);
+}
+.btn:focus-visible { outline: 2px solid hsl(var(--primary)); outline-offset: 1px; }
+.btn-primary { background: hsl(var(--primary)); color: #fff; }
+.btn-primary:hover { background: hsl(var(--primary) / .9); }
+.btn-outline { border-color: hsl(var(--border)); background: hsl(var(--card)); }
+.btn-outline:hover { background: hsl(var(--hover)); }
+.btn-ghost { color: hsl(var(--muted-foreground)); }
+.btn-ghost:hover { background: hsl(var(--hover)); color: hsl(var(--foreground)); }
+.btn-danger { border-color: hsl(var(--destructive) / .35); color: hsl(var(--destructive)); }
+.btn-danger:hover { background: hsl(var(--destructive) / .08); border-color: hsl(var(--destructive) / .5); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn .spin { animation: spin 800ms linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 状态点 / 徽章 */
+.dot { width: 7px; height: 7px; border-radius: var(--r-pill); flex: 0 0 auto; }
+.dot-ok { background: hsl(var(--brand)); box-shadow: 0 0 0 3px hsl(var(--brand) / .16); }
+.dot-warn { background: hsl(var(--warn)); box-shadow: 0 0 0 3px hsl(var(--warn) / .16); }
+.dot-off { background: hsl(var(--muted-foreground) / .5); }
+.badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 500; padding: 2px 8px;
+  border-radius: var(--r-pill); background: hsl(var(--muted)); color: hsl(var(--muted-foreground));
+}
+.badge-ok { background: hsl(var(--brand) / .12); color: hsl(var(--brand)); }
+.badge-pro { background: hsl(var(--primary) / .12); color: hsl(var(--primary)); }
+
+/* 步进器（字号） */
+.stepper { display: inline-flex; align-items: center; border: 1px solid hsl(var(--input)); border-radius: var(--r-ctl); overflow: hidden; background: hsl(var(--card)); }
+.stepper button { width: 28px; height: 30px; border: 0; background: transparent; color: hsl(var(--muted-foreground)); cursor: pointer; display: grid; place-items: center; transition: background var(--dur) var(--ease); }
+.stepper button:hover { background: hsl(var(--hover)); color: hsl(var(--foreground)); }
+.stepper button:disabled { opacity: .35; cursor: not-allowed; }
+.stepper output { min-width: 46px; text-align: center; font-size: 12.5px; font-variant-numeric: tabular-nums; border-left: 1px solid hsl(var(--border)); border-right: 1px solid hsl(var(--border)); line-height: 30px; }
+
+/* 主题色板 */
+.swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+.swatch {
+  width: 26px; height: 26px; border-radius: var(--r-pill);
+  border: 0; cursor: pointer; position: relative;
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.swatch:hover { transform: scale(1.08); }
+.swatch[aria-checked="true"] { box-shadow: 0 0 0 2px hsl(var(--card)), 0 0 0 4px currentColor; }
+.swatch:focus-visible { outline: 2px solid hsl(var(--primary)); outline-offset: 3px; }
+.swatch.custom {
+  display: grid; place-items: center; color: hsl(var(--muted-foreground));
+  background: hsl(var(--card)); border: 1px dashed hsl(var(--border));
+}
+
+/* 头像 */
+.avatar {
+  width: 44px; height: 44px; border-radius: var(--r-pill);
+  display: grid; place-items: center; flex: 0 0 auto;
+  background: hsl(var(--primary) / .12); color: hsl(var(--primary));
+  font-size: 17px; font-weight: 600;
+}
+
+/* 空态 / 加载 / 占位 */
+.empty {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 40px 24px; text-align: center;
+  color: hsl(var(--muted-foreground));
+}
+.empty svg { opacity: .4; }
+.empty p { font-size: 12.5px; max-width: 320px; line-height: 1.7; }
+.dashed {
+  border: 1px dashed hsl(var(--border)); border-radius: var(--r-card);
+  background: hsl(var(--muted) / .4);
+  padding: 16px; font-size: 12px; color: hsl(var(--muted-foreground));
+}
+.skeleton { background: linear-gradient(90deg, hsl(var(--muted)) 25%, hsl(var(--hover)) 50%, hsl(var(--muted)) 75%); background-size: 200% 100%; animation: shimmer 1.4s infinite; border-radius: 5px; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+/* 列表行（MCP 服务器 / 连接器） */
+.item-row { display: flex; align-items: center; gap: 12px; padding: var(--row-py) 16px; transition: background var(--dur) var(--ease); }
+.item-row + .item-row { border-top: 1px solid hsl(var(--border)); }
+.item-row:hover { background: hsl(var(--hover) / .45); }
+.item-icon {
+  width: 32px; height: 32px; border-radius: var(--r-ctl); flex: 0 0 auto;
+  display: grid; place-items: center;
+  background: hsl(var(--muted)); color: hsl(var(--muted-foreground));
+}
+.tabs-inline { display: flex; gap: 4px; border-bottom: 1px solid hsl(var(--border)); margin-bottom: 18px; }
+.tabs-inline button {
+  padding: 8px 12px; border: 0; background: transparent;
+  color: hsl(var(--muted-foreground)); font-size: 13px; font-weight: 500;
+  cursor: pointer; position: relative; margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.tabs-inline button:hover { color: hsl(var(--foreground)); }
+.tabs-inline button[aria-selected="true"] { color: hsl(var(--foreground)); border-bottom-color: hsl(var(--primary)); }
+
+.note {
+  display: flex; gap: 9px; padding: 11px 13px;
+  border-radius: var(--r-ctl);
+  background: hsl(var(--primary) / .07);
+  border: 1px solid hsl(var(--primary) / .18);
+  font-size: 12px; line-height: 1.65; color: hsl(var(--foreground) / .85);
+  margin-bottom: 20px;
+}
+.note svg { flex: 0 0 auto; color: hsl(var(--primary)); margin-top: 1px; }
+
+/* ═══════════════════════════════════════════════════════════════
+   6. Tweaks 面板
+   ═══════════════════════════════════════════════════════════════ */
+.tweaks-toggle {
+  position: fixed; right: 20px; bottom: 20px; z-index: 60;
+  width: 42px; height: 42px; border-radius: var(--r-pill);
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card)); color: hsl(var(--foreground));
+  display: grid; place-items: center; cursor: pointer;
+  box-shadow: var(--shadow-pop);
+  transition: transform var(--dur) var(--ease);
+}
+.tweaks-toggle:hover { transform: scale(1.06); }
+.tweaks {
+  position: fixed; right: 20px; bottom: 20px; z-index: 61;
+  width: 264px; padding: 14px;
+  border: 1px solid hsl(var(--border)); border-radius: var(--r-card);
+  background: hsl(var(--popover)); box-shadow: var(--shadow-pop);
+  display: none;
+}
+body[data-tweaks="1"] .tweaks { display: block; }
+body[data-tweaks="1"] .tweaks-toggle { display: none; }
+.tweaks header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.tweaks h3 { font-size: 12px; font-weight: 600; letter-spacing: .04em; color: hsl(var(--muted-foreground)); }
+.tweak { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 0; }
+.tweak + .tweak { border-top: 1px solid hsl(var(--border) / .6); }
+.tweak > span { font-size: 12px; }
+.tweaks .seg button { padding: 3px 8px; font-size: 11px; }
+.tweaks .swatches { gap: 6px; }
+.tweaks .swatch { width: 20px; height: 20px; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+@media (max-width: 900px) {
+  body { padding: 0; }
+  .window { height: 100vh; border-radius: 0; }
+  .sidebar { width: 200px; flex-basis: 200px; }
+  .content-inner { padding: 32px 24px 48px; }
+}
+</style>
+</head>
+<body data-tweaks="0">
+
+<!-- ═══ 图标定义：lucide 同风格 stroke 图标，一次定义多处 <use> ═══ -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<g id="i-user"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></g>
+<g id="i-chart"><path d="M3 3v18h18"/><path d="M7 15v-4M12 15V8M17 15v-7"/></g>
+<g id="i-sliders"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="7" cy="18" r="2"/></g>
+<g id="i-pencil"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></g>
+<g id="i-history"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></g>
+<g id="i-msg"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"/></g>
+<g id="i-folder"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></g>
+<g id="i-flag"><path d="M4 22V4"/><path d="M4 4h13l-2 4 2 4H4"/></g>
+<g id="i-library"><path d="M4 4v16M8 4v16"/><path d="m13 5 5 15"/><path d="M20 20H4"/></g>
+<g id="i-laptop"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M2 20h20"/></g>
+<g id="i-grid"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></g>
+<g id="i-palette"><circle cx="12" cy="12" r="9"/><circle cx="8.5" cy="9.5" r="1.2"/><circle cx="15.5" cy="9.5" r="1.2"/><circle cx="12" cy="16" r="1.2"/></g>
+<g id="i-link"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></g>
+<g id="i-plug"><path d="M9 2v6M15 2v6"/><path d="M6 8h12v3a6 6 0 0 1-12 0Z"/><path d="M12 17v5"/></g>
+<g id="i-blocks"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/><path d="M13 7h8M17 3v8"/></g>
+<g id="i-image"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></g>
+<g id="i-sunmoon"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></g>
+<g id="i-sparkles"><path d="M12 3 13.8 8.2 19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8Z"/><path d="M18 15.5 18.8 18 21 18.8 18.8 19.6 18 22l-.8-2.4L15 18.8l2.2-.8Z"/></g>
+<g id="i-bell"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 8-3 8h18s-3-1-3-8"/><path d="M10.5 21a2 2 0 0 0 3 0"/></g>
+<g id="i-eye"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></g>
+<g id="i-eye-off"><path d="m3 3 18 18"/><path d="M10.6 6.2A9.9 9.9 0 0 1 12 6c6.4 0 10 6 10 6a17 17 0 0 1-3.1 3.9"/><path d="M6.6 6.7A16.6 16.6 0 0 0 2 12s3.6 6 10 6a9.7 9.7 0 0 0 4.3-.9"/><path d="M9.9 10a3 3 0 0 0 4.2 4.2"/></g>
+<g id="i-refresh"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v5h-5"/></g>
+<g id="i-file"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></g>
+<g id="i-search"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></g>
+<g id="i-back"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></g>
+<g id="i-check"><path d="m4 12 5 5L20 6"/></g>
+<g id="i-x"><path d="M18 6 6 18M6 6l12 12"/></g>
+<g id="i-plus"><path d="M12 5v14M5 12h14"/></g>
+<g id="i-loader"><path d="M12 3v4M12 17v4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M3 12h4M17 12h4M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8"/></g>
+<g id="i-info"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></g>
+<g id="i-alert"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 2.4 17.4A2 2 0 0 0 4.1 20.4h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></g>
+<g id="i-sliders2"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/><path d="M1 14h6M9 8h6M17 16h6"/></g>
+<g id="i-inbox"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13l3.5 7v5a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-5Z"/></g>
+<g id="i-logout"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></g>
+</defs></svg>
+
+<div class="window">
+
+  <!-- ══════════════ 侧栏 ══════════════ -->
+  <aside class="sidebar">
+    <div class="traffic"><i></i><i></i><i></i></div>
+
+    <button class="back-btn" type="button">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-back"/></svg>
+      返回应用
+    </button>
+
+    <div class="search-wrap">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-search"/></svg>
+      <input class="search" id="search" type="search" placeholder="搜索设置" aria-label="搜索设置" autocomplete="off" />
+      <kbd class="search-kbd">⌘K</kbd>
+      <button class="search-clear" id="searchClear" type="button" aria-label="清除搜索">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><use href="#i-x"/></svg>
+      </button>
+    </div>
+
+    <nav class="nav" id="nav" aria-label="设置导航"><!-- JS 渲染 --></nav>
+    <div class="nav-empty">没有匹配的设置项</div>
+  </aside>
+
+  <!-- ══════════════ 内容区 ══════════════ -->
+  <main class="content" id="content">
+    <div class="content-inner">
+      <h1 class="page-title" id="pageTitle">账号</h1>
+      <p class="page-sub" id="pageSub">你的身份、订阅与登录设备</p>
+
+      <!-- ─────────── 账号 ─────────── -->
+      <section class="panel" data-panel="account">
+        <div class="group">
+          <div class="card">
+            <div class="row">
+              <div class="avatar">K</div>
+              <div class="row-main">
+                <div class="row-title">kika</div>
+                <div class="row-hint">montgomery@aucegypt.edu</div>
+              </div>
+              <div class="row-ctl">
+                <span class="badge badge-pro">专业版</span>
+              </div>
+            </div>
+            <div class="row">
+              <div class="row-main">
+                <div class="row-title">登录状态</div>
+                <div class="row-hint">通过 Cowork 账号体系登录，令牌有效</div>
+              </div>
+              <div class="row-ctl">
+                <span class="dot dot-ok"></span>
+                <span style="font-size:12px;color:hsl(var(--muted-foreground))">已登录</span>
+              </div>
+            </div>
+            <div class="row">
+              <div class="row-main">
+                <div class="row-title">订阅套餐</div>
+                <div class="row-hint">到期后自动续订，可随时在网页端取消</div>
+              </div>
+              <div class="row-ctl">
+                <button class="btn btn-outline" type="button">管理订阅</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="group-label">登录设备</div>
+          <div class="card">
+            <div class="item-row">
+              <div class="item-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-laptop"/></svg></div>
+              <div class="row-main">
+                <div class="row-title">MacBook Pro · 当前设备</div>
+                <div class="row-hint">macOS 15 · 刚刚活跃</div>
+              </div>
+              <span class="badge badge-ok">当前</span>
+            </div>
+            <div class="item-row">
+              <div class="item-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-laptop"/></svg></div>
+              <div class="row-main">
+                <div class="row-title">Windows PC</div>
+                <div class="row-hint">Windows 11 · 3 天前活跃</div>
+              </div>
+              <button class="btn btn-ghost" type="button">移除</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="card">
+            <div class="row">
+              <div class="row-main">
+                <div class="row-title">退出登录</div>
+                <div class="row-hint">退出后本地会话记录会保留，重新登录即可继续</div>
+              </div>
+              <div class="row-ctl">
+                <button class="btn btn-danger" type="button">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-logout"/></svg>
+                  退出登录
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────── 执行模式 ─────────── -->
+      <section class="panel" data-panel="execution">
+        <div class="note">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><use href="#i-info"/></svg>
+          <div>决定 AI 干活时走哪条路：用本机装好的命令行工具（省钱、能读本地文件），还是直接调用云端 API（不依赖本机环境，按量计费）。</div>
+        </div>
+
+        <div class="group">
+          <div class="bigtabs" role="tablist" aria-label="执行模式">
+            <button role="tab" type="button" aria-selected="true" data-mode="daemon">
+              <b>本地 CLI</b><small>使用本机命令行后端</small>
+            </button>
+            <button role="tab" type="button" aria-selected="false" data-mode="api">
+              <b>API</b><small>直连模型服务商</small>
+            </button>
+          </div>
+        </div>
+
+        <!-- 本地 CLI 档 -->
+        <div data-mode-panel="daemon">
+          <div class="group">
+            <div class="group-label">命令行后端</div>
+            <div class="card">
+              <div class="row">
+                <div class="row-main">
+                  <div class="row-title">fusion-code</div>
+                  <div class="row-hint mono" style="font-family:var(--mono);font-size:11.5px">随应用下载 · v2.4.1</div>
+                </div>
+                <div class="row-ctl">
+                  <span class="dot dot-ok"></span>
+                  <span class="badge badge-ok">使用中</span>
+                </div>
+              </div>
+              <div class="row">
+                <div class="row-main">
+                  <div class="row-title">系统 claude</div>
+                  <div class="row-hint mono" style="font-family:var(--mono);font-size:11.5px">/opt/homebrew/bin/claude</div>
+                </div>
+                <div class="row-ctl">
+                  <button class="btn btn-outline" type="button">切换到此项</button>
+                </div>
+              </div>
+              <div class="row">
+                <div class="row-main">
+                  <div class="row-title">连接测试</div>
+                  <div class="row-hint" id="testHint">确认所选后端能正常启动并响应</div>
+                </div>
+                <div class="row-ctl">
+                  <button class="btn btn-outline" type="button" id="testBtn">测试连接</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-label">权限</div>
+            <div class="card">
+              <div class="row">
+                <div class="row-main">
+                  <div class="row-title">自动批准文件编辑</div>
+                  <div class="row-hint">开启后 AI 修改文件不再逐次询问。仅建议在有版本管理的项目里打开。</div>
+                </div>
+                <button class="switch" role="switch" aria-checked="false" aria-label="自动批准文件编辑"></button>
+              </div>
+              <div class="row">
+                <div class="row-main">
+                  <div class="row-title">自动批准命令执行</div>
+                  <div class="row-hint">风险较高：AI 可直接在你的机器上运行任意命令。</div>
+                </div>
+                <button class="switch" role="switch" aria-checked="false" aria-label="自动批准命令执行"></button>
+              </div>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-label">空态示例 —— 本机未装任何后端时</div>
+            <div class="card">
+              <div class="empty">
+                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-inbox"/></svg>
+                <div style="font-size:13px;font-weight:500;color:hsl(var(--foreground))">未检测到可用的命令行后端</div>
+                <p>应用会在首次启动时自动下载 fusion-code。你也可以改用 API 模式，不依赖本机环境。</p>
+                <button class="btn btn-primary" type="button">重新检测</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- API 档 -->
+        <div data-mode-panel="api" hidden>
+          <div class="group">
+            <div class="group-label">服务商</div>
+            <div class="seg" role="tablist" aria-label="协议" id="protoSeg" style="width:100%">
+              <button role="tab" type="button" aria-selected="true" style="flex:1;justify-content:center">Anthropic</button>
+              <button role="tab" type="button" aria-selected="false" style="flex:1;justify-content:center">OpenAI 兼容</button>
+              <button role="tab" type="button" aria-selected="false" style="flex:1;justify-content:center">自定义</button>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="card">
+              <div class="row row-stack">
+                <div class="field">
+                  <label class="field-label" for="apiKey">API Key</label>
+                  <div class="secret">
+                    <input class="input mono" id="apiKey" type="password" value="sk-ant-api03-xxxxxxxxxxxxxxxx" aria-invalid="false" />
+                    <button type="button" id="eyeBtn" aria-label="显示密钥">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-eye" id="eyeIcon"/></svg>
+                    </button>
+                  </div>
+                  <div class="row-hint">密钥只保存在本机，不会上传。</div>
+                </div>
+              </div>
+              <div class="row row-stack">
+                <div class="field">
+                  <label class="field-label" for="baseUrl">Base URL</label>
+                  <input class="input mono" id="baseUrl" value="" placeholder="https://api.anthropic.com" aria-invalid="true" />
+                  <div class="field-err">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-alert"/></svg>
+                    错误态示例：地址不能为空
+                  </div>
+                </div>
+              </div>
+              <div class="row">
+                <div class="row-main">
+                  <div class="row-title">模型</div>
+                  <div class="row-hint">默认用于所有新会话</div>
+                </div>
+                <div class="row-ctl">
+                  <select class="select" name="model" aria-label="模型">
+                    <option>Claude Opus 4.6</option>
+                    <option>Claude Sonnet 4.6</option>
+                    <option>Claude Haiku 4.5</option>
+                  </select>
+                </div>
+              </div>
+              <div class="row">
+                <div class="row-main">
+                  <div class="row-title">禁用态示例</div>
+                  <div class="row-hint">未填写 Base URL 时，测试按钮不可用</div>
+                </div>
+                <div class="row-ctl">
+                  <button class="btn btn-primary" type="button" disabled>测试连接</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────── 外观与语言 ─────────── -->
+      <section class="panel" data-panel="appearance">
+        <div class="group">
+          <div class="group-label">主题</div>
+          <div class="card">
+            <div class="row">
+              <div class="row-main">
+                <div class="row-title">外观模式</div>
+                <div class="row-hint">跟随系统时，会随 macOS 的浅色/深色自动切换</div>
+              </div>
+              <div class="row-ctl">
+                <div class="seg" role="tablist" aria-label="外观模式" id="themeSeg">
+                  <button role="tab" type="button" data-theme-mode="system" aria-selected="true">跟随系统</button>
+                  <button role="tab" type="button" data-theme-mode="light" aria-selected="false">浅色</button>
+                  <button role="tab" type="button" data-theme-mode="dark" aria-selected="false">深色</button>
+                </div>
+              </div>
+            </div>
+            <div class="row row-stack">
+              <div class="row-main">
+                <div class="row-title">主题色</div>
+                <div class="row-hint">影响按钮、选中态与输入框聚焦圈。品牌绿等状态色不受影响。</div>
+              </div>
+              <div class="swatches" role="radiogroup" aria-label="主题色" id="accentSwatches">
+                <button class="swatch" style="background:#059669;color:#059669" data-accent="160 84% 30%" aria-checked="false" aria-label="默认绿"></button>
+                <button class="swatch" style="background:#0071e3;color:#0071e3" data-accent="211 100% 45%" aria-checked="true" aria-label="蓝"></button>
+                <button class="swatch" style="background:#7c3aed;color:#7c3aed" data-accent="262 83% 58%" aria-checked="false" aria-label="紫"></button>
+                <button class="swatch" style="background:#e11d48;color:#e11d48" data-accent="347 77% 50%" aria-checked="false" aria-label="红"></button>
+                <button class="swatch" style="background:#ea580c;color:#ea580c" data-accent="21 90% 48%" aria-checked="false" aria-label="橙"></button>
+                <button class="swatch" style="background:#0891b2;color:#0891b2" data-accent="192 91% 36%" aria-checked="false" aria-label="青"></button>
+                <button class="swatch custom" type="button" aria-label="自定义颜色">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><use href="#i-plus"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="group-label">字号</div>
+          <div class="card">
+            <div class="row">
+              <div class="row-main">
+                <div class="row-title">界面字号</div>
+                <div class="row-hint">影响菜单、按钮与聊天正文</div>
+              </div>
+              <div class="row-ctl">
+                <div class="stepper" data-stepper data-min="11" data-max="18" data-value="13">
+                  <button type="button" data-step="-1" aria-label="减小">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14"/></svg>
+                  </button>
+                  <output>13px</output>
+                  <button type="button" data-step="1" aria-label="增大">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><use href="#i-plus"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="row">
+              <div class="row-main">
+                <div class="row-title">代码字号</div>
+                <div class="row-hint">影响代码块与终端输出</div>
+              </div>
+              <div class="row-ctl">
+                <div class="stepper" data-stepper data-min="10" data-max="16" data-value="12">
+                  <button type="button" data-step="-1" aria-label="减小">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14"/></svg>
+                  </button>
+                  <output>12px</output>
+                  <button type="button" data-step="1" aria-label="增大">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><use href="#i-plus"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="group-label">背景</div>
+          <div class="card">
+            <div class="row row-stack">
+              <div class="row-main">
+                <div class="row-title">聊天背景图</div>
+                <div class="row-hint">上传后可调节遮罩浓度与焦点位置</div>
+              </div>
+              <div class="dashed" style="text-align:center;padding:26px">
+                [ 背景图选择器 · 16:9 缩略图网格 ]
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="group-label">语言</div>
+          <div class="card">
+            <div class="row">
+              <div class="row-main">
+                <div class="row-title">界面语言</div>
+                <div class="row-hint">切换后立即生效，无需重启</div>
+              </div>
+              <div class="row-ctl">
+                <select class="select" name="uiLanguage" aria-label="界面语言">
+                  <option>简体中文</option>
+                  <option>繁體中文</option>
+                  <option>English</option>
+                  <option>日本語</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────── MCP 服务器（合并页） ─────────── -->
+      <section class="panel" data-panel="mcp">
+        <div class="note">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><use href="#i-info"/></svg>
+          <div><b>合并说明：</b>原「外部 MCP」与「MCP 服务器」两个入口在这里合成一页。用户要做的事只有一件——给 AI 装个外挂；来源是目录还是自己填，是这一页内部的分支，不该是导航上的选择题。</div>
+        </div>
+
+        <div class="tabs-inline" role="tablist" aria-label="MCP 来源" id="mcpTabs">
+          <button role="tab" type="button" aria-selected="true" data-mcp-tab="browse">浏览目录</button>
+          <button role="tab" type="button" aria-selected="false" data-mcp-tab="mine">我添加的<span class="badge" style="margin-left:6px">2</span></button>
+        </div>
+
+        <div data-mcp-panel="browse">
+          <div class="group">
+            <div class="card">
+              <div class="item-row">
+                <div class="item-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-file"/></svg></div>
+                <div class="row-main">
+                  <div class="row-title">Context7</div>
+                  <div class="row-hint">按需拉取各类库的最新官方文档，减少 AI 凭记忆答错版本</div>
+                </div>
+                <span class="badge badge-ok"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><use href="#i-check"/></svg>已安装</span>
+              </div>
+              <div class="item-row">
+                <div class="item-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-grid"/></svg></div>
+                <div class="row-main">
+                  <div class="row-title">Chrome DevTools</div>
+                  <div class="row-hint">让 AI 直接驱动浏览器：点击、截图、看控制台报错、跑性能分析</div>
+                </div>
+                <button class="btn btn-outline" type="button">安装</button>
+              </div>
+              <div class="item-row">
+                <div class="item-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-folder"/></svg></div>
+                <div class="row-main">
+                  <div class="row-title">Filesystem</div>
+                  <div class="row-hint">授予 AI 读写指定目录的能力，可精确到单个文件夹</div>
+                </div>
+                <button class="btn btn-outline" type="button">安装</button>
+              </div>
+              <div class="item-row">
+                <div class="item-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-blocks"/></svg></div>
+                <div class="row-main">
+                  <div class="row-title">加载中示例</div>
+                  <div class="row-hint"><span class="skeleton" style="display:inline-block;width:210px;height:11px"></span></div>
+                </div>
+                <button class="btn btn-outline" type="button" disabled>
+                  <svg class="spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><use href="#i-loader"/></svg>
+                  安装中
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div data-mcp-panel="mine" hidden>
+          <div class="group">
+            <div class="card">
+              <div class="item-row">
+                <div class="item-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-link"/></svg></div>
+                <div class="row-main">
+                  <div class="row-title">内网知识库</div>
+                  <div class="row-hint" style="font-family:var(--mono);font-size:11.5px">http://10.0.1.20:8931/sse</div>
+                </div>
+                <div class="row-ctl">
+                  <span class="dot dot-ok"></span>
+                  <button class="btn btn-ghost" type="button">编辑</button>
+                </div>
+              </div>
+              <div class="item-row">
+                <div class="item-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-link"/></svg></div>
+                <div class="row-main">
+                  <div class="row-title">fakechat</div>
+                  <div class="row-hint">连接失败：Connection closed（-32000）</div>
+                </div>
+                <div class="row-ctl">
+                  <span class="dot dot-warn"></span>
+                  <button class="btn btn-ghost" type="button">重试</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <button class="btn btn-outline" type="button" style="width:100%;height:38px;justify-content:center;border-style:dashed">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><use href="#i-plus"/></svg>
+            手动添加服务器
+          </button>
+        </div>
+      </section>
+
+      <!-- ─────────── 通用占位面板 ─────────── -->
+      <section class="panel" data-panel="placeholder">
+        <div class="card">
+          <div class="empty">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-sliders2"/></svg>
+            <div style="font-size:13px;font-weight:500;color:hsl(var(--foreground))" id="phTitle">此面板未在原型中实现</div>
+            <p>本轮原型只做了 4 个示范面板（账号 / 执行模式 / 外观与语言 / MCP 服务器）来验证设计系统。其余面板沿用同一套原语，确认方向后再逐个补。</p>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<!-- ══════════════ Tweaks ══════════════ -->
+<button class="tweaks-toggle" id="tweaksToggle" type="button" aria-label="打开 Tweaks">
+  <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-sliders2"/></svg>
+</button>
+
+<div class="tweaks" id="tweaks" role="dialog" aria-label="Tweaks">
+  <header>
+    <h3>TWEAKS</h3>
+    <button class="btn btn-ghost" id="tweaksClose" type="button" style="height:24px;padding:0 6px" aria-label="关闭">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><use href="#i-x"/></svg>
+    </button>
+  </header>
+
+  <div class="tweak">
+    <span>主题</span>
+    <div class="seg" id="twTheme">
+      <button type="button" aria-selected="true" data-tw-theme="light">浅色</button>
+      <button type="button" aria-selected="false" data-tw-theme="dark">深色</button>
+    </div>
+  </div>
+
+  <div class="tweak">
+    <span>密度</span>
+    <div class="seg" id="twDensity">
+      <button type="button" aria-selected="true" data-tw-density="comfortable">舒适</button>
+      <button type="button" aria-selected="false" data-tw-density="compact">紧凑</button>
+    </div>
+  </div>
+
+  <div class="tweak" style="flex-direction:column;align-items:stretch;gap:7px">
+    <span>卡片风格 <b style="color:hsl(var(--primary))">← 本次重设计的核心改动</b></span>
+    <div class="seg" id="twCards" style="width:100%">
+      <button type="button" aria-selected="true" data-tw-cards="grouped" style="flex:1;justify-content:center">发丝线组卡（新）</button>
+      <button type="button" aria-selected="false" data-tw-cards="separate" style="flex:1;justify-content:center">独立卡（现状）</button>
+    </div>
+  </div>
+
+  <div class="tweak" style="flex-direction:column;align-items:stretch;gap:7px">
+    <span>主题色</span>
+    <div class="swatches" id="twAccent">
+      <button class="swatch" style="background:#059669;color:#059669" data-accent="160 84% 30%" aria-checked="false"></button>
+      <button class="swatch" style="background:#0071e3;color:#0071e3" data-accent="211 100% 45%" aria-checked="true"></button>
+      <button class="swatch" style="background:#7c3aed;color:#7c3aed" data-accent="262 83% 58%" aria-checked="false"></button>
+      <button class="swatch" style="background:#e11d48;color:#e11d48" data-accent="347 77% 50%" aria-checked="false"></button>
+      <button class="swatch" style="background:#ea580c;color:#ea580c" data-accent="21 90% 48%" aria-checked="false"></button>
+      <button class="swatch" style="background:#0891b2;color:#0891b2" data-accent="192 91% 36%" aria-checked="false"></button>
+    </div>
+  </div>
+
+  <div class="tweak">
+    <span>动效</span>
+    <button class="switch" role="switch" aria-checked="true" id="twMotion" aria-label="动效"></button>
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   信息架构 —— 重组后的 6 组 21 项
+   每组能用一句话说清；keywords 供搜索命中「设置项内部的词」，
+   例如搜「主题色」直接命中"外观与语言"。
+   ═══════════════════════════════════════════════════════════════ */
+const NAV = [
+  { title: '账户', desc: '我是谁、我花了多少', items: [
+    { id: 'account',   label: '账号',     icon: 'i-user',    panel: 'account',    sub: '你的身份、订阅与登录设备', kw: '登录 退出 订阅 套餐 邮箱 设备 会员' },
+    { id: 'usage',     label: '使用记录', icon: 'i-chart',   panel: 'placeholder', sub: '用量、花费与配额', kw: '用量 花费 配额 token 统计 账单' },
+  ]},
+  { title: 'AI 行为', desc: 'AI 干活时听谁的', items: [
+    { id: 'execution',  label: '执行模式', icon: 'i-sliders', panel: 'execution',   sub: 'AI 走本地命令行还是云端 API', kw: 'CLI API key 模型 后端 权限 密钥 base url fusion claude byok' },
+    { id: 'rules',      label: '全局规则', icon: 'i-pencil',  panel: 'placeholder', sub: '每次对话都会带上的固定要求', kw: '规则 提示词 prompt 指令 claude.md' },
+    { id: 'memory',     label: '记忆',     icon: 'i-history', panel: 'placeholder', sub: 'AI 跨会话记住的事', kw: '记忆 memory 长期 遗忘' },
+    { id: 'critique',   label: '设计评审团', icon: 'i-msg',   panel: 'placeholder', sub: '多角色轮流评审产出', kw: '评审 评论 角色 critique' },
+  ]},
+  { title: '工作区', desc: '我攒下来的东西', items: [
+    { id: 'projects',   label: '项目',     icon: 'i-folder',  panel: 'placeholder', sub: '本机的项目目录', kw: '项目 目录 工作区 文件夹' },
+    { id: 'automations',label: '自动化',   icon: 'i-flag',    panel: 'placeholder', sub: '定时与触发式任务', kw: '自动化 定时 cron 触发 任务' },
+    { id: 'knowledge',  label: '知识库',   icon: 'i-library', panel: 'placeholder', sub: '写方案时检索的资料来源', kw: '知识库 检索 rag 向量 资料 文档' },
+    { id: 'skills',     label: '技能',     icon: 'i-grid',    panel: 'placeholder', sub: '装好的工作流技能', kw: '技能 skill 写作 审标 文档 ppt' },
+    { id: 'design',     label: '设计系统', icon: 'i-palette', panel: 'placeholder', sub: '出图与出稿时遵循的规范', kw: '设计系统 token 品牌 配色 组件库' },
+  ]},
+  { title: '连接', desc: '接进来的外部能力', items: [
+    { id: 'mcp',        label: 'MCP 服务器', icon: 'i-link',  panel: 'mcp',         sub: '给 AI 装外挂：浏览目录或自己填地址', kw: 'mcp 服务器 外部 composio 目录 sse 外挂' },
+    { id: 'connectors', label: '连接器',   icon: 'i-plug',    panel: 'placeholder', sub: '飞书 / Notion / GitHub 等账号授权', kw: '连接器 授权 oauth notion github 飞书' },
+    { id: 'plugins',    label: '插件',     icon: 'i-blocks',  panel: 'placeholder', sub: '扩展应用本身的功能', kw: '插件 扩展 plugin' },
+    { id: 'media',      label: '媒体生成', icon: 'i-image',   panel: 'placeholder', sub: '出图 / 出视频的服务商与密钥', kw: '媒体 出图 图片 视频 gpt-image 生成 提供商' },
+  ]},
+  { title: '应用', desc: '应用长什么样、怎么提醒我', items: [
+    { id: 'appearance', label: '外观与语言', icon: 'i-sunmoon', panel: 'appearance', sub: '主题、字号、背景与界面语言', kw: '外观 主题 深色 浅色 字号 语言 中文 english 背景 主题色 配色' },
+    { id: 'pet',        label: '宠物',     icon: 'i-sparkles', panel: 'placeholder', sub: '桌面伙伴的外观与行为', kw: '宠物 桌宠 伙伴' },
+    { id: 'notify',     label: '通知',     icon: 'i-bell',     panel: 'placeholder', sub: '完成提示音与桌面通知', kw: '通知 提示音 声音 桌面 铃声' },
+    { id: 'privacy',    label: '隐私',     icon: 'i-eye',      panel: 'placeholder', sub: '数据收集与遥测开关', kw: '隐私 遥测 数据 收集 分析' },
+  ]},
+  { title: '关于', desc: '版本与排查', items: [
+    { id: 'about',      label: '更新与版本', icon: 'i-refresh', panel: 'placeholder', sub: '当前版本与更新检查', kw: '更新 版本 升级 关于 changelog' },
+    { id: 'logs',       label: '日志诊断', icon: 'i-file',      panel: 'placeholder', sub: '导出日志用于排查问题', kw: '日志 诊断 排查 导出 log debug' },
+  ]},
+];
+
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const ALL = NAV.flatMap(g => g.items);
+
+/* ── 渲染侧栏 ── */
+const nav = $('#nav');
+nav.innerHTML = NAV.map(g => `
+  <div class="nav-group" data-group="${g.title}">
+    <div class="nav-group-title" title="${g.desc}">${g.title}</div>
+    <div class="nav-items">
+      ${g.items.map(it => `
+        <button class="nav-item" type="button" data-id="${it.id}"
+                data-kw="${it.label} ${it.kw} ${it.sub}">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#${it.icon}"/></svg>
+          <span>${it.label}</span>
+        </button>`).join('')}
+    </div>
+  </div>`).join('');
+
+/* ── 切换 section ── */
+function select(id) {
+  const meta = ALL.find(i => i.id === id);
+  if (!meta) return;
+  $$('.nav-item').forEach(b => b.removeAttribute('aria-current'));
+  const btn = $(`.nav-item[data-id="${id}"]`);
+  if (btn) btn.setAttribute('aria-current', 'page');
+
+  $('#pageTitle').textContent = meta.label;
+  $('#pageSub').textContent = meta.sub;
+  $$('.panel').forEach(p => p.classList.remove('active'));
+  const panel = $(`.panel[data-panel="${meta.panel}"]`);
+  if (panel) {
+    panel.classList.remove('active');
+    void panel.offsetWidth;            // 重启入场动画
+    panel.classList.add('active');
+  }
+  if (meta.panel === 'placeholder') $('#phTitle').textContent = `「${meta.label}」未在原型中实现`;
+  $('#content').scrollTop = 0;         // 不用 scrollIntoView（会干扰外层滚动）
+}
+nav.addEventListener('click', e => {
+  const b = e.target.closest('.nav-item');
+  if (b) select(b.dataset.id);
+});
+
+/* ── 搜索：实时过滤，能命中设置项内部关键词 ── */
+const search = $('#search');
+search.addEventListener('input', () => {
+  const q = search.value.trim().toLowerCase();
+  document.body.dataset.searching = q ? '1' : '0';
+  let hits = 0;
+  $$('.nav-group').forEach(g => {
+    let groupHits = 0;
+    $$('.nav-item', g).forEach(it => {
+      const match = !q || it.dataset.kw.toLowerCase().includes(q);
+      it.classList.toggle('hidden', !match);
+      if (match) groupHits++;
+    });
+    g.classList.toggle('hidden', groupHits === 0);
+    hits += groupHits;
+  });
+  document.body.dataset.noresult = hits === 0 ? '1' : '0';
+});
+$('#searchClear').addEventListener('click', () => {
+  search.value = '';
+  search.dispatchEvent(new Event('input'));
+  search.focus();
+});
+document.addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); search.focus(); search.select(); }
+  if (e.key === 'Escape' && document.activeElement === search) $('#searchClear').click();
+});
+
+/* ── 通用：分段控件 / 开关 ── */
+document.addEventListener('click', e => {
+  const seg = e.target.closest('.seg button, .bigtabs button, .tabs-inline button');
+  if (seg && !seg.disabled) {
+    const group = seg.closest('.seg, .bigtabs, .tabs-inline');
+    $$('button', group).forEach(b => b.setAttribute('aria-selected', String(b === seg)));
+  }
+  const sw = e.target.closest('.switch');
+  if (sw && !sw.disabled) sw.setAttribute('aria-checked', sw.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
+});
+
+/* ── 执行模式：双档面板 ── */
+$$('.bigtabs [data-mode]').forEach(b => b.addEventListener('click', () => {
+  $$('[data-mode-panel]').forEach(p => { p.hidden = p.dataset.modePanel !== b.dataset.mode; });
+}));
+
+/* ── MCP：两个来源 tab ── */
+$$('[data-mcp-tab]').forEach(b => b.addEventListener('click', () => {
+  $$('[data-mcp-panel]').forEach(p => { p.hidden = p.dataset.mcpPanel !== b.dataset.mcpTab; });
+}));
+
+/* ── 连接测试：loading → 成功，演示加载态 ── */
+const testBtn = $('#testBtn'), testHint = $('#testHint');
+testBtn.addEventListener('click', () => {
+  const original = testBtn.innerHTML;
+  testBtn.disabled = true;
+  testBtn.innerHTML = `<svg class="spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><use href="#i-loader"/></svg>测试中`;
+  testHint.textContent = '正在启动后端并等待握手…';
+  setTimeout(() => {
+    testBtn.disabled = false;
+    testBtn.innerHTML = original;
+    testHint.innerHTML = '<span style="color:hsl(var(--brand))">连接正常 · 握手耗时 412ms</span>';
+  }, 1400);
+});
+
+/* ── 密钥可见性 ── */
+const apiKey = $('#apiKey'), eyeBtn = $('#eyeBtn');
+eyeBtn.addEventListener('click', () => {
+  const show = apiKey.type === 'password';
+  apiKey.type = show ? 'text' : 'password';
+  eyeBtn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#${show ? 'i-eye-off' : 'i-eye'}"/></svg>`;
+  eyeBtn.setAttribute('aria-label', show ? '隐藏密钥' : '显示密钥');
+});
+
+/* ── 字号步进器 ── */
+$$('[data-stepper]').forEach(st => {
+  const out = $('output', st), min = +st.dataset.min, max = +st.dataset.max;
+  let v = +st.dataset.value;
+  const paint = () => {
+    out.textContent = v + 'px';
+    $$('button', st).forEach(b => { b.disabled = (+b.dataset.step < 0 && v <= min) || (+b.dataset.step > 0 && v >= max); });
+  };
+  $$('button', st).forEach(b => b.addEventListener('click', () => {
+    v = Math.min(max, Math.max(min, v + (+b.dataset.step)));
+    paint();
+  }));
+  paint();
+});
+
+/* ── 主题色：面板与 Tweaks 双向同步 ── */
+function setAccent(hsl) {
+  document.documentElement.style.setProperty('--primary', hsl);
+  $$('[data-accent]').forEach(s => s.setAttribute('aria-checked', String(s.dataset.accent === hsl)));
+}
+$$('[data-accent]').forEach(s => s.addEventListener('click', () => setAccent(s.dataset.accent)));
+
+/* ── 外观模式：设置面板里的三档真的会改整个原型的主题 ── */
+$$('#themeSeg [data-theme-mode]').forEach(b => b.addEventListener('click', () => {
+  const m = b.dataset.themeMode;
+  const dark = m === 'dark' || (m === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+  applyTheme(dark ? 'dark' : 'light');
+}));
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  $$('#twTheme [data-tw-theme]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.twTheme === t)));
+}
+
+/* ── Tweaks ── */
+$('#tweaksToggle').addEventListener('click', () => document.body.dataset.tweaks = '1');
+$('#tweaksClose').addEventListener('click', () => document.body.dataset.tweaks = '0');
+$$('#twTheme [data-tw-theme]').forEach(b => b.addEventListener('click', () => applyTheme(b.dataset.twTheme)));
+$$('#twDensity [data-tw-density]').forEach(b => b.addEventListener('click', () => document.documentElement.dataset.density = b.dataset.twDensity));
+$$('#twCards [data-tw-cards]').forEach(b => b.addEventListener('click', () => document.documentElement.dataset.cards = b.dataset.twCards));
+$('#twMotion').addEventListener('click', function () {
+  document.documentElement.dataset.motion = this.getAttribute('aria-checked') === 'true' ? 'on' : 'off';
+});
+
+/* ── 初始化 ── */
+applyTheme(matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+document.documentElement.dataset.density = 'comfortable';
+document.documentElement.dataset.cards = 'grouped';
+document.documentElement.dataset.motion = 'on';
+select('account');
+</script>
+</body>
+</html>

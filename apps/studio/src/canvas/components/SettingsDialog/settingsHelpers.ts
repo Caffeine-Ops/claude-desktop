@@ -757,3 +757,69 @@ export function useTt(): (key: string, fallback: string) => string {
     return v === key ? fallback : v;
   };
 }
+
+/**
+ * 每个设置分区的页头（标题 + 一句副标题）。
+ * 原是 SettingsDialog 内部的一张内联表，只有 V1 对话框的 <header> 在用；V2 壳
+ * 只画了 h1、副标题一直没露出来（2026-09-04 精细化时才发现）。提到这里让两个
+ * 壳共用同一份文案，V2 的页头也能画出那句说明。
+ */
+export function useSectionHeaders(): Record<SettingsSection, { title: string; subtitle: string }> {
+  const { t } = useI18n();
+  const tt = useTt();
+  return {
+    account: { title: '账号', subtitle: '个人资料与账户信息' },
+    usage: { title: '使用记录', subtitle: '查看和分析您的 API 使用历史' },
+    execution: { title: t('settings.title'), subtitle: t('settings.subtitle') },
+    instructions: {
+      title: t('settings.instructions'),
+      subtitle: t('settings.instructionsHint'),
+    },
+    media: { title: t('settings.mediaProviders'), subtitle: t('settings.mediaProvidersHint') },
+    composio: { title: t('connectors.title'), subtitle: t('connectors.subtitle') },
+    orbit: { title: t('settings.orbit.title'), subtitle: t('settings.orbit.lede') },
+    routines: {
+      title: t('routines.title'),
+      subtitle: t('routines.subtitle'),
+    },
+    // 账号/使用记录同款：字典里还没有对应 key，先写中文字面量（加 key 要动
+    // 19 本字典 + types.ts，见 settingsHelpers 的 useTt 注释）。
+    knowledgeBase: { title: '知识库', subtitle: '「写方案」检索资料的来源' },
+    integrations: { title: t('settings.mcpServerTitle'), subtitle: t('settings.mcpServerHint') },
+    mcpClient: { title: t('settings.externalMcpTitle'), subtitle: t('settings.externalMcpHint') },
+    // 语言并入外观（2026-09-02）：界面语言只有一个选择器，独占一个导航位
+    // 太浪费，而它本就属于「应用长什么样」。
+    appearance: {
+      title: tt('settings.appearanceAndLanguage', '外观与语言'),
+      subtitle: tt('settings.appearanceAndLanguageHint', '主题、字号、背景与界面语言'),
+    },
+    critiqueTheater: {
+      title: t('critiqueTheater.settingsNav'),
+      subtitle: t('critiqueTheater.settingsNavHint'),
+    },
+    notifications: { title: t('settings.notifications'), subtitle: t('settings.notificationsHint') },
+    privacy: { title: t('settings.privacy'), subtitle: t('settings.privacyHint') },
+    pet: { title: t('pet.title'), subtitle: t('pet.subtitle') },
+    skills: { title: t('settings.skills'), subtitle: t('settings.skillsHint') },
+    designSystems: {
+      title: t('settings.designSystems'),
+      subtitle: t('settings.designSystemsHint'),
+    },
+    memory: { title: t('settings.memory'), subtitle: t('settings.memoryHint') },
+    logAnalysis: { title: '日志分析', subtitle: '查看与分析会话日志' },
+    // 「工作区」三节（2026-07-04 首页 rail 迁移）。标题沿用首页 rail 的
+    // i18n key，副标题一句话说明来处。
+    projects: { title: t('entry.navProjects'), subtitle: tt('settings.projectsHint', '常用的工作目录，切换会话时直接选') },
+    automations: { title: t('entry.navTasks'), subtitle: tt('settings.automationsHint', '按时间或事件自动跑的任务') },
+    plugins: { title: t('entry.navPlugins'), subtitle: tt('settings.pluginsHint', '安装、启用与更新插件') },
+    // 'library' is opened via EntryShell route — SettingsDialog doesn't
+    // render it but SettingsSection must accept the token (see type def).
+    library: { title: '', subtitle: '' },
+    // 更新并入关于（2026-09-02）：about 面板里那个「检查更新」按钮本来就是
+    // 跳去 appUpdate 的——版本号和「检查更新」本就是一件事被拆成了两个入口。
+    about: {
+      title: tt('settings.aboutAndUpdate', '关于与更新'),
+      subtitle: tt('settings.aboutAndUpdateHint', '版本信息、更新检查与问题反馈'),
+    },
+  };
+}

@@ -17,6 +17,16 @@
  * 手型光标三行共一张卡，divide-y 分隔）早就是这么写的。P2 做的是**把这个已经
  * 存在的好模式抽出来推广**，而不是引入一套新审美。
  *
+ * 精细化（2026-09-04，样稿 docs/ui-prototype-settings-v4.html 定稿后落地）
+ * ------------------------------------------------------------
+ * 在组卡之上再加一层「行级细节」：行 hover 浅底、行首图标位（`icon`）、右侧
+ * 灰字当前值（`value`，数值可 `mono`）、跳转行的 chevron（`onClick`）、组底部
+ * 脚注（SettingGroup 的 `footnote`）、卡片一级极淡阴影。这些都是可选 prop，
+ * 不传就是原来的样子——老调用方零改动。
+ * 另抽出 SettingSwitchRow：此前 Privacy/Critique/Appearance/Notifications 四处
+ * 各自手抄「SettingRow + Switch + useId + labelFor」，其中通知页两处漏了 labelFor
+ * 导致点标题切不动开关（评审发现）。统一到一个组件，整行可点是默认行为。
+ *
  * 纪律
  * ------------------------------------------------------------
  * - 全部走 Tailwind utility + shadcn 原语，不碰 legacy 的 .settings-* / .sv2-*
@@ -25,8 +35,10 @@
  *   的 handler / 埋点 / 条件渲染都原样保留，迁移是纯视觉重构。
  */
 
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
+import { ChevronRight } from 'lucide-react';
 
+import { Switch } from '@/src/components/ui/switch';
 import { cn } from '@/src/lib/utils';
 
 /**
@@ -36,10 +48,13 @@ import { cn } from '@/src/lib/utils';
  */
 export function SettingGroup({
   label,
+  footnote,
   children,
   className,
 }: {
   label?: string;
+  /** 组底部一行小字：放「这组设置的适用范围 / 数据来源」这类不属于任何一行的说明。 */
+  footnote?: ReactNode;
   children: ReactNode;
   className?: string;
 }): React.JSX.Element {
@@ -51,6 +66,11 @@ export function SettingGroup({
         </div>
       ) : null}
       {children}
+      {footnote ? (
+        <p className="mx-0.5 mb-0 mt-2 text-[11.5px] leading-relaxed text-muted-foreground">
+          {footnote}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -71,6 +91,9 @@ export function SettingCard({
     <div
       className={cn(
         'divide-y divide-border/60 overflow-hidden rounded-xl border border-border bg-card',
+        // 一级极淡阴影：只为把卡从白底上「托」起一点，不做悬浮感。深色下换成
+        // 纯黑低透明度——灰调阴影在深色底上会发白。
+        'shadow-[0_1px_2px_hsl(240_6%_10%/0.04),0_0_0_0.5px_hsl(240_6%_10%/0.02)] dark:shadow-[0_1px_2px_hsl(0_0%_0%/0.3)]',
         className,
       )}
     >
@@ -92,6 +115,12 @@ export function SettingCard({
 export function SettingRow({
   title,
   hint,
+  icon,
+  value,
+  mono = false,
+  onClick,
+  danger = false,
+  size = 'default',
   stack = false,
   labelFor,
   children,
@@ -99,6 +128,21 @@ export function SettingRow({
 }: {
   title?: ReactNode;
   hint?: ReactNode;
+  /** 行首图标（传 lucide 组件实例，如 `<Volume2 />`），渲染在 28px 的浅底方块里。 */
+  icon?: ReactNode;
+  /** 右侧灰字当前值（余额、版本号、当前选项名…），在 children 控件之前。 */
+  value?: ReactNode;
+  /** value 用等宽字：版本号、金额、ID 这类要对齐或逐字读的值。 */
+  mono?: boolean;
+  /**
+   * 传了就是「跳转行」：整行变 button、右侧画 chevron、hover 浅底。
+   * 不传时行是纯展示容器（hover 仍有极浅底色反馈，保持整张卡的手感一致）。
+   */
+  onClick?: () => void;
+  /** 破坏性动作行（退出登录、清除数据）：标题与图标走 destructive 色。 */
+  danger?: boolean;
+  /** hero = 内边距大一档，给头像行 / 应用版本行这类「一张卡里的主角」用。 */
+  size?: 'default' | 'hero';
   stack?: boolean;
   /**
    * 传入右侧控件的 id，标题块就渲染成 <label htmlFor>，于是**点这一行的文字
@@ -112,31 +156,133 @@ export function SettingRow({
 }): React.JSX.Element {
   const textBlock = (
     <>
-      {title ? <div className="text-[13px] font-medium text-foreground">{title}</div> : null}
+      {title ? (
+        <div className={cn('text-[13px] font-medium', danger ? 'text-destructive' : 'text-foreground')}>
+          {title}
+        </div>
+      ) : null}
       {hint ? <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{hint}</p> : null}
     </>
   );
 
-  return (
+  const lead = icon ? (
     <div
+      aria-hidden="true"
       className={cn(
-        'px-4 py-3.5 transition-colors',
-        stack ? 'flex flex-col gap-2.5' : 'flex items-center justify-between gap-4',
-        className,
+        'grid size-7 shrink-0 place-items-center rounded-[7px] [&>svg]:size-[15px]',
+        danger ? 'bg-destructive/10 text-destructive' : 'bg-secondary text-muted-foreground',
       )}
     >
-      {title || hint ? (
-        labelFor ? (
-          <label htmlFor={labelFor} className="min-w-0 flex-1 cursor-pointer">
-            {textBlock}
-          </label>
-        ) : (
-          <div className="min-w-0 flex-1">{textBlock}</div>
-        )
-      ) : null}
-      {children ? (
-        <div className={cn(stack ? 'min-w-0' : 'flex shrink-0 items-center gap-2')}>{children}</div>
-      ) : null}
+      {icon}
     </div>
+  ) : null;
+
+  const end =
+    value !== undefined || children || onClick ? (
+      <div className={cn(stack ? 'min-w-0' : 'flex shrink-0 items-center gap-2.5')}>
+        {value !== undefined ? (
+          <span
+            className={cn(
+              'text-[13px] tabular-nums',
+              mono ? 'font-mono text-[12.5px] text-foreground' : 'text-muted-foreground',
+            )}
+          >
+            {value}
+          </span>
+        ) : null}
+        {children}
+        {onClick ? (
+          <ChevronRight aria-hidden="true" className="size-[15px] text-muted-foreground" />
+        ) : null}
+      </div>
+    ) : null;
+
+  const rowCls = cn(
+    'w-full text-left transition-colors hover:bg-muted/50',
+    size === 'hero' ? 'px-4 py-[18px]' : 'px-4 py-3.5',
+    stack ? 'flex flex-col gap-2.5' : 'flex items-center gap-3.5',
+    onClick && 'cursor-pointer',
+    className,
+  );
+
+  /* stack 布局下图标跟标题同一行（图标 + 标题在上、宽控件在下），
+     并排布局下图标是第一列。 */
+  const head =
+    title || hint ? (
+      labelFor ? (
+        <label htmlFor={labelFor} className="min-w-0 flex-1 cursor-pointer">
+          {textBlock}
+        </label>
+      ) : (
+        <div className="min-w-0 flex-1">{textBlock}</div>
+      )
+    ) : null;
+
+  const body = stack ? (
+    <>
+      {head || lead ? (
+        <div className="flex items-center gap-3.5">
+          {lead}
+          {head}
+          {onClick ? end : null}
+        </div>
+      ) : null}
+      {onClick ? null : end}
+    </>
+  ) : (
+    <>
+      {lead}
+      {head}
+      {end}
+    </>
+  );
+
+  if (onClick) {
+    // data-slot：本目录在 chat 链 @source 内，但 canvas 的裸 button reset
+    // 只豁免 [data-slot] 与 .chat-app 子树，裸 <button> 会被填成描边卡片。
+    return (
+      <button type="button" data-slot="setting-row" onClick={onClick} className={rowCls}>
+        {body}
+      </button>
+    );
+  }
+  return <div className={rowCls}>{body}</div>;
+}
+
+/**
+ * 开关行：标题 + 说明 + shadcn Switch，整行文字可点（labelFor 自动接线）。
+ * `tint` = 开启后整行带一层浅底，作为「已开启」的额外视觉提示（PrivacySection
+ * 原有行为，抽上来时保留为可选项，其它页默认不开——一页全是开关时整片发灰）。
+ */
+export function SettingSwitchRow({
+  title,
+  hint,
+  icon,
+  checked,
+  onCheckedChange,
+  disabled = false,
+  tint = false,
+  className,
+}: {
+  title: ReactNode;
+  hint?: ReactNode;
+  icon?: ReactNode;
+  checked: boolean;
+  onCheckedChange: (next: boolean) => void;
+  disabled?: boolean;
+  tint?: boolean;
+  className?: string;
+}): React.JSX.Element {
+  const id = useId();
+  return (
+    <SettingRow
+      title={title}
+      hint={hint}
+      icon={icon}
+      labelFor={id}
+      className={cn(tint && checked && 'bg-muted/40', className)}
+    >
+      <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
+    </SettingRow>
   );
 }

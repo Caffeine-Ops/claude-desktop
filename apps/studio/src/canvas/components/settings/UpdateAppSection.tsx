@@ -31,6 +31,7 @@ import {
 
 import { Button } from '@/src/components/ui/button';
 import { cn } from '@/src/lib/utils';
+import { SettingCard } from './SettingPrimitives';
 import type { UpdaterState } from '@desktop-shared/ipc-channels';
 import { useI18n } from '../../i18n';
 
@@ -151,7 +152,9 @@ export function UpdateAppSection({
       {/* 2026-09-03：原独立页时代这里有一行副标题（updateApp.subtitle），
           并入「关于与更新」后它成了卡片上方悬空的一句话——页面标题下已有
           副标题，删。字典里的 key 留着不动（19 本字典，删 key 的收益为零）。 */}
-      <div className="overflow-hidden rounded-xl border border-border bg-card">
+      {/* 2026-09-04：外壳换 SettingCard——圆角/边框/阴影与其它组卡同源；它自带
+          divide-y，下半区原先手写的 border-t 去掉，否则画两条线。 */}
+      <SettingCard>
         {/* ── 上半 hero：摘要在前 ── */}
         <div className="flex items-center gap-4 p-5">
           <div
@@ -251,7 +254,7 @@ export function UpdateAppSection({
         </div>
 
         {/* ── 下半 detail：细节在后（分隔线上方）── */}
-        <div className="flex flex-col gap-2.5 border-t border-border px-5 py-4">
+        <div className="flex flex-col gap-2.5 px-5 py-4">
           {phase === 'checking' ? (
             <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
               <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
@@ -320,7 +323,7 @@ export function UpdateAppSection({
             </p>
           ) : null}
         </div>
-      </div>
+      </SettingCard>
     </section>
   );
 }

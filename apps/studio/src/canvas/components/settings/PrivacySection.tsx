@@ -1,9 +1,7 @@
 import type { Dispatch, SetStateAction, JSX } from 'react';
-import { useId } from 'react';
 import { Button } from '@/src/components/ui/button';
 import { Input } from '@/src/components/ui/input';
-import { Switch } from '@/src/components/ui/switch';
-import { SettingCard, SettingGroup, SettingRow } from './SettingPrimitives';
+import { SettingCard, SettingGroup, SettingRow, SettingSwitchRow } from './SettingPrimitives';
 import { useAnalytics } from '../../analytics/provider';
 import { trackSettingsPrivacyClick } from '../../analytics/events';
 import { useT } from '../../i18n';
@@ -188,20 +186,9 @@ interface ToggleRowProps {
 // "click anywhere in the row" affordance. Radix Switch already carries
 // role="switch" + aria-checked, so the old aria-pressed is redundant.
 function ToggleRow({ label, hint, checked, onChange }: ToggleRowProps): JSX.Element {
-  const id = useId();
-  // 2026-09-02 P2：外层的自带边框卡去掉（改由 SettingCard 统一提供一圈边框），
-  // 排版交给 SettingRow。原有的两个交互特性保留：labelFor 让整行文字可点切换，
-  // 选中后整行变底色作为「已开启」的额外视觉提示。
-  return (
-    <SettingRow
-      title={label}
-      hint={hint}
-      labelFor={id}
-      className={checked ? 'bg-muted/40' : undefined}
-    >
-      <Switch id={id} checked={checked} onCheckedChange={onChange} />
-    </SettingRow>
-  );
+  // 2026-09-04：整行可点 + 开启后浅底这两个行为已抽进 SettingSwitchRow（tint），
+  // 本地只剩一层 prop 改名，保留是为了不动下面的调用点。
+  return <SettingSwitchRow title={label} hint={hint} checked={checked} onCheckedChange={onChange} tint />;
 }
 
 interface ConsentProps {

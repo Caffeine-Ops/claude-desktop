@@ -1,11 +1,10 @@
 import { useEffect, useLayoutEffect, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import { ImagePlus, Minus, Moon, Plus, Sun, Trash2 } from 'lucide-react';
+import { Code, ImagePlus, Minus, Moon, MousePointer2, Plus, Sun, Trash2, Type } from 'lucide-react';
 import type { BackgroundThemeMeta } from '@desktop-shared/ipc-channels';
 
 import { Button } from '@/src/components/ui/button';
 import { Slider } from '@/src/components/ui/slider';
-import { Switch } from '@/src/components/ui/switch';
 import { Tabs, TabsList, TabsTrigger } from '@/src/components/ui/tabs';
 import { cn } from '@/src/lib/utils';
 import { useAppearanceStore } from '@/src/chat/stores/appearance';
@@ -19,7 +18,7 @@ import { BACKGROUND_PRESETS } from '@/src/lib/backgroundArt/presets';
 import { useAnalytics } from '../../analytics/provider';
 import { trackSettingsAppearanceClick } from '../../analytics/events';
 import { useI18n } from '../../i18n';
-import { SettingCard, SettingGroup, SettingRow } from '../settings/SettingPrimitives';
+import { SettingCard, SettingGroup, SettingRow, SettingSwitchRow } from '../settings/SettingPrimitives';
 import { useTt } from './settingsHelpers';
 import {
   ACCENT_SWATCHES,
@@ -465,7 +464,7 @@ function DesktopAppearanceControls({
           不再是本文件里的一串手写类名，而是和其它 section 共用同一个原语。 */}
       <SettingGroup>
         <SettingCard>
-          <SettingRow title={tt('settings.uiFontSize', '界面字号')}>
+          <SettingRow icon={<Type />} title={tt('settings.uiFontSize', '界面字号')}>
             <FontStepper
               value={uiFont}
               min={UI_FONT_MIN}
@@ -474,7 +473,7 @@ function DesktopAppearanceControls({
               ariaLabel={tt('settings.uiFontSize', '界面字号')}
             />
           </SettingRow>
-          <SettingRow title={tt('settings.codeFontSize', '代码字号')}>
+          <SettingRow icon={<Code />} title={tt('settings.codeFontSize', '代码字号')}>
             <FontStepper
               value={codeFont}
               min={CODE_FONT_MIN}
@@ -483,16 +482,12 @@ function DesktopAppearanceControls({
               ariaLabel={tt('settings.codeFontSize', '代码字号')}
             />
           </SettingRow>
-          <SettingRow
+          <SettingSwitchRow
+            icon={<MousePointer2 />}
             title={tt('settings.usePointerCursor', '可点击元素使用手型光标')}
-            labelFor="appearance-pointer-cursor"
-          >
-            <Switch
-              id="appearance-pointer-cursor"
-              checked={pointer}
-              onCheckedChange={setPointer}
-            />
-          </SettingRow>
+            checked={pointer}
+            onCheckedChange={setPointer}
+          />
         </SettingCard>
       </SettingGroup>
     </>

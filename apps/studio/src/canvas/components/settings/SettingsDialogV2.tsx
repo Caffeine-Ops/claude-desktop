@@ -92,6 +92,7 @@ import { Button } from '@/src/components/ui/button';
 import { Input } from '@/src/components/ui/input';
 import { cn } from '@/src/lib/utils';
 import { SettingsDialog, useTt } from '../SettingsDialog';
+import { useSectionHeaders } from '../SettingsDialog/settingsHelpers';
 import type { SettingsDialogProps, SettingsSection } from '../SettingsDialog';
 
 /* V2 takes the SAME props as SettingsDialog (it forwards them straight into
@@ -390,7 +391,16 @@ export function SettingsDialogV2(props: SettingsDialogV2Props): React.JSX.Elemen
      设置页一关就解绑，不给全局留残留。 */
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
+        /* 焦点在可编辑区（自定义指令 / MCP 参数 / 技能正文的 textarea…）时不抢：
+           用户按 ⌘F 是想在那段文字里查找，不是想搜设置项（评审发现）。本壳的
+           搜索框自己除外——在里面按 ⌘F 只是全选。 */
+        const target = e.target as HTMLElement | null;
+        const editable =
+          target &&
+          target !== searchRef.current &&
+          (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+        if (editable) return;
         e.preventDefault();
         searchRef.current?.focus();
         searchRef.current?.select();
@@ -424,6 +434,9 @@ export function SettingsDialogV2(props: SettingsDialogV2Props): React.JSX.Elemen
     return null;
   })();
   const activeLabel = activeMeta ? tt(activeMeta.labelKey, activeMeta.fallback) : '';
+  /* 页头副标题：与 V1 对话框同一份文案（useSectionHeaders），此前 V2 只画了
+     h1，那句说明一直没露出来。 */
+  const activeSubtitle = useSectionHeaders()[activeSection]?.subtitle ?? '';
 
   return (
     /* 根节点保持 static（不能成为定位上下文）：embedded 面板里的绝对定位
@@ -467,6 +480,15 @@ export function SettingsDialogV2(props: SettingsDialogV2Props): React.JSX.Elemen
               aria-label={tt('settingsV2.searchPlaceholder', '搜索设置')}
               className="h-8 bg-card pl-8 pr-8 text-[13px]"
             />
+            {/* ⌘F 键帽提示：没输入时占右侧；有输入时让位给清除钮。 */}
+            {!query ? (
+              <kbd
+                aria-hidden="true"
+                className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded-[5px] border border-border bg-secondary px-[5px] py-[3px] font-sans text-[10.5px] leading-none text-muted-foreground"
+              >
+                ⌘F
+              </kbd>
+            ) : null}
             {query ? (
               <Button
                 variant="ghost"
@@ -491,7 +513,7 @@ export function SettingsDialogV2(props: SettingsDialogV2Props): React.JSX.Elemen
               rail 账户按钮要改 AppRail/App.tsx，属于另一件事。 */}
           <nav className="min-h-0 flex-1 overflow-y-auto px-2.5 pb-16 pt-1">
             {filteredGroups.map((group) => (
-              <div key={group.titleKey} className="pt-4 first:pt-1.5">
+              <div key={group.titleKey} className="pt-[18px] first:pt-1.5">
                 <div className="px-3 pb-1.5 text-[11.5px] font-semibold tracking-[0.04em] text-muted-foreground">
                   {tt(group.titleKey, group.fallback)}
                 </div>
@@ -515,9 +537,16 @@ export function SettingsDialogV2(props: SettingsDialogV2Props): React.JSX.Elemen
                            底，只加粗字重做区分——跟随用户主题色的诉求交给聊天区其它真正
                            的 accent 点位（发送按钮、composer focus ring 等），设置导航项
                            不需要。inactive 态照抄 RailProjectList 的行 idiom。 */
+                        /* 2026-09-04 精细化：选中项左缘一条 2px 竖线（中性前景色，
+                           不是品牌绿——见上）+ 图标随之变深；未选中图标用 muted 色，
+                           让「图标一列」在扫读时退后一步、文字站前面。竖线用 before
+                           伪元素贴在侧栏内边距之外（-left-2.5 = nav 的 px-2.5），
+                           与侧栏左缘齐平。 */
                         className={cn(
-                          'h-9 w-full justify-start gap-[11px] px-3 font-normal text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-foreground',
-                          active && 'bg-sidebar-accent font-semibold text-sidebar-foreground',
+                          'relative h-9 w-full justify-start gap-[11px] px-3 font-normal text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-foreground',
+                          '[&>svg]:text-muted-foreground hover:[&>svg]:text-sidebar-foreground',
+                          active &&
+                            'bg-sidebar-accent font-semibold text-sidebar-foreground [&>svg]:text-foreground before:absolute before:-left-2.5 before:bottom-2 before:top-2 before:w-0.5 before:rounded-full before:bg-foreground',
                         )}
                       >
                         <item.icon aria-hidden="true" />
@@ -555,10 +584,15 @@ export function SettingsDialogV2(props: SettingsDialogV2Props): React.JSX.Elemen
                 静态 <h1> 是两份独立的标题渲染逻辑——分别做 sticky 还要对齐
                 两者的高度差，脆弱且没必要，不如整段让 UsageSection 独占。 */}
             {activeSection !== 'usage' && (
-              <div className="mb-[26px]">
-                <h1 className="text-[26px] font-semibold tracking-[-0.015em] text-foreground">
+              <div className="mb-7">
+                <h1 className="text-[26px] font-semibold tracking-[-0.015em] text-foreground [text-wrap:balance]">
                   {activeLabel}
                 </h1>
+                {activeSubtitle ? (
+                  <p className="mt-1.5 max-w-[52ch] text-[13px] text-muted-foreground">
+                    {activeSubtitle}
+                  </p>
+                ) : null}
               </div>
             )}
 
