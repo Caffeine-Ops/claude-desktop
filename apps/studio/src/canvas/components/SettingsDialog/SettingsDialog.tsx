@@ -76,6 +76,7 @@ import { IMAGE_MODELS } from '../../media/models';
 import { PetSettings } from '../pet/PetSettings';
 import { McpClientSection } from '../settings/McpClientSection';
 import { SkillsSection } from '../settings/SkillsSection';
+import { HelpSection } from '../settings/HelpSection';
 import { DesignSystemsSection } from '../design-system/DesignSystemsSection';
 import {
   WorkspaceAutomationsSection,
@@ -2650,6 +2651,13 @@ export function SettingsDialog({
 
           {activeSection === 'privacy' ? (
             <PrivacySection cfg={cfg} setCfg={setCfg} />
+          ) : null}
+
+          {activeSection === 'help' ? (
+            /* 使用帮助（2026-09-04）：内容与渲染都在别处（helpContent.ts / HelpSection.tsx），
+               这里只做接线。setActiveSection 在 embedded 模式下经 onSectionChange 回报
+               给 V2 壳；onClose 给「跳侧栏面」用（先关设置再开面）。 */
+            <HelpSection onSelectSection={setActiveSection} onClose={onClose} />
           ) : null}
 
           {activeSection === 'about' ? (

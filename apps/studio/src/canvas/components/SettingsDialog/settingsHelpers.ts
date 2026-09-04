@@ -66,6 +66,10 @@ export type SettingsSection =
   // 直连 main 的 appUpdater 状态流，不走 daemon。
   // 关于（2026-09-02 合并）：原独立的 'appUpdate' 分区并入这里——about 里
   // 那个「检查更新」按钮本来就是跳去 appUpdate 的，两者本是一件事。
+  // 使用帮助（2026-09-04）：5 组 17 条可展开问答 + 「去看看」跳转。内容在
+  // src/chat/lib/helpContent.ts，组件 settings/HelpSection.tsx。设计文档
+  // docs/superpowers/specs/2026-09-04-help-section-design.md。
+  | 'help'
   | 'about';
 
 export interface SettingsDialogProps {
@@ -815,6 +819,10 @@ export function useSectionHeaders(): Record<SettingsSection, { title: string; su
     // 'library' is opened via EntryShell route — SettingsDialog doesn't
     // render it but SettingsSection must accept the token (see type def).
     library: { title: '', subtitle: '' },
+    help: {
+      title: tt('settingsV2.help', '使用帮助'),
+      subtitle: tt('settingsV2.helpHint', '常见操作怎么做，点开就能看'),
+    },
     // 更新并入关于（2026-09-02）：about 面板里那个「检查更新」按钮本来就是
     // 跳去 appUpdate 的——版本号和「检查更新」本就是一件事被拆成了两个入口。
     about: {
