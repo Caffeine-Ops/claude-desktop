@@ -56,9 +56,12 @@ import { useWritingWorkspaceGate } from '../../../stores/writing'
 import { WritingDocPanel } from '../../workspace/WritingDocPanel'
 import { SpreadsheetPreviewPanel } from './SpreadsheetPreviewPanel'
 import { ImageEditPanel } from './ImageEditPanel'
+import { ImageGalleryButton, ImageGalleryPanel } from './ImageGalleryPanel'
+import { SessionOutputsFeed } from './SessionOutputsFeed'
 import {
   useImageEditStore,
-  useSheetPreviewStore
+  useSheetPreviewStore,
+  useImageGalleryStore
 } from '../../../stores/filePreview'
 import { stripMessageMarker } from '../../../lib/messageMarkers'
 import { condenseFileMentions } from '../../../lib/mentionDisplay'
@@ -538,8 +541,18 @@ export function ThreadView(): React.JSX.Element {
   // 这里不会同时非 null。
   const imageEditPath = useImageEditStore((s) => s.path)
   const showImageEdit = imageEditPath !== null && !isSplitMode
+  // 会话图库右栏：顶栏「图库」按钮 / 第一张生成图落盘时自动弹一次。让位
+  // 规则与另两面板同：分栏时不渲染（按钮那边同源禁用，不会写出脏 open；
+  // 开着时进入分栏由下面的 isSplitMode effect 真关）；
+  // 与表格预览 / 图片编辑在 store 层三方互斥（后开的赢），不会同时为真。
+  const galleryOpen = useImageGalleryStore((s) => s.open)
+  const showImageGallery = galleryOpen && !isSplitMode
   const showWorkflowPanel =
-    workflowPanelWanted && !isSplitMode && !showSheetPreview && !showImageEdit
+    workflowPanelWanted &&
+    !isSplitMode &&
+    !showSheetPreview &&
+    !showImageEdit &&
+    !showImageGallery
   // Agent-team detail takeover: replaces the message viewport (below) while
   // a team member is selected. Composer + AgentTeamBar stay mounted in
   // their own dock area untouched — only this pane's content swaps.
@@ -547,7 +560,11 @@ export function ThreadView(): React.JSX.Element {
   // chat 列收窄成 rail 的诱因：slides / proposal / workflow 脚本 / 表格
   // 预览 / 图片编辑任一右栏打开。宽度共用同一条持久化的 chatColWidth。
   const chatRailed =
-    isSplitMode || showWorkflowPanel || showSheetPreview || showImageEdit
+    isSplitMode ||
+    showWorkflowPanel ||
+    showSheetPreview ||
+    showImageEdit ||
+    showImageGallery
   // 自管整列 dropzone（原 AttachmentDropzone，2026-07-16 附件内联化）：
   // dragenter/leave 深度计数（子元素间成对冒泡，归零才是真离开），drop 走
   // attachFilesToComposer 统一分流。runtime 只给无路径文件的 addAttachment
@@ -560,7 +577,18 @@ export function ThreadView(): React.JSX.Element {
   useEffect(() => {
     useSheetPreviewStore.getState().closePreview()
     useImageEditStore.getState().closeEditor()
+    useImageGalleryStore.getState().closeGallery()
   }, [sessionId])
+  // 进入分栏（slides / proposal / 写作）也要真关：show* 只是「分栏时不渲染」，
+  // store 里的开关若留着，用户退出分栏那一刻旧面板会毫无动作地弹回来、把
+  // chat 列重新收窄；期间落盘的图也因 open 已为 true 而跳过自动弹开记账
+  // （2026-09-07 code review 抓到，三个面板同病）。三个 close 都幂等。
+  useEffect(() => {
+    if (!isSplitMode) return
+    useSheetPreviewStore.getState().closePreview()
+    useImageEditStore.getState().closeEditor()
+    useImageGalleryStore.getState().closeGallery()
+  }, [isSplitMode])
   // Slides two-pane split is user-resizable. The chat rail used to be a
   // hard `w-[560px]` with a `border-r` hairline between the panes; per design
   // the hairline is gone (the panes now read as two separated blocks across a
@@ -609,6 +637,10 @@ export function ThreadView(): React.JSX.Element {
       // corner reads as mismatched.
       className="relative flex h-full min-h-0 w-full min-w-0 flex-1 flex-row bg-transparent"
     >
+      {/* 会话产出物数据泵（渲染 null）：stores/sessionOutputs 的唯一写手，
+          成果按钮 / 图库按钮 / 图库面板都只读它。必须与顶栏同生命周期，所以
+          挂在这里而不是某个面板里。 */}
+      <SessionOutputsFeed />
       {/* Left column: the chat itself (progress bar + message viewport +
           composer dock). In normal modes it's flex-1 and fills the whole
           width — visually identical to the old single column. In slides
@@ -904,6 +936,15 @@ export function ThreadView(): React.JSX.Element {
         <>
           <ChatColumnResizeHandle onResizeStart={onResizeStart} />
           <ImageEditPanel />
+        </>
+      ) : null}
+
+      {/* 会话图库右栏：本次会话所有生成图的缩略图墙 + 大图，另存 / 一键转
+          标记改图。布局与表格预览同构，三面板 store 层互斥。 */}
+      {showImageGallery ? (
+        <>
+          <ChatColumnResizeHandle onResizeStart={onResizeStart} />
+          <ImageGalleryPanel />
         </>
       ) : null}
 
@@ -1562,7 +1603,9 @@ function ChatHeader(): React.JSX.Element {
             渲染（空态弹层）。原「AI 生成」hairline 徽标（chatHeaderAiBadge）
             已按用户要求移除（2026-07-10），i18n key 留存未删——若后续要恢复
             合规声明，直接在这里加回 <span> 即可，不必重新翻译。 */}
-        <div className="ml-auto shrink-0">
+        <div className="ml-auto flex shrink-0 items-center gap-0.5">
+          {/* 「图库」按钮：本会话有生成图才亮，见 ImageGalleryPanel.tsx。 */}
+          <ImageGalleryButton />
           <OutputsButton />
         </div>
       </div>

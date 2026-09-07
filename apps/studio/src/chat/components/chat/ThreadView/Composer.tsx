@@ -61,6 +61,7 @@ import { useKbStore } from '../../../stores/kb'
 import { ensurePptSkillReady, isPptSkillCommand } from '../../../stores/pptSkill'
 import { PptSkillGate } from '../PptSkillGate'
 import { PptSkillMiniChip } from '../PptSkillMiniChip'
+import { isEditableImageExt } from '../../../lib/imageKinds'
 
 /* ───────────────────── Composer ────────────────────────────── */
 
@@ -2614,7 +2615,7 @@ function ComposerAttachmentChip({
   // 与 DeliverableCard 同一套判定：表格三件套进预览面板；图片只放 edit
   // API 认的格式（gif 只能看不能改，走系统应用）。
   const previewableSheet = ext === 'xlsx' || ext === 'xls' || ext === 'csv'
-  const editableImage = ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'webp'
+  const editableImage = isEditableImageExt(ext)
   const splitBusy = useSplitWorkspaceBusy()
   const zh = useI18n((s) => s.lang) === 'zh'
 

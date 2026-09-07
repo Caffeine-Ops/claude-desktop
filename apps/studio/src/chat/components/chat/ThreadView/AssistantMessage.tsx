@@ -40,6 +40,7 @@ import { autoFireProposalGenImages } from '../../../lib/proposalGenImageFire'
 import { addFileToKb } from '../../../lib/addFileToKb'
 import { diffChars } from '@desktop-shared/textDiff'
 import { spliceBlocks } from '@desktop-shared/proposalBlocks'
+import { isEditableImageExt } from '../../../lib/imageKinds'
 
 /* ───────────────────── Assistant message ───────────────────── */
 
@@ -214,7 +215,7 @@ function DeliverableCard({
   const previewableSheet = ext === 'xlsx' || ext === 'xls' || ext === 'csv'
   // 图片文件点击 → 标记编辑面板（同一右栏，见 ImageEditPanel）。只放
   // edit API 认的格式——gif 只能看不能改，仍走系统应用打开。
-  const editableImage = ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'webp'
+  const editableImage = isEditableImageExt(ext)
   const splitBusy = useSplitWorkspaceBusy()
 
   const openExternal = (): void => {

@@ -76,6 +76,8 @@ import {
   type ImageManifestReadResult,
   type ImageFileReadPayload,
   type ImageFileReadResult,
+  type ImageFileSaveAsPayload,
+  type ImageFileSaveAsResult,
   type SheetFileReadPayload,
   type SheetFileReadResult,
   type SheetFileStatPayload,
@@ -384,6 +386,13 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.IMAGE_FILE_READ,
       payload
     ) as Promise<ImageFileReadResult>
+  },
+
+  saveImageFileAs(payload: ImageFileSaveAsPayload): Promise<ImageFileSaveAsResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.IMAGE_FILE_SAVE_AS,
+      payload
+    ) as Promise<ImageFileSaveAsResult>
   },
 
   readSheetFile(payload: SheetFileReadPayload): Promise<SheetFileReadResult> {
