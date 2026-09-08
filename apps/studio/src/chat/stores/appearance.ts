@@ -135,6 +135,40 @@ interface AppearanceState {
 const clamp = (n: number, lo: number, hi: number): number =>
   Math.max(lo, Math.min(hi, Math.round(n)))
 
+/**
+ * light/dark 两套 ThemeOverrides 是否有任一偏离出厂默认。
+ *
+ * 2026-09-08：chat 侧的设置页（原 SettingsView 的颜色选择器 / 对比度 / 半透明
+ * 侧栏）已随设置页重设计删除，patchTheme / resetTheme 没有任何 UI 入口了，但
+ * appearance.applier 仍在每次启动时把持久化的覆盖值写进 DOM——重设计前调过
+ * 这些值的用户永远改不回来（第二轮 code review 抓到）。画布外观区据此只在
+ * 「确实有旧覆盖在生效」时显示一行「恢复默认」，默认状态下这一行不出现。
+ */
+export function hasLegacyThemeOverrides(s: Pick<AppearanceState, 'light' | 'dark'>): boolean {
+  // **不看 accent**：主题色仍由画布外观区的色板经 daemon 写入（web tab 同款
+  // 只写 accent 的路径），它有活的 UI，不是孤儿；把它算进去会让每个选过主题色
+  // 的用户都看到「旧覆盖仍在生效」，而恢复默认又会把主题色一并抹掉。
+  const differs = (a: ThemeOverrides, b: ThemeOverrides): boolean =>
+    a.background !== b.background ||
+    a.foreground !== b.foreground ||
+    a.contrast !== b.contrast ||
+    a.translucentSidebar !== b.translucentSidebar
+  return differs(s.light, LIGHT_DEFAULTS) || differs(s.dark, DARK_DEFAULTS)
+}
+
+/** 只把四个孤儿字段恢复出厂默认，两套模式一起；accent 原样保留（理由同上）。 */
+export function resetLegacyThemeOverrides(): void {
+  const { patchTheme } = useAppearanceStore.getState()
+  for (const [mode, d] of [['light', LIGHT_DEFAULTS], ['dark', DARK_DEFAULTS]] as const) {
+    patchTheme(mode, {
+      background: d.background,
+      foreground: d.foreground,
+      contrast: d.contrast,
+      translucentSidebar: d.translucentSidebar
+    })
+  }
+}
+
 export const useAppearanceStore = create<AppearanceState>()(
   persist(
     (set) => ({

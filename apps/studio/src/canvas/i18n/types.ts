@@ -301,6 +301,10 @@ export interface Dict {
   // 语言并入外观 / 更新并入关于（2026-09-02 设置页重设计）后的分区标题与副标题。
   'settings.appearanceAndLanguage': string;
   'settings.appearanceAndLanguageHint': string;
+  // 旧版（chat 侧设置页）留下的自定义配色仍在生效时的提示与一键恢复。
+  'settings.legacyThemeOverrides': string;
+  'settings.legacyThemeOverridesHint': string;
+  'settings.legacyThemeOverridesReset': string;
   'settings.themeSystem': string;
   'settings.themeLight': string;
   'settings.themeDark': string;

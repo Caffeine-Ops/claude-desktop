@@ -7,7 +7,11 @@ import { Button } from '@/src/components/ui/button';
 import { Slider } from '@/src/components/ui/slider';
 import { Tabs, TabsList, TabsTrigger } from '@/src/components/ui/tabs';
 import { cn } from '@/src/lib/utils';
-import { useAppearanceStore } from '@/src/chat/stores/appearance';
+import {
+  hasLegacyThemeOverrides,
+  resetLegacyThemeOverrides,
+  useAppearanceStore,
+} from '@/src/chat/stores/appearance';
 import { toBgAssetUrl } from '@/src/chat/lib/bgAssetUrl';
 import {
   useBackgroundArtStore,
@@ -159,6 +163,13 @@ export function AppearanceSection({
           </SettingRow>
         </SettingCard>
       </SettingGroup>
+
+      {/* 旧版自定义配色的逃生口：chat 侧那套 light/dark 颜色覆盖里，背景 / 文字 /
+          对比度 / 半透明侧栏四项的编辑器随设置页重设计删掉了，但持久化的值仍
+          每次启动生效（主题色不算——上面的色板还在写它）。只在真的偏离默认时
+          出现这一行，默认状态零噪音。直接调 store，走它自己的 daemon 推送链，
+          不经 cfg 草稿。 */}
+      <LegacyThemeOverridesRow />
 
       {/* 背景图（壁纸）——独立于上面 theme/accent 的草稿+Save+取消回滚流程：
           直接读写 chat 侧 useAppearanceStore.background，点击即生效即持久化
@@ -543,5 +554,34 @@ function FontStepper({
         <Plus className="size-3.5" />
       </Button>
     </div>
+  );
+}
+
+/**
+ * 「旧版本设置的自定义配色仍在生效 → 恢复默认」。只订阅 light/dark 两套覆盖，
+ * 偏离出厂默认才渲染（判定在 chat/stores/appearance.hasLegacyThemeOverrides）。
+ */
+function LegacyThemeOverridesRow(): React.JSX.Element | null {
+  const { t } = useI18n();
+  const light = useAppearanceStore((s) => s.light);
+  const dark = useAppearanceStore((s) => s.dark);
+  if (!hasLegacyThemeOverrides({ light, dark })) return null;
+  return (
+    <SettingGroup>
+      <SettingCard>
+        <SettingRow
+          title={t('settings.legacyThemeOverrides')}
+          hint={t('settings.legacyThemeOverridesHint')}
+        >
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={resetLegacyThemeOverrides}
+          >
+            {t('settings.legacyThemeOverridesReset')}
+          </Button>
+        </SettingRow>
+      </SettingCard>
+    </SettingGroup>
   );
 }
