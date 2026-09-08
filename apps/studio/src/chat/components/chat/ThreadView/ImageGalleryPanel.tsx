@@ -16,8 +16,10 @@ import { useT } from '../../../i18n'
 import { isEditableImageExt } from '../../../lib/imageKinds'
 import { useChatStore } from '../../../stores/chat'
 import {
-  useImageEditStore,
-  useImageGalleryStore,
+  closeRightPanel,
+  openRightPanel,
+  selectGalleryOpen,
+  useRightPanelStore,
   useSplitWorkspaceBusy
 } from '../../../stores/filePreview'
 import { extOf } from '../FileTypeIcon'
@@ -39,8 +41,8 @@ import { useWorkflowScriptPanelOpen } from './WorkflowScriptPanel'
  *
  * 结构：上方缩略图网格（点击选中）→ 下方大图（←/→ 翻页）→ 底部操作栏
  * （另存为 / 改这张 / 在文件夹中显示）。「改这张」直接调
- * useImageEditStore.openEditor 切到已有的 ImageEditPanel——store 层互斥
- * 保证图库自动收起（后开的赢）。
+ * openRightPanel({ kind: 'image' }) 切到已有的 ImageEditPanel——右栏占用者
+ * store 天然「后开的赢」，图库随之让位。
  *
  * 布局照抄 SpreadsheetPreviewPanel：chat 列收窄成持久化 chatColWidth rail
  * 在左、本面板 flex-1 在右；顶栏 46px 与 ChatHeader 同高同 hairline；
@@ -263,7 +265,7 @@ function GalleryThumb({
 
 export function ImageGalleryPanel(): React.JSX.Element {
   const t = useT()
-  const closeGallery = useImageGalleryStore((s) => s.closeGallery)
+  const closeGallery = (): void => closeRightPanel('gallery')
   const { images, freshlyAdded, arrival } = useSessionGeneratedImages()
   const thumbs = useGalleryThumbs(images)
 
@@ -530,7 +532,7 @@ export function ImageGalleryPanel(): React.JSX.Element {
                   size="sm"
                   className="h-7 px-2.5 text-[12px]"
                   onClick={() => {
-                    if (currentPath) useImageEditStore.getState().openEditor(currentPath)
+                    if (currentPath) openRightPanel({ kind: 'image', path: currentPath })
                   }}
                 >
                   <PencilLine className="size-3.5" />
@@ -553,7 +555,7 @@ export function ImageGalleryPanel(): React.JSX.Element {
  *   - 亮/灭：本会话产出过 ≥1 张生成图就亮——**不绑**「用户点没点过『生成
  *     图片』技能按钮」，直接打字让 AI 出图很常见，绑技能模式会漏。
  *   - 自动弹开一次：第一张图落盘（freshlyAdded 里出现生成图）时调
- *     autoOpenOnce，同一会话只弹这一次；用户关掉后不再自动弹。
+ *     autoOpenGalleryOnce，同一会话只弹这一次；用户关掉后不再自动弹。
  *   - 分栏忙（slides / proposal / 写作占着右栏）时禁用：ThreadView 那边
  *     isSplitMode 为真不会渲染图库，这里若照常写 open=true 就是「点击死、
  *     零报错 + 退出分栏后突然弹出」——filePreview.ts 头注释里的那条坑。
@@ -562,7 +564,7 @@ export function ImageGalleryPanel(): React.JSX.Element {
 export function ImageGalleryButton(): React.JSX.Element {
   const t = useT()
   const sessionId = useChatStore((s) => s.sessionId)
-  const open = useImageGalleryStore((s) => s.open)
+  const open = useRightPanelStore(selectGalleryOpen)
   const splitBusy = useSplitWorkspaceBusy()
   const { images, arrival } = useSessionGeneratedImages()
   const hasImages = images.length > 0
@@ -573,20 +575,19 @@ export function ImageGalleryButton(): React.JSX.Element {
   //   - arrival.sessionId 必须等于当前会话：切会话那一帧 store 还没重置，
   //     拿到的是旧会话的事件，不比对会同时误开面板 + 烧掉新会话的额度；
   //   - workflow 脚本面板开着时不弹（也不记账）：它的开关是 React 派生态
-  //     （流式 id / 运行 id / 手动 id 三合一），store 层的 autoOpenOnce 拿不到，
-  //     所以在这里挡——与表格预览 / 改图编辑器同一条规则：用户正在看的
+  //     （流式 id / 运行 id / 手动 id 三合一），store 层的 autoOpenGalleryOnce
+  //     拿不到，所以在这里挡——与右栏其他占用者同一条规则：用户正在看的
   //     面板永远优先于自动弹出。
   useEffect(() => {
     if (sessionId === null || arrival === null) return
     if (arrival.sessionId !== sessionId) return
     if (workflowPanelOpen) return
-    useImageGalleryStore.getState().autoOpenOnce(sessionId)
+    useRightPanelStore.getState().autoOpenGalleryOnce(sessionId)
   }, [arrival, sessionId, workflowPanelOpen])
 
   const toggle = (): void => {
-    const store = useImageGalleryStore.getState()
-    if (store.open) store.closeGallery()
-    else if (!splitBusy) store.openGallery()
+    if (open) closeRightPanel('gallery')
+    else if (!splitBusy) openRightPanel({ kind: 'gallery' })
   }
 
   return (

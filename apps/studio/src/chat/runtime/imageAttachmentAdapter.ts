@@ -5,11 +5,7 @@ import type {
   PendingAttachment
 } from '@assistant-ui/core'
 
-import {
-  splitWorkspaceBusyNow,
-  useImageEditStore,
-  useSheetPreviewStore
-} from '../stores/filePreview'
+import { openRightPanel, splitWorkspaceBusyNow } from '../stores/filePreview'
 import { isEditableImageExt } from '../lib/imageKinds'
 
 /**
@@ -136,9 +132,9 @@ export function autoOpenPreviewPanel(name: string, path: string): void {
   if (!path || splitWorkspaceBusyNow()) return
   const kind = previewPanelKind(name)
   if (kind === 'sheet') {
-    useSheetPreviewStore.getState().openPreview(path)
+    openRightPanel({ kind: 'sheet', path: path })
   } else if (kind === 'image') {
-    useImageEditStore.getState().openEditor(path)
+    openRightPanel({ kind: 'image', path: path })
   }
 }
 

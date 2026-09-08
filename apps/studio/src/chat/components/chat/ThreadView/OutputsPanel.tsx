@@ -16,11 +16,7 @@ import {
 import { Button } from '@/src/components/ui/button'
 import type { ShellStatFileInfo } from '@desktop-shared/ipc-channels'
 import { useI18n, useT } from '../../../i18n'
-import {
-  useImageEditStore,
-  useSheetPreviewStore,
-  useSplitWorkspaceBusy
-} from '../../../stores/filePreview'
+import { openRightPanel, useSplitWorkspaceBusy } from '../../../stores/filePreview'
 import { useSessionOutputsStore } from '../../../stores/sessionOutputs'
 import { deliverableKind } from './AssistantMessage'
 import { isEditableImageExt } from '../../../lib/imageKinds'
@@ -136,11 +132,11 @@ function OutputRow({
 
   const open = (): void => {
     if (previewableSheet && !splitBusy) {
-      useSheetPreviewStore.getState().openPreview(path)
+      openRightPanel({ kind: 'sheet', path: path })
       return
     }
     if (editableImage && !splitBusy) {
-      useImageEditStore.getState().openEditor(path)
+      openRightPanel({ kind: 'image', path: path })
       return
     }
     openExternal()
@@ -301,7 +297,7 @@ function OutputImageCell({
   }
   const open = (): void => {
     if (editableImage && !splitBusy) {
-      useImageEditStore.getState().openEditor(path)
+      openRightPanel({ kind: 'image', path: path })
       return
     }
     openExternal()

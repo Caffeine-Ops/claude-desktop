@@ -20,10 +20,9 @@ import {
   mentionInnerToPath
 } from '../../../lib/mentionDisplay'
 import {
+  openRightPanel,
   parseImageEditMessage,
   parseSheetSelectionMessage,
-  useImageEditStore,
-  useSheetPreviewStore,
   type ImageEditMeta,
   type SheetSelectionMeta
 } from '../../../stores/filePreview'
@@ -343,7 +342,7 @@ function SheetSelectionCard({
               disabled={!meta.path}
               onClick={() => {
                 if (meta.path) {
-                  useSheetPreviewStore.getState().openPreview(meta.path)
+                  openRightPanel({ kind: 'sheet', path: meta.path })
                 }
               }}
               title={meta.path || undefined}
@@ -421,7 +420,7 @@ function ImageEditCard({ meta }: { meta: ImageEditMeta }): React.JSX.Element {
               disabled={!meta.path}
               onClick={() => {
                 if (meta.path) {
-                  useImageEditStore.getState().openEditor(meta.path)
+                  openRightPanel({ kind: 'image', path: meta.path })
                 }
               }}
               title={meta.path || undefined}

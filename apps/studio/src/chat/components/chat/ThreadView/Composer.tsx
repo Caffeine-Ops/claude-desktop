@@ -52,11 +52,7 @@ import {
 import { useComposerModeStore } from '../../../stores/composerMode'
 import { cancelActiveDictation } from '../../../runtime/openaiWhisperDictationAdapter'
 import { FILE_PATH_MIME } from '../../../runtime/imageAttachmentAdapter'
-import {
-  useImageEditStore,
-  useSheetPreviewStore,
-  useSplitWorkspaceBusy
-} from '../../../stores/filePreview'
+import { openRightPanel, useSplitWorkspaceBusy } from '../../../stores/filePreview'
 import { useKbStore } from '../../../stores/kb'
 import { ensurePptSkillReady, isPptSkillCommand } from '../../../stores/pptSkill'
 import { PptSkillGate } from '../PptSkillGate'
@@ -2625,11 +2621,11 @@ function ComposerAttachmentChip({
     // 应用打开，点了必须有反应（与 DeliverableCard 的纪律一致）。其余
     // 不可预览的类型（pdf/docx/…）也走系统应用。
     if (previewableSheet && !splitBusy) {
-      useSheetPreviewStore.getState().openPreview(diskPath)
+      openRightPanel({ kind: 'sheet', path: diskPath })
       return
     }
     if (editableImage && !splitBusy) {
-      useImageEditStore.getState().openEditor(diskPath)
+      openRightPanel({ kind: 'image', path: diskPath })
       return
     }
     void window.chatApi.openPath({ absPath: diskPath })

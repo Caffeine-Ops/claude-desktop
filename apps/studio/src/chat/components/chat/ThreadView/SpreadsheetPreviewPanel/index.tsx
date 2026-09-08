@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Minus, Plus, RotateCw, X } from 'lucide-react'
 
 import { useT } from '../../../../i18n'
-import { useSheetPreviewStore } from '../../../../stores/filePreview'
+import { closeRightPanel, selectSheetPreviewPath, useRightPanelStore } from '../../../../stores/filePreview'
 import { Button } from '@/src/components/ui/button'
 import {
   SHEET_MAX_COLS,
@@ -19,9 +19,9 @@ import type { SheetSnapshotResult } from './buildSnapshot'
  * 内直接铺开表格内容,替代跳出去开 Excel 的割裂体验(用户没装 Office
  * 时 shell.openPath 甚至直接失败)。生命周期最简:
  *
- *   点卡片 → useSheetPreviewStore.openPreview(path) → ThreadView 分栏、
+ *   点卡片 → openRightPanel({ kind: 'sheet', path }) → ThreadView 分栏、
  *   本面板按 path 走 SHEET_FILE_READ 拿原始字节 → buildSnapshot 解析 →
- *   UniverSheetView 渲染;✕ / 切会话 → closePreview。
+ *   UniverSheetView 渲染;✕ / 切会话 → closeRightPanel('sheet')。
  *
  * 2026-07-08 起渲染内核迁到 Univer(开源 preset):
  *   - 本壳层只管应用 UI 面(顶栏/sheet tab 条/截断与刷新提示/加载错误
@@ -46,8 +46,8 @@ type ParseState =
 
 export function SpreadsheetPreviewPanel(): React.JSX.Element | null {
   const t = useT()
-  const path = useSheetPreviewStore((s) => s.path)
-  const closePreview = useSheetPreviewStore((s) => s.closePreview)
+  const path = useRightPanelStore(selectSheetPreviewPath)
+  const closePreview = (): void => closeRightPanel('sheet')
   const [state, setState] = useState<ParseState>({ phase: 'loading' })
   const [activeSheet, setActiveSheet] = useState(0)
   const [zoom, setZoom] = useState(1)

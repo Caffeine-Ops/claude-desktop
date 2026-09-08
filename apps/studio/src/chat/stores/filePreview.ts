@@ -19,111 +19,95 @@ export {
 } from '../lib/messageMarkers'
 
 /**
- * 应用内表格预览面板的开关状态（面板本体见
- * ThreadView/SpreadsheetPreviewPanel.tsx）。
+ * 聊天页右栏的「占用者」仲裁（2026-09-08 收敛，替代原来三个各自为政的
+ * 面板 store）。
  *
- * 打开途径只有一种：用户点了成果文件卡片里的表格文件（xlsx / xls /
- * csv，见 AssistantMessage 的 DeliverableCard）→ 记下绝对路径，
- * ThreadView 据此分栏、面板自己按 path 读盘解析。关闭 = 清路径。
+ * 右栏同一时刻只能站一个人：表格预览（xlsx/xls/csv）、图片标记编辑器、
+ * 会话图库。收敛前每个面板一个 store、互相交叉关闭——两两互斥在两个参与者
+ * 时最省事，第三个一进来就是 N² 条规则：三处 store 六个交叉 close、ThreadView
+ * 两个 effect 各关三次、两条布尔链每加一个面板就长一截，加第四个面板要改
+ * 十来处，漏一处零报错（第二轮 code review 抓到：自动弹开就漏判了 workflow
+ * 面板）。现在只有一个事实：`occupant`。
  *
- * 与 workflowScript 面板不同，这里存的是磁盘路径而非消息内的
- * toolCallId——切会话后路径依然有效（文件还在盘上），但预览是「点开
- * 看一眼」的瞬时动作，跨会话残留一张旧表格反而突兀，所以 ThreadView
- * 在 sessionId 变化时显式 closePreview()。
+ *   - open(o)：直接换人（后开的赢），不需要知道之前站的是谁；
+ *   - close(kind?)：不带 kind 清空；带 kind 只在站着的正是它时才关——
+ *     ReplayController 的「收起编辑器」不能误伤用户手动开的表格预览；
+ *   - 切会话 / 进分栏：ThreadView 一个 effect 调 close() 即可。
+ *
+ * 存的是磁盘路径而非消息内 id：路径跨会话有效（文件还在盘上），但预览 /
+ * 改图 / 看图都是「点开看一眼」的瞬时动作，跨会话残留读作串台，所以
+ * ThreadView 在 sessionId 变化时清空。
  */
-type SheetPreviewStore = {
-  /** 正在预览的表格文件绝对路径；null = 面板关闭。 */
-  path: string | null
-  openPreview: (path: string) => void
-  closePreview: () => void
-}
+export type RightPanelOccupant =
+  | { kind: 'sheet'; path: string }
+  | { kind: 'image'; path: string }
+  | { kind: 'gallery' }
 
-export const useSheetPreviewStore = create<SheetPreviewStore>((set) => ({
-  path: null,
-  openPreview: (path) => {
-    // 与图片编辑 / 会话图库面板互斥：三个面板共用同一右栏，后开的赢。交叉
-    // 关闭放 action 里（而非 ThreadView 渲染层 gate）——被顶掉的状态要真清
-    // 掉，否则另一面板关闭时旧面板会突然弹回来。同模块内互引无循环依赖。
-    useImageEditStore.getState().closeEditor()
-    useImageGalleryStore.getState().closeGallery()
-    set({ path })
-  },
-  closePreview: () => set({ path: null })
-}))
+export type RightPanelKind = RightPanelOccupant['kind']
 
-/* ── 图片标记编辑面板 ──
- * 点成果卡片里的图片文件（png/jpg/webp）→ 右栏展开标记编辑面板
- * （ThreadView/ImageEditPanel.tsx）：图上落编号标记 + 逐点描述改动 +
- * 可选融合素材图，发送后 agent 走 imagegen skill 的 edit 子命令改图。
- * 开关语义与表格预览完全同构（存磁盘绝对路径、切会话即关）。 */
-
-type ImageEditStore = {
-  /** 正在编辑的图片绝对路径；null = 面板关闭。 */
-  path: string | null
-  openEditor: (path: string) => void
-  closeEditor: () => void
-}
-
-export const useImageEditStore = create<ImageEditStore>((set) => ({
-  path: null,
-  openEditor: (path) => {
-    // 互斥另两半：开图片编辑就收表格预览与图库（理由见 openPreview 内注释）。
-    // 图库的「改这张」也走这里——从图库跳编辑器是「后开的赢」的自然结果。
-    useSheetPreviewStore.getState().closePreview()
-    useImageGalleryStore.getState().closeGallery()
-    set({ path })
-  },
-  closeEditor: () => set({ path: null })
-}))
-
-/* ── 会话图库面板 ──
- * 本次会话所有 AI 生成图的缩略图墙 + 大图（ThreadView/ImageGalleryPanel.tsx）。
- * 与上面两个面板不同，它不存路径——数据源是 useSessionGeneratedImages
- * （OutputsPanel.tsx），这里只管「开/关」和「本会话自动弹过没有」。
- * 切会话即关（ThreadView 的 sessionId effect 统一收），与另两面板同语义。 */
-
-type ImageGalleryStore = {
-  open: boolean
+type RightPanelStore = {
+  occupant: RightPanelOccupant | null
   /**
-   * 已经自动弹开过一次的会话 id 集合。规则：第一张图落盘时自动展开，同一
+   * 图库已经自动弹开过一次的会话 id 集合。规则：第一张图落盘时自动展开，同一
    * 会话只自动弹这一次——用户关掉后再出图不再打扰。用集合而不是单个布尔，
    * 是因为切走再切回同一会话时「弹过」这件事要还记得。
    */
-  autoOpenedSessions: Record<string, true>
-  openGallery: () => void
-  closeGallery: () => void
+  galleryAutoOpenedSessions: Record<string, true>
+  open: (occupant: RightPanelOccupant) => void
+  close: (kind?: RightPanelKind) => void
   /**
-   * 自动弹开（幂等）：该会话没弹过、且右栏此刻空着时才开并记账。「右栏
-   * 空着」= 没被 slides / proposal / 写作分栏占着，**也没有表格预览 / 改图
-   * 编辑器开着**——用户正对着一张表看数据、或正在图上落标记，第一张图落盘
-   * 就把它顶掉等于抢用户的活（2026-09-07 code review 抓到）；用户显式开的
-   * 面板永远优先于自动弹出。占着时**不记账**，下一张图落盘再试——否则用户
-   * 关掉那个面板后图库这辈子都不会自动出现。返回是否真的打开了。
+   * 图库自动弹开（幂等）：该会话没弹过、且右栏此刻**空着**时才开并记账。
+   * 「空着」= 没被 slides / proposal / 写作分栏占着，也没有别的面板站着——
+   * 用户正对着一张表看数据、或正在图上落标记，第一张图落盘就把它顶掉等于
+   * 抢用户的活；用户显式开的面板永远优先于自动弹出。占着时**不记账**，
+   * 下一张图落盘再试——否则用户关掉那个面板后图库这辈子都不会自动出现。
+   * 图库自己已经开着视为成功（记账）。返回是否真的打开了 / 已在。
+   * workflow 脚本面板的开关是 React 派生态，这里拿不到，由调用方
+   * （ImageGalleryButton）先挡。
    */
-  autoOpenOnce: (sessionId: string) => boolean
+  autoOpenGalleryOnce: (sessionId: string) => boolean
 }
 
-export const useImageGalleryStore = create<ImageGalleryStore>((set, get) => ({
-  open: false,
-  autoOpenedSessions: {},
-  openGallery: () => {
-    // 互斥第三半：开图库就收表格预览与图片编辑（理由见 openPreview 内注释）。
-    useSheetPreviewStore.getState().closePreview()
-    useImageEditStore.getState().closeEditor()
-    set({ open: true })
-  },
-  closeGallery: () => set({ open: false }),
-  autoOpenOnce: (sessionId) => {
-    const { autoOpenedSessions, openGallery } = get()
-    if (autoOpenedSessions[sessionId]) return false
+export const useRightPanelStore = create<RightPanelStore>((set, get) => ({
+  occupant: null,
+  galleryAutoOpenedSessions: {},
+  open: (occupant) => set({ occupant }),
+  close: (kind) =>
+    set((s) => {
+      if (s.occupant === null) return s
+      if (kind !== undefined && s.occupant.kind !== kind) return s
+      return { occupant: null }
+    }),
+  autoOpenGalleryOnce: (sessionId) => {
+    const { galleryAutoOpenedSessions, occupant } = get()
+    if (galleryAutoOpenedSessions[sessionId]) return false
     if (splitWorkspaceBusyNow()) return false
-    if (useSheetPreviewStore.getState().path !== null) return false
-    if (useImageEditStore.getState().path !== null) return false
-    set({ autoOpenedSessions: { ...autoOpenedSessions, [sessionId]: true } })
-    openGallery()
+    if (occupant !== null && occupant.kind !== 'gallery') return false
+    set({
+      galleryAutoOpenedSessions: { ...galleryAutoOpenedSessions, [sessionId]: true },
+      occupant: { kind: 'gallery' }
+    })
     return true
   }
 }))
+
+/* ── 命令式入口（非 React 上下文 / 事件回调用） ── */
+export function openRightPanel(occupant: RightPanelOccupant): void {
+  useRightPanelStore.getState().open(occupant)
+}
+export function closeRightPanel(kind?: RightPanelKind): void {
+  useRightPanelStore.getState().close(kind)
+}
+
+/* ── 选择器：给 useRightPanelStore(selectX) 用，返回原始值以免无谓重渲染 ── */
+export const selectSheetPreviewPath = (s: RightPanelStore): string | null =>
+  s.occupant?.kind === 'sheet' ? s.occupant.path : null
+export const selectImageEditPath = (s: RightPanelStore): string | null =>
+  s.occupant?.kind === 'image' ? s.occupant.path : null
+export const selectGalleryOpen = (s: RightPanelStore): boolean =>
+  s.occupant?.kind === 'gallery'
+export const selectRightPanelKind = (s: RightPanelStore): RightPanelKind | null =>
+  s.occupant?.kind ?? null
 
 /**
  * 右栏是否已被 slides / proposal / 写作 工作区占用 —— DeliverableCard 用它
@@ -135,12 +119,11 @@ export const useImageGalleryStore = create<ImageGalleryStore>((set, get) => ({
  *
  * 【为什么必须同源，别嫌麻烦】isSplitMode 决定 ThreadView 是否渲染预览面板
  * （showSheetPreview = path !== null && !isSplitMode）；这里决定要不要先调
- * openPreview/openEditor 写 path。两边脱节的后果是：写作分栏下这里判 false
+ * openRightPanel 写占用者。两边脱节的后果是：写作分栏下这里判 false
  * → 五个 UI 调用点（AssistantMessage 成果卡、OutputsPanel 行式/图块、
- * ImageGenCard 生成图卡、Composer 附件卡）照常调 openPreview(path) →
- * useSheetPreviewStore.path 被写入且顺手 closeEditor() → 但 ThreadView 那边
- * isSplitMode 为真、面板不渲染——点击死、零报错，且脏 path 会在写作模式退出
- * 后突然弹出一张不相干的旧预览。isSplitMode 加第三个来源时若忘了同步这两个
+ * ImageGenCard 生成图卡、Composer 附件卡）照常调 openRightPanel →
+ * 占用者被写入 → 但 ThreadView 那边 isSplitMode 为真、面板不渲染——点击死、
+ * 零报错，且脏占用者会在写作模式退出后突然弹出一张不相干的旧预览。isSplitMode 加第三个来源时若忘了同步这两个
  * 函数，就是这条缺陷本身（2026-07-29 复审发现）。
  */
 export function useSplitWorkspaceBusy(): boolean {
