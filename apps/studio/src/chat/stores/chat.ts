@@ -6,7 +6,7 @@ import type { ThreadMessageLike } from '@assistant-ui/react'
 import { sampleSpinnerVerb } from '../constants/spinnerVerbs'
 import type { ChatEvent, WorkflowTask } from '@desktop-shared/types'
 import type { ChatSendPayload } from '@desktop-shared/ipc-channels'
-import { markTurnFailed, prepareRetry } from '../lib/failedTurn'
+import { markTurnFailed, prepareRetry, dismissFailedTurn as dismissFailedTurnPure } from '../lib/failedTurn'
 
 /**
  * Renderer-side chat state, shaped to feed assistant-ui's
@@ -945,9 +945,8 @@ export const useChatStore = create<ChatState>((set) => ({
 
   dismissFailedTurn: (sessionId) => {
     set((s) => {
-      const patch = updateSlot(s, sessionId, (slot) =>
-        slot.failedTurn ? { ...slot, failedTurn: null } : slot
-      )
+      // 连 lastSentPayload 一起清，理由见 lib/failedTurn.dismissFailedTurn。
+      const patch = updateSlot(s, sessionId, (slot) => dismissFailedTurnPure(slot))
       return patch ?? {}
     })
   },

@@ -66,3 +66,16 @@ export function prepareRetry<S extends FailedTurnSlot>(
       : slot.messages
   return { slot: { ...slot, messages, failedTurn: null }, payload: lastSentPayload }
 }
+
+/**
+ * 用户点 ✕ 关掉重试条：失败标记和载荷**一起**清。只清标记的话载荷还留在槽位里
+ * （endAssistantMessage 因 failedTurn 曾为真而保留了它），下一次发送之前若来了
+ * 一条不带新载荷的 error——engine 的后台任务合成回合就是这种（assistant_error
+ * → beginSyntheticTurn → pump 发 error）——markTurnFailed 只看「有没有载荷」，
+ * 会把重试条绑回已被放弃的那条消息，「重试」随即重发用户已经放弃的话
+ * （2026-09-07 第二轮 code review 抓到）。
+ */
+export function dismissFailedTurn<S extends FailedTurnSlot>(slot: S): S {
+  if (!slot.failedTurn) return slot
+  return { ...slot, failedTurn: null, lastSentPayload: null }
+}
