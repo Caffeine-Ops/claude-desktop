@@ -75,6 +75,9 @@ const THUMB_CACHE_CAP = 400
 const thumbCache = new Map<string, string>()
 const THUMB_BATCH = 60
 
+/** 每个会话上次在图库里看的那张（路径）。面板卸载即丢 state，靠它续上。 */
+const lastViewedBySession = new Map<string, string>()
+
 function cacheKey(file: ShellStatFileInfo): string {
   return `${file.path}:${file.mtimeMs}:${file.size}`
 }
@@ -270,8 +273,19 @@ export function ImageGalleryPanel(): React.JSX.Element {
   const thumbs = useGalleryThumbs(images)
 
   // 选中态存路径而不是下标：新图落盘会把列表整体往后推一位，存下标会让
-  // 用户正看着的那张「跳」成别的图。
-  const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  // 用户正看着的那张「跳」成别的图。按会话记在模块级 Map 里：面板关掉再开
+  // （或从改图编辑器回来）还停在刚才那张，不用重新翻；切会话则各记各的。
+  const sessionId = useChatStore((s) => s.sessionId)
+  const [selectedPath, setSelectedPathState] = useState<string | null>(() =>
+    sessionId !== null ? (lastViewedBySession.get(sessionId) ?? null) : null
+  )
+  const setSelectedPath = useCallback(
+    (path: string) => {
+      setSelectedPathState(path)
+      if (sessionId !== null) lastViewedBySession.set(sessionId, path)
+    },
+    [sessionId]
+  )
   const selectedIndex = useMemo(() => {
     if (selectedPath === null) return -1
     return images.findIndex((f) => f.path === selectedPath)
@@ -282,10 +296,9 @@ export function ImageGalleryPanel(): React.JSX.Element {
   // 刚落盘的新图自动成为当前大图——用户刚让 AI 出的图，就是此刻最想看的。
   // 只在真正的「本会话新增」时跳（arrival 语义见 useSessionGeneratedImages），
   // 切会话/首次打开不跳。
-  const sessionId = useChatStore((s) => s.sessionId)
   useEffect(() => {
     if (arrival && arrival.sessionId === sessionId) setSelectedPath(arrival.path)
-  }, [arrival, sessionId])
+  }, [arrival, sessionId, setSelectedPath])
 
   const goTo = useCallback(
     (delta: number) => {
