@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import {
   appendFileSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -69,6 +70,8 @@ import {
   type ImageManifestItem,
   type ImageFileReadPayload,
   type ImageFileReadResult,
+  type ImageFileSaveAsPayload,
+  type ImageFileSaveAsResult,
   type SheetFileReadPayload,
   type SheetFileReadResult,
   type SheetFileStatPayload,
@@ -234,7 +237,7 @@ import {
   listBackgroundThemes,
   deleteBackgroundTheme
 } from '../services/backgroundThemes'
-import { mimeForImagePath } from '../../shared/imageMime'
+import { IMAGE_MIME_BY_EXT, mimeForImagePath } from '../../shared/imageMime'
 import { EMBEDDABLE_IMAGE_EXTS, type ProposalMetricRecord } from '../../shared/proposal'
 import { readFile, writeFile } from 'node:fs/promises'
 import { detectSystemClaude, resolveBundledCliPath } from '../core/cliDetect'
@@ -554,6 +557,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.FEEDBACK_SUBMIT)
   ipcMain.removeHandler(IPC_CHANNELS.IMAGE_MANIFEST_READ)
   ipcMain.removeHandler(IPC_CHANNELS.IMAGE_FILE_READ)
+  ipcMain.removeHandler(IPC_CHANNELS.IMAGE_FILE_SAVE_AS)
   ipcMain.removeHandler(IPC_CHANNELS.SHEET_FILE_READ)
   ipcMain.removeHandler(IPC_CHANNELS.SHEET_FILE_STAT)
   ipcMain.removeHandler(IPC_CHANNELS.CONFIRM_UI_READ)
@@ -1188,6 +1192,66 @@ export function registerIpcHandlers(): void {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         return { ok: false, error: `Read failed: ${msg}` }
+      }
+    }
+  )
+
+  // 会话图库「另存为…」：原生保存框 + copyFileSync 原样复制。守卫与
+  // IMAGE_FILE_READ 同一套（绝对路径 / 常规文件 / 图片扩展名白名单——白名单
+  // 直接取 shared/imageMime.ts 的唯一事实源，别再手抄）。取消 → { path: null }
+  // 且无 error，不 reject；真失败才带 error。
+  //
+  // 目标扩展名必须跟源文件走：字节原样复制，.png 存成 .jpg 就是一个 PNG 字节
+  // 的假 JPEG。保存框的 filters 只在 macOS 是硬约束，Windows / GTK 上用户手输
+  // `cover.jpg` 会原样返回——所以框回来后再校验一次：扩展名对应的 MIME 不同
+  // （用 shared/imageMime 的映射比对，jpg / jpeg 天然同一个 MIME）就**替换**成
+  // 源扩展名。替换而非追加：追加会得到 cover.jpg.png 这种用户没选过的名字。
+  // 纠正后的目标若已存在则报错而不覆盖——保存框只对用户确认过的那个文件名
+  // 征求过覆盖同意，纠正后的名字没有（第二轮 code review 抓到）。
+  ipcMain.handle(
+    IPC_CHANNELS.IMAGE_FILE_SAVE_AS,
+    async (
+      event,
+      payload: ImageFileSaveAsPayload
+    ): Promise<ImageFileSaveAsResult> => {
+      const absPath =
+        payload && typeof payload.absPath === 'string' ? payload.absPath : ''
+      if (!absPath || !isAbsolute(absPath)) {
+        return { path: null, error: 'Invalid path (expected absolute).' }
+      }
+      const dotExt = extname(absPath).toLowerCase()
+      if (!(dotExt in IMAGE_MIME_BY_EXT)) {
+        return { path: null, error: `Not an image file: ${dotExt || '(none)'}` }
+      }
+      const ext = dotExt.slice(1)
+      try {
+        if (!statSync(absPath).isFile()) return { path: null, error: 'Not a file.' }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return { path: null, error: `Source missing: ${msg}` }
+      }
+      const win = BrowserWindow.fromWebContents(event.sender)
+      if (!win) return { path: null, error: 'No window for save dialog.' }
+      const r = await dialog.showSaveDialog(win, {
+        defaultPath: join(app.getPath('downloads'), basename(absPath)),
+        filters: [{ name: ext.toUpperCase(), extensions: [ext] }]
+      })
+      if (r.canceled || !r.filePath) return { path: null }
+      const chosenDotExt = extname(r.filePath).toLowerCase()
+      const sameMime =
+        chosenDotExt !== '' && IMAGE_MIME_BY_EXT[chosenDotExt] === IMAGE_MIME_BY_EXT[dotExt]
+      const target = sameMime
+        ? r.filePath
+        : join(dirname(r.filePath), `${basename(r.filePath, extname(r.filePath))}${dotExt}`)
+      if (target !== r.filePath && existsSync(target)) {
+        return { path: null, error: `Target already exists: ${basename(target)}` }
+      }
+      try {
+        copyFileSync(absPath, target)
+        return { path: target }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return { path: null, error: `Copy failed: ${msg}` }
       }
     }
   )

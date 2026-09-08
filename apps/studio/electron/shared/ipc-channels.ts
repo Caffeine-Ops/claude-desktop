@@ -114,6 +114,13 @@ export const IPC_CHANNELS = {
    */
   IMAGE_FILE_READ: 'image:file-read',
   /**
+   * Renderer → main. 会话图库的「另存为…」：弹 OS 原生保存框，把一张本地
+   * 生成图**原样复制**到用户选的位置（不转码、不改名之外的任何东西）。
+   * 与 IMAGE_FILE_READ 同一套白名单 + 绝对路径守卫；取消返回 `{ path: null }`
+   * 而非 reject——「用户按了取消」不是错误。
+   */
+  IMAGE_FILE_SAVE_AS: 'image:file-save-as',
+  /**
    * Read one local spreadsheet file (xlsx / xls / csv) as base64 bytes for
    * the chat pane's in-app spreadsheet preview (right-hand split panel).
    * Same shape as IMAGE_FILE_READ: extension-whitelisted, size-capped,
@@ -1514,6 +1521,16 @@ export type ImageFileReadResult = {
   dataUrl?: string
   error?: string
 }
+
+/** Payload for IMAGE_FILE_SAVE_AS：要另存的本地图片绝对路径。 */
+export type ImageFileSaveAsPayload = { absPath: string }
+
+/**
+ * Result of IMAGE_FILE_SAVE_AS。`path` 是复制到的目标绝对路径；用户取消
+ * 保存框时为 null（不算错误，`error` 为空）；源文件不合法/复制失败时
+ * `path` 为 null 且 `error` 带原因。
+ */
+export type ImageFileSaveAsResult = { path: string | null; error?: string }
 
 /**
  * Payload for SHEET_FILE_READ. `absPath` is an absolute path to a
@@ -3239,6 +3256,12 @@ export interface ChatApi {
    * tab's in-app lightbox. Original bytes, extension-derived mime.
    */
   readImageFile(payload: ImageFileReadPayload): Promise<ImageFileReadResult>
+
+  /**
+   * 会话图库「另存为…」：原生保存框 + 原样复制一张本地生成图。取消 →
+   * `{ path: null }`，见 IMAGE_FILE_SAVE_AS。
+   */
+  saveImageFileAs(payload: ImageFileSaveAsPayload): Promise<ImageFileSaveAsResult>
 
   /**
    * Read one local spreadsheet file (xlsx / xls / csv) as base64 bytes for

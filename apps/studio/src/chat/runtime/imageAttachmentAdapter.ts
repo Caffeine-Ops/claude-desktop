@@ -10,6 +10,7 @@ import {
   useImageEditStore,
   useSheetPreviewStore
 } from '../stores/filePreview'
+import { isEditableImageExt } from '../lib/imageKinds'
 
 /**
  * Unified attachment adapter for the composer — handles BOTH images and
@@ -149,7 +150,7 @@ export function autoOpenPreviewPanel(name: string, path: string): void {
 export function previewPanelKind(name: string): 'sheet' | 'image' | null {
   const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : ''
   if (ext === 'xlsx' || ext === 'xls' || ext === 'csv') return 'sheet'
-  if (ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'webp') return 'image'
+  if (isEditableImageExt(ext)) return 'image'
   return null
 }
 

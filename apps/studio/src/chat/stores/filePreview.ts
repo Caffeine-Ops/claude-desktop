@@ -41,10 +41,11 @@ type SheetPreviewStore = {
 export const useSheetPreviewStore = create<SheetPreviewStore>((set) => ({
   path: null,
   openPreview: (path) => {
-    // 与图片编辑面板互斥：两个面板共用同一右栏，后开的赢。交叉关闭放
-    // action 里（而非 ThreadView 渲染层 gate）——被顶掉的状态要真清掉，
-    // 否则另一面板关闭时旧面板会突然弹回来。同模块内互引无循环依赖。
+    // 与图片编辑 / 会话图库面板互斥：三个面板共用同一右栏，后开的赢。交叉
+    // 关闭放 action 里（而非 ThreadView 渲染层 gate）——被顶掉的状态要真清
+    // 掉，否则另一面板关闭时旧面板会突然弹回来。同模块内互引无循环依赖。
     useImageEditStore.getState().closeEditor()
+    useImageGalleryStore.getState().closeGallery()
     set({ path })
   },
   closePreview: () => set({ path: null })
@@ -66,11 +67,62 @@ type ImageEditStore = {
 export const useImageEditStore = create<ImageEditStore>((set) => ({
   path: null,
   openEditor: (path) => {
-    // 互斥另一半：开图片编辑就收表格预览（理由见 openPreview 内注释）。
+    // 互斥另两半：开图片编辑就收表格预览与图库（理由见 openPreview 内注释）。
+    // 图库的「改这张」也走这里——从图库跳编辑器是「后开的赢」的自然结果。
     useSheetPreviewStore.getState().closePreview()
+    useImageGalleryStore.getState().closeGallery()
     set({ path })
   },
   closeEditor: () => set({ path: null })
+}))
+
+/* ── 会话图库面板 ──
+ * 本次会话所有 AI 生成图的缩略图墙 + 大图（ThreadView/ImageGalleryPanel.tsx）。
+ * 与上面两个面板不同，它不存路径——数据源是 useSessionGeneratedImages
+ * （OutputsPanel.tsx），这里只管「开/关」和「本会话自动弹过没有」。
+ * 切会话即关（ThreadView 的 sessionId effect 统一收），与另两面板同语义。 */
+
+type ImageGalleryStore = {
+  open: boolean
+  /**
+   * 已经自动弹开过一次的会话 id 集合。规则：第一张图落盘时自动展开，同一
+   * 会话只自动弹这一次——用户关掉后再出图不再打扰。用集合而不是单个布尔，
+   * 是因为切走再切回同一会话时「弹过」这件事要还记得。
+   */
+  autoOpenedSessions: Record<string, true>
+  openGallery: () => void
+  closeGallery: () => void
+  /**
+   * 自动弹开（幂等）：该会话没弹过、且右栏此刻空着时才开并记账。「右栏
+   * 空着」= 没被 slides / proposal / 写作分栏占着，**也没有表格预览 / 改图
+   * 编辑器开着**——用户正对着一张表看数据、或正在图上落标记，第一张图落盘
+   * 就把它顶掉等于抢用户的活（2026-09-07 code review 抓到）；用户显式开的
+   * 面板永远优先于自动弹出。占着时**不记账**，下一张图落盘再试——否则用户
+   * 关掉那个面板后图库这辈子都不会自动出现。返回是否真的打开了。
+   */
+  autoOpenOnce: (sessionId: string) => boolean
+}
+
+export const useImageGalleryStore = create<ImageGalleryStore>((set, get) => ({
+  open: false,
+  autoOpenedSessions: {},
+  openGallery: () => {
+    // 互斥第三半：开图库就收表格预览与图片编辑（理由见 openPreview 内注释）。
+    useSheetPreviewStore.getState().closePreview()
+    useImageEditStore.getState().closeEditor()
+    set({ open: true })
+  },
+  closeGallery: () => set({ open: false }),
+  autoOpenOnce: (sessionId) => {
+    const { autoOpenedSessions, openGallery } = get()
+    if (autoOpenedSessions[sessionId]) return false
+    if (splitWorkspaceBusyNow()) return false
+    if (useSheetPreviewStore.getState().path !== null) return false
+    if (useImageEditStore.getState().path !== null) return false
+    set({ autoOpenedSessions: { ...autoOpenedSessions, [sessionId]: true } })
+    openGallery()
+    return true
+  }
 }))
 
 /**

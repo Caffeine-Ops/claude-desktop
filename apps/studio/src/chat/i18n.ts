@@ -340,6 +340,21 @@ const STRINGS = {
     imagePreviewClose: '关闭预览',
     imageAttachedAlt: '附加图片',
 
+    // 会话图库右栏（ThreadView/ImageGalleryPanel）
+    galleryButton: '图库',
+    galleryTitle: '会话图库',
+    galleryEmpty: '本次会话还没有生成过图片',
+    galleryEmptyHint: '让 AI 生成图片后，会自动收进这里',
+    galleryClose: '关闭图库',
+    galleryPrev: '上一张',
+    galleryNext: '下一张',
+    gallerySaveAs: '另存为…',
+    gallerySaved: '已保存到 {name}',
+    gallerySaveFailed: '保存失败：{reason}',
+    galleryEdit: '改这张',
+    galleryReveal: '在文件夹中显示',
+    galleryLoadError: '图片读取失败，文件可能已被移动',
+
     // Tray menu (main process mirrors these via its own tiny table)
     trayShowHide: '显示 / 隐藏',
     trayQuit: '退出',
@@ -735,6 +750,20 @@ const STRINGS = {
     imagePreviewAria: 'Image preview',
     imagePreviewClose: 'Close preview',
     imageAttachedAlt: 'Attached image',
+
+    galleryButton: 'Gallery',
+    galleryTitle: 'Session gallery',
+    galleryEmpty: 'No images generated in this session yet',
+    galleryEmptyHint: 'Images the AI generates will be collected here',
+    galleryClose: 'Close gallery',
+    galleryPrev: 'Previous',
+    galleryNext: 'Next',
+    gallerySaveAs: 'Save as…',
+    gallerySaved: 'Saved to {name}',
+    gallerySaveFailed: 'Save failed: {reason}',
+    galleryEdit: 'Edit this',
+    galleryReveal: 'Reveal in folder',
+    galleryLoadError: 'Could not load image — it may have been moved',
 
     trayShowHide: 'Show / Hide',
     trayQuit: 'Quit',

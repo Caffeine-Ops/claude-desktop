@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { ListChecks, MoreHorizontal } from 'lucide-react'
 
@@ -16,14 +16,14 @@ import {
 import { Button } from '@/src/components/ui/button'
 import type { ShellStatFileInfo } from '@desktop-shared/ipc-channels'
 import { useI18n, useT } from '../../../i18n'
-import { useChatStore } from '../../../stores/chat'
 import {
   useImageEditStore,
   useSheetPreviewStore,
   useSplitWorkspaceBusy
 } from '../../../stores/filePreview'
-import { deliverableKind, DELIVERABLE_PATH_RE } from './AssistantMessage'
-import { detectImageGen } from './ImageGenCard'
+import { useSessionOutputsStore } from '../../../stores/sessionOutputs'
+import { deliverableKind } from './AssistantMessage'
+import { isEditableImageExt } from '../../../lib/imageKinds'
 
 /* ─────────────────────── session outputs popover ─────────────────────── */
 
@@ -59,113 +59,43 @@ function relTime(mtimeMs: number, zh: boolean): string {
 }
 
 /**
- * Every deliverable-looking path the foreground session has produced, newest
- * first, plus `freshlyAdded` — the subset that just landed *while this hook
- * stayed mounted* (drives the row entrance/accent-bar and the trigger's ring
- * pulse). Two detection sources, mirroring what already renders inline so the
- * panel never surprises the user with a file they haven't seen a card for:
+ * 前台会话已核实存在的产出物（最新在前）+ `freshlyAdded`（刚落盘的那批，
+ * 驱动行入场强调条与触发按钮的提示环）。两个检测来源与内联卡片一一对应：
+ * 正文提及（DELIVERABLE_PATH_RE）与生成图（imagegen / gpt-image-2 的 Bash
+ * stdout）——扫描是 lib/sessionImages 的纯函数，核实走 statFiles。
  *
- *   - Prose mentions (AssistantDeliverables' contract): any assistant text
- *     matching DELIVERABLE_PATH_RE — the "here are your files" moment at the
- *     end of a ppt-creator / spreadsheets run.
- *   - Generated images (ImageGenCard's contract): imagegen/gpt-image-2 Bash
- *     calls, whose result stdout carries the output paths — these rarely get
- *     re-mentioned in prose, so the text scan alone would miss them.
- *
- * Candidates are deduped by path and verified against disk via statFiles in
- * one batch (same pattern as AssistantDeliverables) — a path the model only
- * *mentioned* never earns a row.
- *
- * `freshlyAdded` semantics (why this needs its own tracking, not just a
- * files.length diff): switching to a session that already has 5 outputs must
- * NOT play the "just arrived" animation — nothing just happened, you just
- * looked at it. Only a genuine same-session growth counts as fresh. The seed
- * baseline is captured inside the SAME statFiles resolution that first
- * populates `files` for a given sessionId — seeding it any earlier (e.g. off
- * a bare sessionId-changed effect) would race the async fetch and seed off
- * the PREVIOUS session's stale path list.
+ * 2026-09-07 收敛：数据源是 stores/sessionOutputs，由 ThreadView 里挂载一次的
+ * SessionOutputsFeed 数据泵独家写入；本 hook 只是选择器。freshlyAdded 的语义
+ * （切会话不算新增、全新会话第一份产出算、2.6s 自动清）全在
+ * lib/sessionOutputsFeed 的 reducer 里，有测试。
  */
-function useSessionOutputs(): {
+export function useSessionOutputs(): {
   files: readonly ShellStatFileInfo[]
   freshlyAdded: ReadonlySet<string>
 } {
-  const sessionId = useChatStore((s) => s.sessionId)
-  const messages = useChatStore((s) => s.messages)
-  const candidatesKey = useMemo(() => {
-    const seen = new Set<string>()
-    for (const m of messages) {
-      const running =
-        (m as { status?: { type?: string } }).status?.type === 'running'
-      const content = (m as { content?: readonly unknown[] }).content
-      if (!Array.isArray(content)) continue
-      for (const part of content) {
-        const p = part as { type?: string; text?: string; [k: string]: unknown }
-        if (!running && p.type === 'text' && typeof p.text === 'string') {
-          for (const match of p.text.matchAll(DELIVERABLE_PATH_RE)) {
-            seen.add(match[0])
-          }
-        }
-        if (p.type === 'tool-call' && p.toolName === 'Bash') {
-          const settled = typeof p.endedAt === 'number'
-          if (!settled) continue
-          const info = detectImageGen(p.args, p.result, false)
-          if (info) for (const path of info.paths) seen.add(path)
-        }
-      }
-    }
-    return [...seen].slice(0, 40).join('\n')
-  }, [messages])
-
-  const [files, setFiles] = useState<readonly ShellStatFileInfo[]>([])
-  const [freshlyAdded, setFreshlyAdded] = useState<ReadonlySet<string>>(new Set())
-  // 累积"已见过"的路径，按 sessionId 隔离——每次 statFiles resolve 都在
-  // 这同一个回调里既 setFiles 又做新增 diff，两者共享同一份新鲜数据，
-  // 避免用单独的 effect 追 sessionId 变化时跟异步 fetch 产生竞态。
-  const seenRef = useRef<{ sessionId: string | null; seen: Set<string> }>({
-    sessionId: null,
-    seen: new Set()
-  })
-
-  useEffect(() => {
-    if (!candidatesKey) {
-      setFiles([])
-      return
-    }
-    let cancelled = false
-    void window.chatApi
-      .statFiles({ paths: candidatesKey.split('\n') })
-      .then((r) => {
-        if (cancelled) return
-        // infos 与 files 同序同长（main 同一次 stat 双写）；倒序 = 最新在前。
-        const next = [...r.infos].reverse()
-        setFiles(next)
-        if (seenRef.current.sessionId !== sessionId) {
-          // 这个会话第一次拿到数据——当作"历史已有"，不触发新增动效。
-          seenRef.current = { sessionId, seen: new Set(next.map((f) => f.path)) }
-          return
-        }
-        const fresh = next.filter((f) => !seenRef.current.seen.has(f.path))
-        next.forEach((f) => seenRef.current.seen.add(f.path))
-        if (fresh.length > 0) setFreshlyAdded(new Set(fresh.map((f) => f.path)))
-      })
-      .catch(() => {
-        /* transient IPC failure — keep the previous list */
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [candidatesKey, sessionId])
-
-  // "刚新增"标记只活 2.6s（陪着行入场的强调条 + 触发按钮的提示环一起
-  // 播完），到点自动清空——不清的话下一次任意重渲染都会把这批路径
-  // 继续当"新"的，强调条会诡异地常驻。
-  useEffect(() => {
-    if (freshlyAdded.size === 0) return
-    const timer = window.setTimeout(() => setFreshlyAdded(new Set()), 2600)
-    return () => window.clearTimeout(timer)
-  }, [freshlyAdded])
-
+  const files = useSessionOutputsStore((s) => s.files)
+  const freshlyAdded = useSessionOutputsStore((s) => s.freshlyAdded)
   return { files, freshlyAdded }
+}
+
+/**
+ * 会话图库的数据源：files 里只留**生成图**（用户拖进来的附件图、正文顺嘴
+ * 提到的图都不算），最新在前。`arrival` = 一张生成图刚在本会话落盘并进入
+ * images 的事件（图库按钮靠它自动弹一次、面板靠它把大图切到新图）；为什么
+ * 不是 `images ∩ freshlyAdded` 见 lib/sessionOutputsFeed 头注释第 3 条。
+ *
+ * 与成果弹层共用同一份 store 快照，两处看到的必须是同一份事实；代价是共享
+ * 40 条候选上限（超限丢最旧，见 collectSessionOutputCandidates）。
+ */
+export function useSessionGeneratedImages(): {
+  images: readonly ShellStatFileInfo[]
+  freshlyAdded: ReadonlySet<string>
+  arrival: { path: string; seq: number; sessionId: string | null } | null
+} {
+  const images = useSessionOutputsStore((s) => s.images)
+  const freshlyAdded = useSessionOutputsStore((s) => s.freshlyAdded)
+  const arrival = useSessionOutputsStore((s) => s.arrival)
+  return { images, freshlyAdded, arrival }
 }
 
 /** One row in the outputs popover（v2 方案 C 的「文件」组，
@@ -197,7 +127,7 @@ function OutputRow({
   const ext = extOfPath(path)
   const kind = deliverableKind(ext)
   const previewableSheet = ext === 'xlsx' || ext === 'xls' || ext === 'csv'
-  const editableImage = ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'webp'
+  const editableImage = isEditableImageExt(ext)
   const splitBusy = useSplitWorkspaceBusy()
 
   const openExternal = (): void => {
@@ -347,7 +277,7 @@ function OutputImageCell({
   const name = path.split('/').pop() ?? path
   const ext = extOfPath(path)
   // gif 属于图像组但不进标记改图编辑器（编辑器只吃静态位图）——降级系统打开。
-  const editableImage = ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'webp'
+  const editableImage = isEditableImageExt(ext)
   const splitBusy = useSplitWorkspaceBusy()
   const [dataUrl, setDataUrl] = useState<string | null>(null)
 
