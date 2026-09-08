@@ -298,6 +298,9 @@ export interface Dict {
   'settings.appearance': string;
   'settings.appearanceThemeMode': string;
   'settings.appearanceHint': string;
+  // 语言并入外观 / 更新并入关于（2026-09-02 设置页重设计）后的分区标题与副标题。
+  'settings.appearanceAndLanguage': string;
+  'settings.appearanceAndLanguageHint': string;
   'settings.themeSystem': string;
   'settings.themeLight': string;
   'settings.themeDark': string;
@@ -415,6 +418,8 @@ export interface Dict {
   'settings.privacyDataDeletionHint': string;
   'settings.about': string;
   'settings.aboutHint': string;
+  'settings.aboutAndUpdate': string;
+  'settings.aboutAndUpdateHint': string;
   'settings.appUpdate': string;
   'settings.appUpdateHint': string;
   'updateApp.subtitle': string;
