@@ -24,6 +24,7 @@ import {
 } from '../../../stores/filePreview'
 import { extOf } from '../FileTypeIcon'
 import { basename } from '../ToolFormatters/helpers'
+import { useImageDataUrl, useImageThumbs } from '../useImageDataUrl'
 import { useSessionGeneratedImages } from './OutputsPanel'
 import { useWorkflowScriptPanelOpen } from './WorkflowScriptPanel'
 
@@ -49,157 +50,13 @@ import { useWorkflowScriptPanelOpen } from './WorkflowScriptPanel'
  * 窗口拖拽由根 layout 的 .window-drag-strip 统一负责，本栏不声明 drag。
  */
 
-/* ── 两级图片缓存 ──
- * CSP 禁止 file: 作 img src，字节只能经 IPC 拿。两条通道各司其职：
- *   - 缩略格走 IMAGE_THUMBS（main 用 nativeImage 缩到 160px，一次最多 60 张，
- *     与知识库图片卡共用的通用「路径 → 小图」通道）。此前缩略格也读全分辨率
- *     原图：40 张 3MB 的图 = 上百 MB base64 过 IPC、40 次全尺寸解码只为填
- *     84px 的格子（第二轮 code review 抓到）。
- *   - 大图走 readImageFile 拿原始字节，只给当前选中那一张；在途 promise 记忆化，
- *     快速翻页不会对同一张重复发读。
- * 两级都是模块级 Map，关面板不清（会话里反复开关图库是常态）。
- *
- *   - 键 = path + mtime + size，不能只按路径：image_gen.py 对目录输出用固定
- *     文件名（image_1.png…），--force 会原地覆盖，只按路径缓存会一直显示
- *     旧图、与聊天里新落的卡片打架。stat 信息 store 里已经带着。
- *   - 大图缓存双上限：条数 40 + 总字节 64MB（base64 长度近似），FIFO 淘汰——
- *     全分辨率图一张几 MB，只限条数会把几百 MB 钉在渲染进程里。缩略图一张
- *     十几 KB，只限条数（400）。 */
-const DATA_URL_CACHE_CAP = 40
-const DATA_URL_CACHE_BYTES = 64 * 1024 * 1024
-const dataUrlCache = new Map<string, string>()
-let dataUrlCacheBytes = 0
-const inflightReads = new Map<string, Promise<string | null>>()
-
-const THUMB_CACHE_CAP = 400
-const thumbCache = new Map<string, string>()
-const THUMB_BATCH = 60
+/* 图片字节的读取与缓存见 components/chat/useImageDataUrl（共享
+ * lib/imageDataUrlCache）：缩略格走 IMAGE_THUMBS 160px 小图，大图走
+ * readImageFile 全分辨率、只读当前选中一张；键含 mtime/size，同路径覆盖
+ * 重生成不会命中旧图。 */
 
 /** 每个会话上次在图库里看的那张（路径）。面板卸载即丢 state，靠它续上。 */
 const lastViewedBySession = new Map<string, string>()
-
-function cacheKey(file: ShellStatFileInfo): string {
-  return `${file.path}:${file.mtimeMs}:${file.size}`
-}
-
-/** 全分辨率读取，按 key 记忆化在途 promise；失败回 null（不缓存失败）。 */
-function readFullImage(key: string, path: string): Promise<string | null> {
-  const hit = dataUrlCache.get(key)
-  if (hit) return Promise.resolve(hit)
-  const inflight = inflightReads.get(key)
-  if (inflight) return inflight
-  const p = window.chatApi
-    .readImageFile({ absPath: path })
-    .then((r) => {
-      if (r.ok && r.dataUrl) {
-        rememberDataUrl(key, r.dataUrl)
-        return r.dataUrl
-      }
-      return null
-    })
-    .catch(() => null)
-    .finally(() => {
-      inflightReads.delete(key)
-    })
-  inflightReads.set(key, p)
-  return p
-}
-
-/**
- * 给一批文件拉缩略图（只拉缓存里没有的），完成后 bump 版本号触发重渲染。
- * 结果按 key 进 thumbCache；读不出的路径（损坏/被挪走）静默缺席，格子留占位。
- */
-function useGalleryThumbs(files: readonly ShellStatFileInfo[]): ReadonlyMap<string, string> {
-  const [, bump] = useState(0)
-  const missingKeys = files.filter((f) => !thumbCache.has(cacheKey(f)))
-  const missingSig = missingKeys.map(cacheKey).join('\n')
-  useEffect(() => {
-    if (missingKeys.length === 0) return
-    let cancelled = false
-    ;(async () => {
-      for (let i = 0; i < missingKeys.length; i += THUMB_BATCH) {
-        const batch = missingKeys.slice(i, i + THUMB_BATCH)
-        const r = await window.chatApi
-          .getImageThumbs({ paths: batch.map((f) => f.path) })
-          .catch(() => ({ thumbs: {} as Record<string, string> }))
-        if (cancelled) return
-        for (const f of batch) {
-          const url = r.thumbs[f.path]
-          if (!url) continue
-          if (thumbCache.size >= THUMB_CACHE_CAP) {
-            const oldest = thumbCache.keys().next().value
-            if (oldest !== undefined) thumbCache.delete(oldest)
-          }
-          thumbCache.set(cacheKey(f), url)
-        }
-        bump((n) => n + 1)
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-    // missingKeys 由 missingSig 完全决定。
-  }, [missingSig])
-  return thumbCache
-}
-
-function rememberDataUrl(key: string, dataUrl: string): void {
-  while (
-    dataUrlCache.size > 0 &&
-    (dataUrlCache.size >= DATA_URL_CACHE_CAP ||
-      dataUrlCacheBytes + dataUrl.length > DATA_URL_CACHE_BYTES)
-  ) {
-    const oldest = dataUrlCache.keys().next().value
-    if (oldest === undefined) break
-    dataUrlCacheBytes -= dataUrlCache.get(oldest)!.length
-    dataUrlCache.delete(oldest)
-  }
-  dataUrlCache.set(key, dataUrl)
-  dataUrlCacheBytes += dataUrl.length
-}
-
-type ImageLoad =
-  | { phase: 'loading' }
-  | { phase: 'ready'; dataUrl: string }
-  | { phase: 'error' }
-
-/**
- * 读一张图的 dataUrl。状态里记着它属于哪个 key：切到未缓存的新图时，effect
- * 要到提交后才把状态翻成 loading，渲染那一帧若直接回旧状态，大图区会先画一帧
- * 「上一张的像素 + 新一张的文件名」再淡出重进（第二轮 code review 抓到）。
- * 所以渲染期按 key 判：不匹配就看缓存，缓存没有即 loading。
- */
-function useImageDataUrl(file: ShellStatFileInfo | null): ImageLoad {
-  const key = file ? cacheKey(file) : null
-  const path = file?.path ?? null
-  const [state, setState] = useState<{ key: string | null; load: ImageLoad }>(() => {
-    const hit = key !== null ? dataUrlCache.get(key) : undefined
-    return { key, load: hit ? { phase: 'ready', dataUrl: hit } : { phase: 'loading' } }
-  })
-  useEffect(() => {
-    if (key === null || path === null) return
-    const hit = dataUrlCache.get(key)
-    if (hit) {
-      setState({ key, load: { phase: 'ready', dataUrl: hit } })
-      return
-    }
-    let cancelled = false
-    setState({ key, load: { phase: 'loading' } })
-    void readFullImage(key, path).then((dataUrl) => {
-      if (cancelled) return
-      setState({
-        key,
-        load: dataUrl ? { phase: 'ready', dataUrl } : { phase: 'error' }
-      })
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [key, path])
-  if (state.key === key) return state.load
-  const hit = key !== null ? dataUrlCache.get(key) : undefined
-  return hit ? { phase: 'ready', dataUrl: hit } : { phase: 'loading' }
-}
 
 /* ─────────────────────────── 缩略图格 ─────────────────────────── */
 
@@ -270,7 +127,7 @@ export function ImageGalleryPanel(): React.JSX.Element {
   const t = useT()
   const closeGallery = (): void => closeRightPanel('gallery')
   const { images, freshlyAdded, arrival } = useSessionGeneratedImages()
-  const thumbs = useGalleryThumbs(images)
+  const thumbOf = useImageThumbs(images)
 
   // 选中态存路径而不是下标：新图落盘会把列表整体往后推一位，存下标会让
   // 用户正看着的那张「跳」成别的图。按会话记在模块级 Map 里：面板关掉再开
@@ -424,7 +281,7 @@ export function ImageGalleryPanel(): React.JSX.Element {
                 <GalleryThumb
                   key={f.path}
                   file={f}
-                  thumb={thumbs.get(cacheKey(f))}
+                  thumb={thumbOf(f)}
                   selected={f.path === currentPath}
                   isNew={freshlyAdded.has(f.path)}
                   onSelect={() => setSelectedPath(f.path)}
