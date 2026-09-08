@@ -163,8 +163,8 @@ import {
   type KbCategoriesUpdatePayload,
   type KbCategoriesResult,
   type KbDomainPayload,
-  type KbImageThumbsPayload,
-  type KbImageThumbsResult,
+  type ImageThumbsPayload,
+  type ImageThumbsResult,
   type ProposalImageApiConfig,
   type ProposalImageGeneratePayload,
   type ProposalImageEditPayload,
@@ -493,7 +493,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.KB_CATALOG_REBUILD)
   ipcMain.removeHandler(IPC_CHANNELS.KB_CATEGORIES_GET)
   ipcMain.removeHandler(IPC_CHANNELS.KB_CATEGORIES_UPDATE)
-  ipcMain.removeHandler(IPC_CHANNELS.KB_IMAGE_THUMBS)
+  ipcMain.removeHandler(IPC_CHANNELS.IMAGE_THUMBS)
   ipcMain.removeHandler(IPC_CHANNELS.KB_DOCS_LIST)
   ipcMain.removeHandler(IPC_CHANNELS.KB_TOOLING_CHECK)
   ipcMain.removeHandler(IPC_CHANNELS.KB_IMPORT_PICK)
@@ -3198,8 +3198,8 @@ export function registerIpcHandlers(): void {
   // 单次上限 60 张；损坏/非绝对路径/超上限的静默缺席——预览是装饰不是数据，
   // 任何单张失败都不该打断整批。
   ipcMain.handle(
-    IPC_CHANNELS.KB_IMAGE_THUMBS,
-    async (_event, payload: KbImageThumbsPayload): Promise<KbImageThumbsResult> => {
+    IPC_CHANNELS.IMAGE_THUMBS,
+    async (_event, payload: ImageThumbsPayload): Promise<ImageThumbsResult> => {
       const MAX_THUMBS = 60
       const thumbs: Record<string, string> = {}
       const paths = Array.isArray(payload?.paths) ? payload.paths.slice(0, MAX_THUMBS) : []

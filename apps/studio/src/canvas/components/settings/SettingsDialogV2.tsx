@@ -306,7 +306,9 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       {
         id: 'appearance',
-        labelKey: 'settingsV2.appearanceAndLanguage',
+        // 用字典里真实存在的 key（与 sectionHeader 同一个），settingsV2.* 命名空间
+        // 一个键都没进字典、全靠中文 fallback——英文界面会露中文（code review 抓到）。
+        labelKey: 'settings.appearanceAndLanguage',
         fallback: '外观与语言',
         icon: SunMoon,
         keywords:
@@ -353,7 +355,7 @@ const NAV_GROUPS: NavGroup[] = [
       },
       {
         id: 'about',
-        labelKey: 'settingsV2.aboutAndUpdate',
+        labelKey: 'settings.aboutAndUpdate',
         fallback: '关于与更新',
         icon: Info,
         keywords: '关于 版本 更新 升级 许可 反馈 about version update upgrade license',

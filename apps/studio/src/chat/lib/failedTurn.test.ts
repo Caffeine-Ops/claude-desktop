@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'bun:test'
+import { describe, it, expect, test } from 'bun:test'
 
-import { markTurnFailed, prepareRetry, type FailedTurnSlot } from './failedTurn'
+import { dismissFailedTurn, markTurnFailed, prepareRetry, type FailedTurnSlot } from './failedTurn'
 
 const payload = { sessionId: 's1', text: 'hello' }
 const userMsg = { id: 'usr_1', role: 'user', content: [{ type: 'text', text: 'hello' }] }
@@ -62,5 +62,27 @@ describe('prepareRetry', () => {
     expect(
       prepareRetry(slot({ lastSentPayload: null, failedTurn: { messageId: 'a_1', error: 'x' } }))
     ).toBeNull()
+  })
+})
+
+describe('dismissFailedTurn', () => {
+  test('关掉重试条要连载荷一起清：之后再来的 error 不能把已放弃的那次重新弹回来', () => {
+    // 场景：用户 ✕ 掉重试条 → 下一次发送前，后台任务的合成回合报错（engine 只发
+    // 一条 error，没有新载荷）→ 若 lastSentPayload 还在，markTurnFailed 会把
+    // 重试条绑回已放弃的那条消息，「重试」就会重发用户已经放弃的话。
+    const slot = {
+      messages: [{ id: 'a1' }],
+      lastSentPayload: { text: 'hi' } as never,
+      failedTurn: { messageId: 'a1', error: 'boom' }
+    }
+    const dismissed = dismissFailedTurn(slot)
+    expect(dismissed.failedTurn).toBeNull()
+    expect(dismissed.lastSentPayload).toBeNull()
+    expect(markTurnFailed(dismissed, 'synthetic-1', 'later')).toBe(dismissed)
+  })
+
+  test('没有待重试的失败时是空操作，不换引用', () => {
+    const slot = { messages: [], lastSentPayload: { text: 'hi' } as never, failedTurn: null }
+    expect(dismissFailedTurn(slot)).toBe(slot)
   })
 })

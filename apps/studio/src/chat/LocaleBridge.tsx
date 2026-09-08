@@ -2,11 +2,9 @@
 
 import { useEffect } from 'react'
 
+import { detectInitialLocale } from '../canvas/i18n'
 import { useI18n } from './i18n'
 import { chatLangForLocale } from './lib/chatLangForLocale'
-
-/** canvas i18n 的持久化键（`src/canvas/i18n/index.tsx` 的 LS_KEY）。 */
-const CANVAS_LOCALE_KEY = 'open-design:locale'
 
 /**
  * 界面语言的**常驻**同步桥：canvas（设置页「界面语言」）→ chat 面。
@@ -38,9 +36,13 @@ const CANVAS_LOCALE_KEY = 'open-design:locale'
  *
  * 两条链，缺一不可
  * ----------------
- *   1. 挂载时对账一次：读 canvas 的持久化值直接校准 chat。**这条才是治
- *      存量的**——已经跑歪的用户（如上）不需要再去设置页点一次语言，下次
- *      启动自动归位。
+ *   1. 挂载时对账一次：用 canvas 自己的 detectInitialLocale（持久化值优先、
+ *      否则按系统语言）校准 chat。**这条才是治存量的**——已经跑歪的用户
+ *      （如上）不需要再去设置页点一次语言，下次启动自动归位。
+ *      **不能只读 localStorage**：「跟随系统」这条路径从不写盘（只有用户
+ *      显式选过才写），全新安装在英文系统上 canvas 判成 en、chat 却因读不到
+ *      键停在默认 zh——就是这座桥本来要修的混语言（2026-09-07 第二轮
+ *      code review 抓到）。
  *   2. 订阅 `od:locale-applied`：设置页当场改语言时同帧跟上，不用重启。
  *
  * 单向（canvas → chat），不做反向
@@ -63,12 +65,9 @@ export function LocaleBridge(): null {
       useI18n.getState().setLang(next)
     }
 
-    // 链 1：挂载对账（治存量分叉）
-    try {
-      sync(window.localStorage.getItem(CANVAS_LOCALE_KEY))
-    } catch {
-      /* localStorage 不可用（隐私模式等）：跳过对账，链 2 仍然有效 */
-    }
+    // 链 1：挂载对账（治存量分叉 + 首次运行）。detectInitialLocale 内部已
+    // 吞掉 localStorage 不可用的异常（隐私模式等），此处不必再包。
+    sync(detectInitialLocale())
 
     // 链 2：设置页当场改语言
     const onApplied = (e: Event): void => {
