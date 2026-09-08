@@ -51,8 +51,8 @@ import { useWorkflowScriptPanelOpen } from './WorkflowScriptPanel'
 
 /* ── 两级图片缓存 ──
  * CSP 禁止 file: 作 img src，字节只能经 IPC 拿。两条通道各司其职：
- *   - 缩略格走 KB_IMAGE_THUMBS（main 用 nativeImage 缩到 160px，一次最多 60 张，
- *     名字带 kb 但通道本身是通用的「路径 → 小图」）。此前缩略格也读全分辨率
+ *   - 缩略格走 IMAGE_THUMBS（main 用 nativeImage 缩到 160px，一次最多 60 张，
+ *     与知识库图片卡共用的通用「路径 → 小图」通道）。此前缩略格也读全分辨率
  *     原图：40 张 3MB 的图 = 上百 MB base64 过 IPC、40 次全尺寸解码只为填
  *     84px 的格子（第二轮 code review 抓到）。
  *   - 大图走 readImageFile 拿原始字节，只给当前选中那一张；在途 promise 记忆化，
@@ -117,7 +117,7 @@ function useGalleryThumbs(files: readonly ShellStatFileInfo[]): ReadonlyMap<stri
       for (let i = 0; i < missingKeys.length; i += THUMB_BATCH) {
         const batch = missingKeys.slice(i, i + THUMB_BATCH)
         const r = await window.chatApi
-          .getKbImageThumbs({ paths: batch.map((f) => f.path) })
+          .getImageThumbs({ paths: batch.map((f) => f.path) })
           .catch(() => ({ thumbs: {} as Record<string, string> }))
         if (cancelled) return
         for (const f of batch) {

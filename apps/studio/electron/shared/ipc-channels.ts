@@ -1175,12 +1175,15 @@ export const IPC_CHANNELS = {
    */
   KB_CATEGORIES_UPDATE: 'kb:categories-update',
   /**
-   * Renderer → main. 批量读图片缩略图（160px，nativeImage 缩放后的 data URL）。
-   * 「图片识别」卡片行的预览用——IMAGE_FILE_READ 回原图字节，几百张会爆内存；
-   * 这条只回小缩略图，单次上限 60 张，损坏/超限的路径静默缺席（调用方按
-   * 「有就显示、没有就占位」消费）。
+   * Renderer → main. 批量读图片缩略图（160px，nativeImage 缩放后的 data URL），
+   * 任意绝对路径都可。知识库「图片识别」卡片行与聊天页会话图库的缩略格共用——
+   * IMAGE_FILE_READ 回原图字节，几百张会爆内存；这条只回小缩略图，单次上限
+   * 60 张，损坏/超限的路径静默缺席（调用方按「有就显示、没有就占位」消费）。
+   * 2026-09-08 从 KB_IMAGE_THUMBS 改名：它从来不限于知识库，旧名会让人以为
+   * 图库不能用。线上字符串 'kb:image-thumbs' 保留不动，避免动到 daemon /
+   * web tab 那边的任何硬编码。
    */
-  KB_IMAGE_THUMBS: 'kb:image-thumbs',
+  IMAGE_THUMBS: 'kb:image-thumbs',
   // ── KB 托管仓库管理页（P2）──────────────────────────────────────
   KB_DOCS_LIST: 'kb:docs-list',
   KB_TOOLING_CHECK: 'kb:tooling-check',
@@ -2978,11 +2981,11 @@ export type KbCategoriesUpdatePayload = {
   | { action: 'move'; name: string; dir: 'up' | 'down' }
 )
 
-/** Payload for KB_IMAGE_THUMBS。paths 上限 60/次，超出部分静默丢弃。 */
-export type KbImageThumbsPayload = { paths: readonly string[] }
+/** Payload for IMAGE_THUMBS。paths 上限 60/次，超出部分静默丢弃。 */
+export type ImageThumbsPayload = { paths: readonly string[] }
 
-/** Result of KB_IMAGE_THUMBS。键 = 输入路径；读不出/损坏的路径缺席。 */
-export interface KbImageThumbsResult {
+/** Result of IMAGE_THUMBS。键 = 输入路径；读不出/损坏的路径缺席。 */
+export interface ImageThumbsResult {
   thumbs: Record<string, string>
 }
 
@@ -3906,7 +3909,7 @@ export interface ChatApi {
   updateKbCategories(payload: KbCategoriesUpdatePayload): Promise<KbCategoriesResult>
 
   /** 批量读图片缩略图（160px data URL）。读不出的路径在结果里缺席。 */
-  getKbImageThumbs(payload: KbImageThumbsPayload): Promise<KbImageThumbsResult>
+  getImageThumbs(payload: ImageThumbsPayload): Promise<ImageThumbsResult>
 
   /**
    * Export the proposal document via the OS native save dialog.
