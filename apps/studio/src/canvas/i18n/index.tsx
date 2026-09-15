@@ -105,7 +105,13 @@ export function resolveSystemLocale(languages: readonly string[]): Locale | null
 // First-run defaults to the user's browser/system language when possible.
 // An explicit user pick saved to localStorage always wins; unsupported
 // languages fall back to English.
-function detectInitialLocale(): Locale {
+//
+// 导出给 src/chat/LocaleBridge.tsx 做挂载对账：桥接原来直接读 LS_KEY，而
+// 「跟随系统」这条路径从不写 localStorage（只有用户显式 setLocale 才写），
+// 于是全新安装在英文系统上：画布按系统判成 en，chat 因为读不到键而停在自己
+// 的默认 zh——正是这座桥要修的混语言（2026-09-07 第二轮 code review 抓到）。
+// 两边必须用同一个判定函数，才叫「同源」。
+export function detectInitialLocale(): Locale {
   if (typeof window === 'undefined') return 'en';
   try {
     const stored = window.localStorage.getItem(LS_KEY);

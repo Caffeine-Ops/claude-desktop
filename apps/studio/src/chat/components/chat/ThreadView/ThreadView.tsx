@@ -59,9 +59,9 @@ import { ImageEditPanel } from './ImageEditPanel'
 import { ImageGalleryButton, ImageGalleryPanel } from './ImageGalleryPanel'
 import { SessionOutputsFeed } from './SessionOutputsFeed'
 import {
-  useImageEditStore,
-  useSheetPreviewStore,
-  useImageGalleryStore
+  closeRightPanel,
+  selectRightPanelKind,
+  useRightPanelStore
 } from '../../../stores/filePreview'
 import { stripMessageMarker } from '../../../lib/messageMarkers'
 import { condenseFileMentions } from '../../../lib/mentionDisplay'
@@ -530,23 +530,15 @@ export function ThreadView(): React.JSX.Element {
   // 信号（toolCallId / 开关 id），流式文本的每 delta 重渲染被隔离在面板
   // 组件自身（见 useStreamingWorkflowCallId 头注释）。
   const workflowPanelWanted = useWorkflowScriptPanelOpen()
-  // 表格预览右栏：用户点了成果卡片里的 xlsx/xls/csv。slides/proposal 分栏
-  // 时让位（卡片点击自身降级回系统应用打开，见 useSplitWorkspaceBusy）；
-  // 与 workflow 面板相争时预览赢——它是用户刚刚的显式点击，workflow 的
-  // 自动弹出不该压过它。
-  const sheetPreviewPath = useSheetPreviewStore((s) => s.path)
-  const showSheetPreview = sheetPreviewPath !== null && !isSplitMode
-  // 图片标记编辑右栏：用户点了成果卡片里的图片文件。开关语义与表格预览
-  // 完全同构；两者在 store 层交叉互斥（后开的赢，见 stores/filePreview），
-  // 这里不会同时非 null。
-  const imageEditPath = useImageEditStore((s) => s.path)
-  const showImageEdit = imageEditPath !== null && !isSplitMode
-  // 会话图库右栏：顶栏「图库」按钮 / 第一张生成图落盘时自动弹一次。让位
-  // 规则与另两面板同：分栏时不渲染（按钮那边同源禁用，不会写出脏 open；
-  // 开着时进入分栏由下面的 isSplitMode effect 真关）；
-  // 与表格预览 / 图片编辑在 store 层三方互斥（后开的赢），不会同时为真。
-  const galleryOpen = useImageGalleryStore((s) => s.open)
-  const showImageGallery = galleryOpen && !isSplitMode
+  // 右栏占用者（表格预览 / 图片标记编辑 / 会话图库三选一，stores/filePreview
+  // 的 useRightPanelStore 仲裁，后开的赢，天然不会同时为真）。slides/proposal/
+  // 写作分栏时让位（卡片点击自身降级回系统应用打开，见 useSplitWorkspaceBusy；
+  // 开着时进入分栏由下面的 effect 真关）；与 workflow 面板相争时占用者赢——
+  // 它是用户刚刚的显式点击 / 生成图落盘，workflow 的自动弹出不该压过它。
+  const rightPanelKind = useRightPanelStore(selectRightPanelKind)
+  const showSheetPreview = rightPanelKind === 'sheet' && !isSplitMode
+  const showImageEdit = rightPanelKind === 'image' && !isSplitMode
+  const showImageGallery = rightPanelKind === 'gallery' && !isSplitMode
   const showWorkflowPanel =
     workflowPanelWanted &&
     !isSplitMode &&
@@ -571,24 +563,18 @@ export function ThreadView(): React.JSX.Element {
   // 兜底用。
   const dragDepthRef = useRef(0)
   const composerRuntime = useComposerRuntime()
-  // 切会话即收起表格预览与图片编辑：路径虽跨会话有效（文件还在盘上），但
-  // 都是「点开看一眼/改一下」的瞬时动作，残留与新会话无关的旧面板读作
-  // 串台。挂载首跑也会触发一次——两个 close 都幂等，启动时 path 本就是 null。
+  // 切会话即收起右栏占用者（表格预览 / 图片编辑 / 图库）：路径虽跨会话有效
+  // （文件还在盘上），但都是「点开看一眼/改一下」的瞬时动作，残留与新会话
+  // 无关的旧面板读作串台。进入分栏（slides / proposal / 写作）也要真关：show*
+  // 只是「分栏时不渲染」，store 里的占用者若留着，用户退出分栏那一刻旧面板会
+  // 毫无动作地弹回来、把 chat 列重新收窄；期间落盘的图也因右栏「有人」而跳过
+  // 自动弹开记账（2026-09-07 code review 抓到）。挂载首跑也会触发一次——
+  // close 幂等，启动时本就为空。
+  // 依赖里任一变化都意味着当前占用者失效（退出分栏时右栏本就为空，再关
+  // 一次是空操作）。
   useEffect(() => {
-    useSheetPreviewStore.getState().closePreview()
-    useImageEditStore.getState().closeEditor()
-    useImageGalleryStore.getState().closeGallery()
-  }, [sessionId])
-  // 进入分栏（slides / proposal / 写作）也要真关：show* 只是「分栏时不渲染」，
-  // store 里的开关若留着，用户退出分栏那一刻旧面板会毫无动作地弹回来、把
-  // chat 列重新收窄；期间落盘的图也因 open 已为 true 而跳过自动弹开记账
-  // （2026-09-07 code review 抓到，三个面板同病）。三个 close 都幂等。
-  useEffect(() => {
-    if (!isSplitMode) return
-    useSheetPreviewStore.getState().closePreview()
-    useImageEditStore.getState().closeEditor()
-    useImageGalleryStore.getState().closeGallery()
-  }, [isSplitMode])
+    closeRightPanel()
+  }, [sessionId, isSplitMode])
   // Slides two-pane split is user-resizable. The chat rail used to be a
   // hard `w-[560px]` with a `border-r` hairline between the panes; per design
   // the hairline is gone (the panes now read as two separated blocks across a

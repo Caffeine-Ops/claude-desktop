@@ -10,7 +10,7 @@
  *    任务中途打开」的场景）；此后 status 全靠订阅推送。
  *  - 推送到 success 时重拉 catalog——索引文件刚被 main 重写，本地副本已旧。
  *  - catalog 为 null 且无任务在跑 = 从没建过索引 → 居中 CTA 空态。
- *  - 图片域额外批量拉 160px 缩略图（KB_IMAGE_THUMBS，只拉各卡片可见行）；
+ *  - 图片域额外批量拉 160px 缩略图（IMAGE_THUMBS，只拉各卡片可见行）；
  *    拉不到的（损坏/svg）回落文件图标占位——预览是装饰不是数据。
  *
  * 样式纪律同 AllFilesPanel 头注释（纯 shadcn + utility；头部工具行 no-drag）。
@@ -213,7 +213,7 @@ export function DocCatalogPanel({
       const merged = new Map(thumbs);
       for (let i = 0; i < wanted.length; i += 60) {
         try {
-          const r = await window.chatApi?.getKbImageThumbs({ paths: wanted.slice(i, i + 60) });
+          const r = await window.chatApi?.getImageThumbs({ paths: wanted.slice(i, i + 60) });
           if (!r) break;
           for (const [p, url] of Object.entries(r.thumbs)) merged.set(p, url);
         } catch (err) {

@@ -16,12 +16,9 @@ import {
 import { Button } from '@/src/components/ui/button'
 import type { ShellStatFileInfo } from '@desktop-shared/ipc-channels'
 import { useI18n, useT } from '../../../i18n'
-import {
-  useImageEditStore,
-  useSheetPreviewStore,
-  useSplitWorkspaceBusy
-} from '../../../stores/filePreview'
+import { openRightPanel, useSplitWorkspaceBusy } from '../../../stores/filePreview'
 import { useSessionOutputsStore } from '../../../stores/sessionOutputs'
+import { useImageThumbs } from '../useImageDataUrl'
 import { deliverableKind } from './AssistantMessage'
 import { isEditableImageExt } from '../../../lib/imageKinds'
 
@@ -136,11 +133,11 @@ function OutputRow({
 
   const open = (): void => {
     if (previewableSheet && !splitBusy) {
-      useSheetPreviewStore.getState().openPreview(path)
+      openRightPanel({ kind: 'sheet', path: path })
       return
     }
     if (editableImage && !splitBusy) {
-      useImageEditStore.getState().openEditor(path)
+      openRightPanel({ kind: 'image', path: path })
       return
     }
     openExternal()
@@ -253,9 +250,8 @@ function OutputRow({
 /**
  * 图像网格格（v2 方案 C 的「图像」组）：三列正方缩略图。
  *
- *   - 缩略图走 readImageFile（原始字节 dataUrl，与 ImageGenCard /
- *     ImageLightbox 同一 IPC）——面板打开才挂载、关闭即卸载，读的量
- *     可控；将来若图多到吃内存，再加缩略图尺寸参数的 IPC，别在这里
+ *   - 缩略图走 IMAGE_THUMBS 160px 小图 + 共享缓存（useImageThumbs，与会话
+ *     图库同一份；2026-09-08 起，此前每次打开都全分辨率重读）。别在这里
  *     用 file:// 直链（app:// origin 下会被 webSecurity 拦）。
  *   - 悬停浮出底部渐变文件名条——格子太小，常驻文字会切掉缩略图。
  *   - isNew 的网格语言是右上角品牌绿点（行式是左侧强调条）：spring 弹入、
@@ -266,9 +262,12 @@ function OutputRow({
  */
 function OutputImageCell({
   file,
+  dataUrl,
   isNew
 }: {
   file: ShellStatFileInfo
+  /** 160px 缩略图（父级用 useImageThumbs 批量拉）；没到 / 读不出为 undefined。 */
+  dataUrl: string | undefined
   isNew: boolean
 }): React.JSX.Element {
   const lang = useI18n((s) => s.lang)
@@ -279,29 +278,13 @@ function OutputImageCell({
   // gif 属于图像组但不进标记改图编辑器（编辑器只吃静态位图）——降级系统打开。
   const editableImage = isEditableImageExt(ext)
   const splitBusy = useSplitWorkspaceBusy()
-  const [dataUrl, setDataUrl] = useState<string | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    void window.chatApi
-      .readImageFile({ absPath: path })
-      .then((r) => {
-        if (!cancelled && r.ok && r.dataUrl) setDataUrl(r.dataUrl)
-      })
-      .catch(() => {
-        /* 文件被挪走/读失败——留占位 glyph，与行式 tile 的降级同观感 */
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [path])
 
   const openExternal = (): void => {
     void window.chatApi.openPath({ absPath: path })
   }
   const open = (): void => {
     if (editableImage && !splitBusy) {
-      useImageEditStore.getState().openEditor(path)
+      openRightPanel({ kind: 'image', path: path })
       return
     }
     openExternal()
@@ -410,6 +393,7 @@ export function OutputsButton(): React.JSX.Element {
   // 过滤，不值得 useMemo。
   const images = files.filter((f) => deliverableKind(extOfPath(f.path)).isImage)
   const docs = files.filter((f) => !deliverableKind(extOfPath(f.path)).isImage)
+  const thumbOf = useImageThumbs(images)
 
   // 环形提示的播放钥匙：freshlyAdded 每次非空就是一次真实的"到达"，用自增
   // 序号而不是 Set 本身当 key（我们只关心"发生过一次"，序号变化足以让
@@ -538,6 +522,7 @@ export function OutputsButton(): React.JSX.Element {
                     <OutputImageCell
                       key={f.path}
                       file={f}
+                      dataUrl={thumbOf(f)}
                       isNew={freshlyAdded.has(f.path)}
                     />
                   ))}

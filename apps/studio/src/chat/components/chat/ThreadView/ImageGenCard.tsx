@@ -1,10 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { useI18n } from '../../../i18n'
-import {
-  useImageEditStore,
-  useSplitWorkspaceBusy
-} from '../../../stores/filePreview'
+import { openRightPanel, useSplitWorkspaceBusy } from '../../../stores/filePreview'
 import type { ImageGenInfo } from '../../../lib/imageGenDetect'
 
 /* ───────────────── 图片生成卡（Bash → image_gen.py 特判）───────────────── */
@@ -150,7 +147,7 @@ function GeneratedImage({
 
   const open = (): void => {
     if (!splitBusy) {
-      useImageEditStore.getState().openEditor(path)
+      openRightPanel({ kind: 'image', path: path })
       return
     }
     void window.chatApi.openPath({ absPath: path })

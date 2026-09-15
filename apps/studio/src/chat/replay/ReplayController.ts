@@ -41,7 +41,7 @@ import {
 
 import { useChatStore } from '../stores/chat'
 import { useTodosStore } from '../stores/todos'
-import { useImageEditStore } from '../stores/filePreview'
+import { closeRightPanel, openRightPanel } from '../stores/filePreview'
 import { useComposerModeStore } from '../stores/composerMode'
 import { useSessionTitleStore } from '../stores/sessionTitle'
 import {
@@ -256,7 +256,7 @@ class ReplayControllerImpl {
     this.uiBufferingSince = null
 
     // 面板可能被 ui 轨打开着；先关再拆 slot。
-    useImageEditStore.getState().closeEditor()
+    closeRightPanel('image')
     const chat = useChatStore.getState()
     const saved = useReplayStore.getState().savedForegroundId
     chat.dropSession(sid)
@@ -321,7 +321,7 @@ class ReplayControllerImpl {
     try {
       chat.dropSession(this.sid)
       useTodosStore.getState().setTodos(this.sid, [])
-      useImageEditStore.getState().closeEditor()
+      closeRightPanel('image')
       this.uiBufferingSince = null
       chat.setForegroundSession(this.sid)
     } finally {
@@ -522,7 +522,7 @@ class ReplayControllerImpl {
       // 新一段表演开演：复位放弃标记，打开右侧面板（store 驱动，组件挂载
       // 后读盘 → dataUrl 就绪才注册 demo handle，后续步骤靠 buffering 等它）。
       this.uiAbandoned = false
-      useImageEditStore.getState().openEditor(it.path)
+      openRightPanel({ kind: 'image', path: it.path })
       return
     }
     if (it.op === 'askQuestion.open') {
@@ -592,7 +592,7 @@ class ReplayControllerImpl {
           break
         case 'imageEdit.close':
           // pressSend 自带延迟关面板；这里兜底（表演被部分放弃时保证面板收场）。
-          useImageEditStore.getState().closeEditor()
+          closeRightPanel('image')
           break
         default:
           break

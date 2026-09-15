@@ -18,11 +18,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/src/components/ui/too
 import { cn } from '@/src/lib/utils'
 import { useI18n, useT } from '../../../i18n'
 import { REASONING_PLACEHOLDER, useChatStore } from '../../../stores/chat'
-import {
-  useImageEditStore,
-  useSheetPreviewStore,
-  useSplitWorkspaceBusy
-} from '../../../stores/filePreview'
+import { openRightPanel, useSplitWorkspaceBusy } from '../../../stores/filePreview'
 import { ThinkingSpinner } from '../ThinkingSpinner'
 import { AssistantMarkdown } from '../AssistantMarkdown'
 import { ClampedBlock } from '../ToolFormatters/sharedComponents'
@@ -224,11 +220,11 @@ function DeliverableCard({
 
   const open = (): void => {
     if (previewableSheet && !splitBusy) {
-      useSheetPreviewStore.getState().openPreview(path)
+      openRightPanel({ kind: 'sheet', path: path })
       return
     }
     if (editableImage && !splitBusy) {
-      useImageEditStore.getState().openEditor(path)
+      openRightPanel({ kind: 'image', path: path })
       return
     }
     openExternal()

@@ -207,6 +207,42 @@ const DOC_CONVERT_PROMPTS: readonly ScenarioCatalogPrompt[] = [
   }
 ]
 
+const TRANSLATE_PROMPTS: readonly ScenarioCatalogPrompt[] = [
+  {
+    // 主路径：贴一段文字就走。目标语言留槽而不是写死「英文」——中译英和
+    // 英译中是同一个按钮，让用户改一个词而不是找第二个按钮。
+    label: '翻译一段文字',
+    text: '把下面这段文字翻译成【目标语言，例如英文/中文/日文】，意思准确、读起来自然：\n\n【粘贴原文】'
+  },
+  {
+    // 「【文稿文件】」命中 filePlaceholderPlugin 的文稿组合规则 → txt/md/docx/pdf。
+    // 不能写「文档文件」：会被 word 规则抢先命中，只给 .doc/.docx，PDF 选不了
+    // （文档处理的「长文档提炼」踩过同一个坑）。
+    label: '翻译整份文件',
+    text: '把【文稿文件】整份翻译成【目标语言】，标题、段落、列表和表格的结构照原样保留，输出成一份新文件。'
+  },
+  {
+    // 中译英是最常见的「不只要翻对、还要翻得像母语」场景，单独给一条入口，
+    // 文案点明「地道」——这是它和「翻译一段文字」的分界线。
+    label: '中译英并润色',
+    text: '把下面这段中文翻译成地道的英文，用【场合，例如商务邮件/学术论文/产品介绍】的语气，不要中式英语：\n\n【粘贴中文】'
+  },
+  {
+    label: '双语对照',
+    text: '把下面的内容翻译成【目标语言】，按段落做成原文在上、译文在下的双语对照，方便逐段核对：\n\n【粘贴原文】'
+  },
+  {
+    // 术语表是「翻译一致性」的基础设施：先定表再翻长文，前后不会一词多译。
+    label: '整理术语表',
+    text: '从【文稿文件】里挑出专业术语和固定说法，做成一张中英术语对照表（术语、译法、出现的语境），后面翻译全文时统一按这张表来。'
+  },
+  {
+    // 邮件翻译的难点是语气而不是词汇：客气程度、称呼、结尾套话都要对得上。
+    label: '翻译邮件',
+    text: '帮我把这封邮件翻译成【目标语言】，保持原来的称呼、语气和客气程度，结尾用对方语言里惯用的结束语：\n\n【粘贴邮件】'
+  }
+]
+
 const IMAGEGEN_PROMPTS: readonly ScenarioCatalogPrompt[] = [
   {
     // 【图片文件】是 filePlaceholderPlugin 的文件槽（「图片」关键词 →
@@ -376,6 +412,11 @@ export const DEFAULT_SCENARIO_CATALOG: ScenarioCatalog = {
           kind: 'skill',
           value: '/claude-desktop:doc-convert',
           prompts: DOC_CONVERT_PROMPTS
+        },
+        {
+          kind: 'skill',
+          value: '/claude-desktop:translate',
+          prompts: TRANSLATE_PROMPTS
         },
         {
           kind: 'skill',

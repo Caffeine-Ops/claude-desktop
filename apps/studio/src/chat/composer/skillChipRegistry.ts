@@ -187,6 +187,21 @@ export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
     label: '文档处理',
     description: '提取文字、表格台账、格式转换'
   },
+  // translate — 日常翻译。namespaced + 裸名双注册，理由同 ppt-creator。
+  // 纯手册技能（无脚本）：翻译本身模型就会，SKILL.md 负责立规矩——保排版、
+  // 术语前后一致、看不清的原文不硬猜。文件翻译借 doc-convert 的取料脚本。
+  {
+    match: '/claude-desktop:translate',
+    image: '/skill-icons/translate.png',
+    label: '日常翻译',
+    description: '中英互译、文件翻译、双语对照'
+  },
+  {
+    match: '/translate',
+    image: '/skill-icons/translate.png',
+    label: '日常翻译',
+    description: '中英互译、文件翻译、双语对照'
+  },
   // 代码开发场景伪命令（日常开发 / 网站开发 / Agent 应用）——ScenarioRail
   // 的二级导航标签，不是真实 CLI skill：发送时 FusionRuntimeProvider.onNew
   // 会把命令剥掉只发正文（stripScenarioSlash）。从 SCENARIO_SLASH_SPECS

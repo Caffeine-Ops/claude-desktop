@@ -21,7 +21,9 @@ import { useI18n } from '../../../i18n'
 import { useChatStore } from '../../../stores/chat'
 import {
   IMAGE_EDIT_MARKER,
-  useImageEditStore,
+  closeRightPanel,
+  selectImageEditPath,
+  useRightPanelStore,
   type ImageEditMeta
 } from '../../../stores/filePreview'
 import { dispatchChatTurn } from '../../../lib/dispatchChatTurn'
@@ -38,7 +40,7 @@ import { Button } from '@/src/components/ui/button'
 /**
  * 标记式改图面板（2026-07-09，对齐用户给的 Gemini/Whisk 式参照图）：
  *
- *   点成果卡片里的图片 → useImageEditStore.openEditor(path) → ThreadView
+ *   点成果卡片里的图片 → openRightPanel({ kind: 'image', path }) → ThreadView
  *   分栏 → 本面板 readImageFile 读原图显示 → 用户在图上点选落编号标记、
  *   逐点填「描述改动」，可再添加素材图（融合）与全图级额外要求 → 发送。
  *
@@ -153,8 +155,8 @@ function renderAnnotatedImage(
 export function ImageEditPanel(): React.JSX.Element | null {
   const lang = useI18n((s) => s.lang)
   const zh = lang === 'zh'
-  const path = useImageEditStore((s) => s.path)
-  const closeEditor = useImageEditStore((s) => s.closeEditor)
+  const path = useRightPanelStore(selectImageEditPath)
+  const closeEditor = (): void => closeRightPanel('image')
   const streaming = useChatStore((s) => s.streaming)
   // 面板直发（dispatchChatTurn）绕过 composer.send()，输入框里同一张图
   // 的附件 chip 不会被正常发送路径消费——send() 里手动清（只清 path
@@ -384,7 +386,7 @@ export function ImageEditPanel(): React.JSX.Element | null {
         window.setTimeout(() => {
           setDemoPressed(false)
           // closeEditor 是 zustand action（终身稳定），卸载后调用也无害。
-          useImageEditStore.getState().closeEditor()
+          closeRightPanel('image')
         }, 280)
       }
     }

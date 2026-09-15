@@ -156,8 +156,8 @@ import {
   type KbCategoriesResult,
   type KbDomainPayload,
   type KbCatalogStatusPayload,
-  type KbImageThumbsPayload,
-  type KbImageThumbsResult,
+  type ImageThumbsPayload,
+  type ImageThumbsResult,
   type ProposalImageApiConfig,
   type ProposalImageGeneratePayload,
   type ProposalImageEditPayload,
@@ -988,11 +988,11 @@ const chatApi: ChatApi = {
     ) as Promise<KbCategoriesResult>
   },
 
-  getKbImageThumbs(payload: KbImageThumbsPayload): Promise<KbImageThumbsResult> {
+  getImageThumbs(payload: ImageThumbsPayload): Promise<ImageThumbsResult> {
     return ipcRenderer.invoke(
-      IPC_CHANNELS.KB_IMAGE_THUMBS,
+      IPC_CHANNELS.IMAGE_THUMBS,
       payload
-    ) as Promise<KbImageThumbsResult>
+    ) as Promise<ImageThumbsResult>
   },
 
   readKbIndex() {
