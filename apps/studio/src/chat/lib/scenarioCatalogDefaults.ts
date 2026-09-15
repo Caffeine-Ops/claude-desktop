@@ -243,6 +243,40 @@ const TRANSLATE_PROMPTS: readonly ScenarioCatalogPrompt[] = [
   }
 ]
 
+const NEWS_PROMPTS: readonly ScenarioCatalogPrompt[] = [
+  {
+    // 主路径：什么都不填就能走。按「国内/国际/财经/科技」分小节是手册里定死的
+    // 结构，话术不重复描述，只说清「带来源」——这是新闻类话术的底线。
+    label: '今日要闻',
+    text: '帮我整理今天的要闻简报，分国内、国际、财经、科技四块，每条带来源和链接。'
+  },
+  {
+    // 民生新规是用户点名要的分类：政策类新闻的关键是「谁受影响、何时生效、
+    // 要不要做什么」，话术里点出来，模型才不会只翻译一遍公文标题。
+    label: '民生新规',
+    text: '最近有哪些新出台的民生政策和新规定？说清楚每条影响哪些人、什么时候生效、普通人需要做什么，附来源。'
+  },
+  {
+    label: '最近热门话题',
+    text: '最近几天大家都在讨论什么？列出热门话题，每个说明为什么热、各方观点是什么，不要站队。'
+  },
+  {
+    label: '国际热点',
+    text: '整理最近的国际热点新闻，每条讲清楚发生了什么、背景和可能的影响，附来源和日期。'
+  },
+  {
+    // 行业留槽而不是写死：同一个按钮覆盖所有行业，用户改一个词即可。
+    label: '行业动态',
+    text: '帮我追踪【行业，例如 AI/新能源/房地产】最近一周的动态，围绕融资、新品发布、政策、人事变动和关键数据整理，附来源。'
+  },
+  {
+    // 解读单条新闻：用户贴链接或正文。「【链接或正文】」不是文件槽（不含
+    // 「文件」关键词），filePlaceholderPlugin 不会给它弹文件选择器。
+    label: '解读这条新闻',
+    text: '帮我解读这条新闻：一句话摘要、需要哪些背景才能看懂、对谁有什么影响、报道里有哪些存疑的地方：\n\n【粘贴链接或正文】'
+  }
+]
+
 const IMAGEGEN_PROMPTS: readonly ScenarioCatalogPrompt[] = [
   {
     // 【图片文件】是 filePlaceholderPlugin 的文件槽（「图片」关键词 →
@@ -417,6 +451,11 @@ export const DEFAULT_SCENARIO_CATALOG: ScenarioCatalog = {
           kind: 'skill',
           value: '/claude-desktop:translate',
           prompts: TRANSLATE_PROMPTS
+        },
+        {
+          kind: 'skill',
+          value: '/claude-desktop:news',
+          prompts: NEWS_PROMPTS
         },
         {
           kind: 'skill',
