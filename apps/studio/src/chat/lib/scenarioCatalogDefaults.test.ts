@@ -86,6 +86,47 @@ describe('内置场景目录 · 文档处理', () => {
   })
 })
 
+const TRANSLATE_VALUE = '/claude-desktop:translate'
+
+describe('内置场景目录 · 日常翻译', () => {
+  it('日常办公分类里有日常翻译，且紧跟在文档处理之后', () => {
+    const daily = DEFAULT_SCENARIO_CATALOG.categories.find((c) => c.id === 'daily')
+    expect(daily).toBeDefined()
+    const values = daily!.items.map((i) => i.value)
+    const docIdx = values.indexOf(DOC_CONVERT_VALUE)
+    const translateIdx = values.indexOf(TRANSLATE_VALUE)
+    expect(docIdx).toBeGreaterThanOrEqual(0)
+    // 翻译与文档处理同属「处理已有文字/文件」一簇，紧挨着放；写方案/审标书
+    // 是另一条业务链，排在它们后面。摆放顺序即产品叙事。
+    expect(translateIdx).toBe(docIdx + 1)
+  })
+
+  it('六条话术：翻译文字 / 翻译文件 / 中译英润色 / 双语对照 / 术语表 / 邮件翻译', () => {
+    const item = allSkillItems().find((i) => i.value === TRANSLATE_VALUE)
+    expect(item?.prompts?.length).toBe(6)
+  })
+
+  it('翻译文件那条用「文稿文件」槽——PDF 和 Word 都要能选', () => {
+    // 写成「文档文件」会被 word 规则抢先命中，只给 .doc/.docx，PDF 反而选不了
+    // （文档处理的「长文档提炼」踩过同一个坑）。
+    const item = allSkillItems().find((i) => i.value === TRANSLATE_VALUE)
+    const fileOne = (item?.prompts ?? []).find((p) => p.text.includes('【文稿文件】'))
+    expect(fileOne).toBeDefined()
+    expect(acceptForPlaceholder('文稿文件')).toContain('.pdf')
+    expect(acceptForPlaceholder('文稿文件')).toContain('.docx')
+  })
+
+  it('裸名与命名空间两种写法都注册了同一套 chip 外观', () => {
+    // 技能命令有时带 claude-desktop: 前缀有时不带，只注册一份会让另一种写法
+    // 退化成光秃秃的英文命令（无中文标签、无图标）。
+    const ns = findBuiltinSkillChipSpec(TRANSLATE_VALUE)
+    const bare = findBuiltinSkillChipSpec('/translate')
+    expect(ns?.label).toBe('日常翻译')
+    expect(bare?.label).toBe('日常翻译')
+    expect(bare?.image).toBe(ns?.image)
+  })
+})
+
 describe('内置目录里每个技能条目都能查到 chip 外观', () => {
   // ScenarioRail 对 findSkillChipSpec 返回 null 的 chip 会整条静默跳过
   // （见 stores/scenarioCatalog.ts 的注释：「配了却看不见，最难查」）。
