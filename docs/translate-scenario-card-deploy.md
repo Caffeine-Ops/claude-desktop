@@ -1,5 +1,9 @@
 # 生产配置：给「日常翻译」加一张场景卡
 
+> **状态：已完成（2026-09-16）**。通过 `PUT /api/v1/admin/scenario-catalog` 直接提交，
+> 生产目录 version 10 → 11，位置在「文档处理」之后、「最新新闻」之前。下面的内容留作复核依据。
+> 提交时**必须带 `expected_version`**（等于当前 version，否则 409），后端已有历史版本可回滚。
+
 这是一份**照着填**的字段清单。操作步骤、注意事项（后台保存是整份覆盖、
 `version` 不要手填、图标必须走上传、1MB 上限）与「审标书」那次完全一样，
 **先读 [`tender-review-scenario-card-deploy.md`](./tender-review-scenario-card-deploy.md) 的第 1、2、3、5 节**，
