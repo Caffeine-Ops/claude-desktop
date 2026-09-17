@@ -1699,8 +1699,8 @@ function ChatHeader(): React.JSX.Element {
 /**
  * Empty thread state（2026-07-16 重排，原型 docs/empty-state-composer-
  * prototype.html，参考 WorkBuddy 空态）: a vertically-centered block of
- * hero title (two big lines) → slogan → Composer variant='hero'（自带
- * ScenarioRail 分类 tab + 技能/推荐 prompt chips + 灰壳托盘，见 Composer
+ * hero title → slogan → Composer variant='hero'（自带分类 tab + 技能/
+ * 推荐 prompt chips，有无案例两种布局，见 Composer
  * 的注释）→ demo showcase → promo banner. The composer is rendered HERE
  * (not in the bottom dock) so it sits in the centered group; the bottom
  * dock is hidden while empty (ThreadPrimitive.If empty={false} in the
@@ -1713,8 +1713,8 @@ const COMPACT_TRANSITION = { type: 'spring', bounce: 0.1, visualDuration: 0.34 }
 
 function EmptyState(): React.JSX.Element {
   const t = useT()
-  // 紧凑模式：composer 里选中了有案例的技能 → 大标题收成一行、副标题隐藏、
-  // 上下留白收紧，好让 rail + composer + 案例区在 800px 高的窗口里**不滚动**
+  // 紧凑模式：composer 里选中了有案例的技能 → 标题换居中一行、上下留白收紧，
+  // 好让 rail + composer + 案例区在 800px 高的窗口里**不滚动**
   // 全部可见（用户硬要求，2026-08-17）。判定与 SkillCaseShowcase 同源。
   const compact = useSkillCases().visible
   // Hero 标题在全角逗号处断成两行大字（「不止聊天，」/「搞定一切」）。英文
@@ -1748,12 +1748,13 @@ function EmptyState(): React.JSX.Element {
       animate={compact ? { paddingTop: 4, paddingBottom: 4, marginBottom: -48 } : { paddingTop: 40, paddingBottom: 40, marginBottom: 0 }}
       transition={COMPACT_TRANSITION}
     >
-      {/* 大标题 + 副标题：只在非紧凑模式渲染。进紧凑时高度收到 0 + 淡出，
-          下面的 rail / composer 顺着文档流平滑上移；小标题在同一时刻从
-          Composer 的 heroLeading 槽淡入（见下）。overflow-hidden 让高度动画
+      {/* 标题两种形态按有无案例（compact）切换，交替时各自高度 0 ↔ auto + 淡入
+          淡出，下面的 composer 顺着文档流平滑移动。overflow-hidden 让高度动画
           期间文字不外溢。 */}
       <AnimatePresence initial={false}>
         {!compact ? (
+          // 非紧凑（没有案例）：两行左对齐大标题 + 副标题——改版前样式，用户
+          // 要求没案例时保持不变。
           <motion.div
             key="hero-title"
             className="overflow-hidden"
@@ -1763,7 +1764,9 @@ function EmptyState(): React.JSX.Element {
             transition={COMPACT_TRANSITION}
           >
             <motion.div {...heroFade}>
-              <h1 className="text-[clamp(36px,4.5vw,52px)] font-bold leading-[1.18] tracking-tight text-foreground">
+              {/* 字号 2026-09-17 从 clamp(36px,4.5vw,52px) 调小（用户要求）：常见
+                  1280 宽窗口下原来顶格 52px，两行大字压得太重。 */}
+              <h1 className="text-[clamp(32px,3.6vw,42px)] font-bold leading-[1.18] tracking-tight text-foreground">
                 {titleParts.map((part, i) => (
                   <span key={i} className="block">
                     {i < titleParts.length - 1 ? `${part}，` : part}
@@ -1775,33 +1778,32 @@ function EmptyState(): React.JSX.Element {
               </p>
             </motion.div>
           </motion.div>
-        ) : null}
+        ) : (
+          // 紧凑（有案例；2026-09-17「居中聚焦」改版，三方案对比稿 ① 定稿）：
+          // 居中一行标题 + 副标题，下接居中的分类 tab 与卡片，一条轴线。旧版
+          // 紧凑模式把小标题塞在 tab 行左侧、tab 在右，两边各管各的。
+          <motion.div
+            key="hero-title-compact"
+            className="overflow-hidden text-center"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={COMPACT_TRANSITION}
+          >
+            <h1 className="text-[26px] font-bold leading-[1.2] tracking-tight text-foreground">
+              {t('emptyStateTitle')}
+            </h1>
+            <p className="mb-5 mt-1.5 text-[13.5px] text-muted-foreground/80">
+              {t('emptyStateScenarioHint')}
+            </p>
+          </motion.div>
+        )}
       </AnimatePresence>
 
       {/* Composer sits inside the centered block (not the bottom dock).
-          hero 形态：分类 tab + 技能 chips 的 ScenarioRail 由它自己渲染在
-          卡片上方，工作目录/权限行收进灰壳托盘的延伸条。
-          紧凑模式：一行小标题通过 heroLeading 塞到 rail 的分类 tab 同一行左侧
-          （2026-08-18 方案 1「三层结构」：标题+tab 一行 / chip 一行 / 输入框）。 */}
-      <Composer
-        variant="hero"
-        heroLeading={
-          <AnimatePresence initial={false}>
-            {compact ? (
-              <motion.h1
-                key="hero-title-compact"
-                className="min-w-0 truncate text-[24px] font-bold leading-tight tracking-tight text-foreground"
-                initial={{ opacity: 0, x: -8 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -8 }}
-                transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-              >
-                {t('emptyStateTitle')}
-              </motion.h1>
-            ) : null}
-          </AnimatePresence>
-        }
-      />
+          hero 形态：分类 tab / 技能 chip 行 / 工作目录权限行的摆放按有无
+          案例分两种布局，都由 Composer 自己渲染（见其 variant 注释）。 */}
+      <Composer variant="hero" />
 
       {/* 「看看它能做什么」演示区：内置演示录像的卡片入口（点卡片就地
           回放）。没有内置录像时自渲染 null，页面与旧版完全一致。 */}

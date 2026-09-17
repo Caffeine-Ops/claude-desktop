@@ -17,7 +17,7 @@ import { SkillChipIcon } from '../SkillChipIcon'
 /**
  * EmptyState 场景导航（原型 docs/empty-state-composer-prototype.html，参考
  * WorkBuddy 空态）：分类 tab + 一条「双态」chip 行，渲染在 hero composer
- * 卡片上方（Composer variant='hero' 时由 Composer 自己挂载，见其注释）。
+ * 卡片周围（Composer variant='hero' 时由 Composer 自己挂载，见其注释）。
  *
  * 双态 chip 行的单一真源是 composer.text 本身，不另设选中态 state：
  *
@@ -54,6 +54,11 @@ import { SkillChipIcon } from '../SkillChipIcon'
  * 散在页面上不像可点的东西（2026-07-16 用户反馈），升半档改柔底。此前
  * 三层各一种语言（墨黑 pill / 白卡描边 / 灰底 pill）且进三级后没有位置
  * 锚，是本次重做的两个动因。
+ *
+ * **2026-09-17「居中聚焦」改版只作用于紧凑模式**（下方有案例条时；三方案
+ * 对比稿 ① 定稿）：tab 居中挪到卡片上方、改白底浮起胶囊；chip 行挪到卡片
+ * 下方、改描边胶囊；推荐行去掉技能锚点（与 composer chip 重复）、行首改
+ * 「试试」标签。**非紧凑模式（没有案例）维持上面这套样式不变**（用户要求）。
  */
 
 /* ───────────────────────── 数据 ─────────────────────────
@@ -253,15 +258,11 @@ const COLLAPSED_PROMPT_COUNT = 6
 
 interface ScenarioRailProps {
   /**
-   * 紧凑模式（EmptyState 选中了有案例的技能，见 useSkillCases）：chip 行不
-   * 折行、改成单行横向滑动（右侧渐隐提示还有），tab 行与 chip 行的间距收紧。
-   * 目的是给下方的案例条让出高度，同时不让上半部分挤成一团（2026-08-18
-   * 方案 1「三层结构」，设计稿 docs/case-empty-state-1-three-layers.html）。
+   * 紧凑模式（EmptyState 选中了有案例的技能，见 useSkillCases）：换「居中
+   * 聚焦」新样式，chip 行单行横滑（右侧渐隐提示还有），给下方案例条让出高度。
+   * 非紧凑：改版前的旧样式。
    */
   compact?: boolean
-  /** 与分类 tab 同一行、放在左侧的节点（紧凑模式下 EmptyState 把一行小标题
-   *  放这里，tab 组随之靠右）。null 时 tab 组保持靠左。 */
-  leading?: React.ReactNode
   /**
    * 选定技能：整 input 重置为该技能的 slash chip（resetWithSlashCommand）。
    * 旧正文一并清空——点技能=重开该技能流程，随后正文为空、推荐行出现。
@@ -275,14 +276,29 @@ interface ScenarioRailProps {
   restoreDraft: (snapshot: unknown | null) => void
 }
 
-export function ScenarioRail({
+/**
+ * 场景导航拆成两块，由 Composer 决定各放哪（2026-09-17「居中聚焦」改版，
+ * 设计稿三选一定稿 ①）：
+ *
+ *   - `tabs`  —— 分类 tab；
+ *   - `chips` —— 双态 chip 行（技能 / 推荐 prompt）。
+ *
+ * 紧凑模式（有案例）：tabs 居中在卡片上方、chips 在卡片下方；非紧凑模式
+ * （没案例）：两块按改版前的样子一起叠在卡片上方，样式也是改版前的。
+ *
+ * 为什么是一个返回两个节点的 hook，而不是两个组件：两块共享同一份状态——
+ * chip 行显示哪个分类的技能取决于 tab 选中项，切 tab 还要存/取草稿。拆成两个
+ * 组件就得把 catId / drafts 提到 Composer 里再往下传；hook 让状态仍然只住在
+ * 一处，Composer 只负责「放在哪」。
+ *
+ */
+export function useScenarioRail({
   compact = false,
-  leading = null,
   onInsertSkill,
   onFillPrompt,
   snapshotDraft,
   restoreDraft
-}: ScenarioRailProps): React.JSX.Element {
+}: ScenarioRailProps): { tabs: React.ReactNode; chips: React.ReactNode } {
   const t = useT()
   const tFormat = useTFormat()
   const catalog = useScenarioCatalogStore((s) => s.catalog)
@@ -338,20 +354,64 @@ export function ScenarioRail({
     activePrompts.length > 0 &&
     bodyAfterChip === ''
 
-  return (
-    <motion.div layout transition={LAYOUT_TRANSITION}>
-      {/* 分类 tab 组：浅灰 pill 容器，选中项一个共享 layoutId 的墨黑块在
-          tab 间滑动（bg-foreground 暗色下自动反转为白底黑字——原型 Tweaks
-          里验证过的 ink 选中态）。 */}
-      {/* tab 行：左侧可放 leading（紧凑模式的一行小标题），tab 组挂 layout——
-          leading 出现/消失时它在左右两端之间滑过去，而不是瞬移。 */}
-      <div className="flex items-center justify-between gap-4">
-        {leading}
-        <motion.div
-          layout
-          transition={LAYOUT_TRANSITION}
-          className="inline-flex shrink-0 gap-1 rounded-[14px] bg-foreground/[0.045] p-1"
-        >
+  // ── 两套样式按 compact 切换（2026-09-17 用户拍板）──
+  // 「居中聚焦」改版只作用于**紧凑模式**（下方出现案例条时）：没有案例时
+  // 页面空间充裕，维持改版前的样式与布局不变（方案 B「同族渐进 + 技能锚点」，
+  // 见文件头）。所以下面每个可视元素都是 compact ? 新 : 旧 两份 class。
+
+  // 旧（非紧凑）：柔底无边 chip，与 composer 内 chip 同族。
+  const softChipCls =
+    'rounded-[10px] bg-foreground/[0.05] px-[13px] py-2 text-[13.5px] font-medium text-foreground transition-colors hover:bg-foreground/[0.09] dark:bg-white/[0.08] dark:hover:bg-white/[0.13]'
+  // 新（紧凑）：白底描边胶囊（设计稿 ① 的「试试」行）。chip 行挪到卡片下方后
+  // 紧贴页面底色，柔灰底块会和卡片投影糊成一片，描边胶囊边界更清楚，同时比
+  // 卡片轻一档，不和输入框抢主角。
+  const outlineChipCls =
+    'rounded-full border border-border/80 bg-card px-3 py-[5px] text-[12.5px] font-medium text-foreground/85 transition-colors hover:border-foreground/20 hover:bg-foreground/[0.03] hover:text-foreground dark:border-white/[0.1] dark:bg-white/[0.04] dark:hover:bg-white/[0.08]'
+  const chipCls = compact ? outlineChipCls : softChipCls
+
+  const tabs = compact ? (
+    // 新：居中、无外框的一排胶囊，选中项是一块共享 layoutId 的白底浮起胶囊在
+    // tab 间滑动（旧版墨黑块权重太重，紧凑模式下和发送钮、技能 chip 争焦点）。
+    <div className="flex items-center justify-center gap-1">
+      {categories.map((cat) => {
+        const active = cat.id === (category?.id ?? catId)
+        return (
+          <motion.button
+            key={cat.id}
+            type="button"
+            whileTap={{ scale: 0.96 }}
+            className={
+              'relative flex h-8 items-center rounded-full px-3.5 text-[13px] transition-colors ' +
+              (active
+                ? 'font-semibold text-foreground'
+                : 'font-medium text-muted-foreground hover:bg-foreground/[0.045] hover:text-foreground')
+            }
+            onClick={() => switchCategory(cat.id)}
+          >
+            {active && (
+              <motion.span
+                layoutId="scenario-cat-highlight"
+                className="absolute inset-0 rounded-full bg-card shadow-[0_1px_2px_rgba(0,0,0,0.06)] ring-1 ring-black/[0.09] dark:bg-white/[0.08] dark:ring-white/[0.12]"
+                transition={TAB_HIGHLIGHT_TRANSITION}
+              />
+            )}
+            <span className="relative z-10 flex items-center gap-1.5">
+              {(cat.icon ? CATEGORY_ICONS[cat.icon] : undefined) ?? FALLBACK_CATEGORY_ICON}
+              {categoryLabel(cat, t)}
+            </span>
+          </motion.button>
+        )
+      })}
+    </div>
+  ) : (
+    // 旧：浅灰 pill 容器，选中项一个共享 layoutId 的墨黑块在 tab 间滑动
+    // （bg-foreground 暗色下自动反转为白底黑字）。
+    <div className="flex items-center justify-between gap-4">
+      <motion.div
+        layout
+        transition={LAYOUT_TRANSITION}
+        className="inline-flex shrink-0 gap-1 rounded-[14px] bg-foreground/[0.045] p-1"
+      >
         {categories.map((cat) => {
           const active = cat.id === (category?.id ?? catId)
           return (
@@ -381,145 +441,164 @@ export function ScenarioRail({
             </motion.button>
           )
         })}
-        </motion.div>
-      </div>
+      </motion.div>
+    </div>
+  )
 
-      {/* 双态 chip 行：key 随内容源翻转触发 AnimatePresence 进出场。
-          mode="wait" 让旧行完全淡出之后新行才开始淡入——两者绝不同屏，
-          没有 popLayout 那种「旧行悬浮着跟新行撞在一起」的重影感。行高
-          变化（一行 vs 两行）交给外层 <motion.div layout> 顺滑过渡，
-          不需要在这里额外处理塌陷/撑开。 */}
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={showPrompts ? `prompts:${activeSpec.match}` : `cat:${catId}`}
-          variants={ROW_VARIANTS}
-          initial="hidden"
-          animate="show"
-          exit="exit"
-          className={
-            'flex min-h-[40px] items-center gap-2.5 transition-[margin-top] duration-300 ease-out ' +
-            (compact
-              ? // 紧凑：单行横滑，隐藏滚动条（scrollbar-width 用内联样式，理由见
-                // SkillCaseShowcase），右侧 mask 渐隐提示还有；上下各留 4px 给
-                // whileHover 的轻微放大，别被 overflow 裁掉。
-                'mt-5 flex-nowrap overflow-x-auto overflow-y-hidden py-1 [mask-image:linear-gradient(to_right,black_calc(100%-48px),transparent)]'
-              : 'mt-8 flex-wrap')
-          }
-          style={compact ? { scrollbarWidth: 'none' } : undefined}
-        >
-          {showPrompts ? (
-            <>
-              {/* 技能锚点：当前技能的墨黑 pill 常驻三级行首——与选中 tab 同一
-                  「实心=选中」语言，回答「我在哪」；点击退出该技能、回技能行。
-                  此前进三级后技能行整行消失，rail 上没有任何位置锚（重做动因
-                  之一）。退出=清空输入：restoreDraft(null) 就是「无草稿」的清空
-                  恢复路径；showPrompts 成立时正文必为空，清掉只丢 chip，无损。 */}
+  const chips = (
+    // key 随内容源翻转触发 AnimatePresence 进出场，mode="wait" 让旧行淡完新行
+    // 才出，两者不同屏。行高变化（一行 vs 折成两行）交给挂载处外层的
+    // <motion.div layout> 顺滑过渡。
+    <AnimatePresence mode="wait">
+      <motion.div
+        key={showPrompts ? `prompts:${activeSpec.match}` : `cat:${catId}`}
+        variants={ROW_VARIANTS}
+        initial="hidden"
+        animate="show"
+        exit="exit"
+        className={
+          compact
+            ? // 紧凑：单行横滑，隐藏滚动条（scrollbar-width 用内联样式，理由见
+              // SkillCaseShowcase），右侧 mask 渐隐提示还有；上下各留 4px 给
+              // whileHover 的轻微放大，别被 overflow 裁掉。
+              'flex min-h-[36px] flex-nowrap items-center gap-2 overflow-x-auto overflow-y-hidden px-1 py-1 [mask-image:linear-gradient(to_right,black_calc(100%-48px),transparent)]'
+            : 'mt-8 flex min-h-[40px] flex-wrap items-center gap-2.5'
+        }
+        style={compact ? { scrollbarWidth: 'none' } : undefined}
+      >
+        {showPrompts ? (
+          <>
+            {compact ? (
+              // 紧凑：行首是「试试」标签，不放技能锚点——chip 行在卡片正下方，
+              // 锚点会和 composer 里的技能 chip 上下紧挨着重复显示同一个状态。
+              // 退出技能走 composer chip 悬停出的 × 或 Backspace。
+              <motion.span
+                variants={CHIP_VARIANTS}
+                className="mr-0.5 shrink-0 text-[12px] text-muted-foreground/70"
+              >
+                {t('scenarioTryLabel')}
+              </motion.span>
+            ) : (
+              <>
+                {/* 技能锚点：当前技能的墨黑 pill 常驻三级行首——与选中 tab 同一
+                    「实心=选中」语言，回答「我在哪」；点击退出该技能、回技能行。
+                    退出=清空输入：restoreDraft(null) 就是「无草稿」的清空恢复
+                    路径；showPrompts 成立时正文必为空，清掉只丢 chip，无损。 */}
+                <motion.button
+                  type="button"
+                  title="退出该技能"
+                  variants={CHIP_VARIANTS}
+                  whileHover={CHIP_HOVER}
+                  whileTap={CHIP_TAP}
+                  className="group flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[10px] bg-foreground px-3 py-[7px] text-[13.5px] font-semibold text-background shadow-sm"
+                  onClick={() => {
+                    setExpandedPromptSkill(null)
+                    restoreDraft(null)
+                  }}
+                >
+                  <SkillChipIcon src={activeSpec.image} size={15} />
+                  {activeSpec.label ?? activeSpec.match.slice(1)}
+                  <svg
+                    width={11}
+                    height={11}
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2.2}
+                    strokeLinecap="round"
+                    aria-hidden="true"
+                    className="opacity-55 transition-opacity group-hover:opacity-100"
+                  >
+                    <path d="M18 6 6 18M6 6l12 12" />
+                  </svg>
+                </motion.button>
+                <motion.span
+                  variants={CHIP_VARIANTS}
+                  className="h-[18px] w-px shrink-0 bg-border"
+                  aria-hidden="true"
+                />
+              </>
+            )}
+            {visiblePrompts!.map((p) => (
               <motion.button
+                key={p.label}
                 type="button"
-                title="退出该技能"
                 variants={CHIP_VARIANTS}
                 whileHover={CHIP_HOVER}
                 whileTap={CHIP_TAP}
-                className="group flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[10px] bg-foreground px-3 py-[7px] text-[13.5px] font-semibold text-background shadow-sm"
-                onClick={() => {
-                  setExpandedPromptSkill(null)
-                  restoreDraft(null)
-                }}
+                className={'flex shrink-0 items-center gap-1.5 whitespace-nowrap ' + chipCls}
+                onClick={() => onFillPrompt(p.text)}
               >
-                <SkillChipIcon src={activeSpec.image} size={15} />
-                {activeSpec.label ?? activeSpec.match.slice(1)}
-                <svg
-                  width={11}
-                  height={11}
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={2.2}
-                  strokeLinecap="round"
-                  aria-hidden="true"
-                  className="opacity-55 transition-opacity group-hover:opacity-100"
-                >
-                  <path d="M18 6 6 18M6 6l12 12" />
-                </svg>
+                <FillArrowIcon
+                  className={'shrink-0 ' + (compact ? 'text-muted-foreground/60' : 'text-brand')}
+                />
+                {p.label}
               </motion.button>
-              <motion.span
+            ))}
+            {/* 折叠/展开 toggle：只在超过 COLLAPSED_PROMPT_COUNT 时出现。虚线
+                描边无底色，一眼区分「这是行为控制」而不是又一条 prompt。 */}
+            {hiddenPromptCount > 0 && (
+              <motion.button
+                type="button"
                 variants={CHIP_VARIANTS}
-                className="h-[18px] w-px shrink-0 bg-border"
-                aria-hidden="true"
-              />
-              {visiblePrompts!.map((p) => (
-                <motion.button
-                  key={p.label}
-                  type="button"
-                  variants={CHIP_VARIANTS}
-                  whileHover={CHIP_HOVER}
-                  whileTap={CHIP_TAP}
-                  className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[10px] bg-foreground/[0.05] px-[13px] py-2 text-[13.5px] font-medium text-foreground transition-colors hover:bg-foreground/[0.09] dark:bg-white/[0.08] dark:hover:bg-white/[0.13]"
-                  onClick={() => onFillPrompt(p.text)}
-                >
-                  <FillArrowIcon className="shrink-0 text-brand" />
-                  {p.label}
-                </motion.button>
-              ))}
-              {/* 折叠/展开 toggle：只在超过 COLLAPSED_PROMPT_COUNT 时出现。故意
-                  不用内容 chip 那套柔底样式（无底色 + 虚线描边），一眼区分「这
-                  是行为控制」而不是又一条可以直接填正文的 prompt。 */}
-              {hiddenPromptCount > 0 && (
-                <motion.button
-                  type="button"
-                  variants={CHIP_VARIANTS}
-                  whileHover={CHIP_HOVER}
-                  whileTap={CHIP_TAP}
-                  className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-[10px] border border-dashed border-border px-[13px] py-2 text-[13.5px] font-medium text-muted-foreground transition-colors hover:border-foreground/25 hover:text-foreground"
-                  onClick={() =>
-                    setExpandedPromptSkill(promptsExpanded ? null : (activeSpec?.match ?? null))
-                  }
-                >
-                  {promptsExpanded
-                    ? t('scenarioPromptCollapse')
-                    : tFormat('scenarioPromptMore', { count: hiddenPromptCount })}
-                  <ExpandChevronIcon expanded={promptsExpanded} />
-                </motion.button>
-              )}
-            </>
-          ) : (
-            (category?.items ?? []).map((item) => {
-              if (item.kind === 'skill') {
-                const spec = findSkillChipSpec(item.value)
-                if (!spec) return null // registry 里被移除的技能静默跳过
-                return (
-                  <motion.button
-                    key={item.value}
-                    type="button"
-                    variants={CHIP_VARIANTS}
-                    whileHover={CHIP_HOVER}
-                    whileTap={CHIP_TAP}
-                    className="flex items-center gap-2 rounded-[10px] bg-foreground/[0.05] px-[13px] py-2 text-[13.5px] font-medium text-foreground transition-colors hover:bg-foreground/[0.09] dark:bg-white/[0.08] dark:hover:bg-white/[0.13]"
-                    onClick={() => onInsertSkill(item.value)}
-                  >
-                    <SkillChipIcon src={spec.image} size={16} />
-                    {spec.label ?? item.value.slice(1)}
-                  </motion.button>
-                )
-              }
+                whileHover={CHIP_HOVER}
+                whileTap={CHIP_TAP}
+                className={
+                  'flex shrink-0 items-center gap-1 whitespace-nowrap border border-dashed border-border font-medium text-muted-foreground transition-colors hover:border-foreground/25 hover:text-foreground ' +
+                  (compact
+                    ? 'rounded-full px-3 py-[5px] text-[12.5px]'
+                    : 'rounded-[10px] px-[13px] py-2 text-[13.5px]')
+                }
+                onClick={() =>
+                  setExpandedPromptSkill(promptsExpanded ? null : (activeSpec?.match ?? null))
+                }
+              >
+                {promptsExpanded
+                  ? t('scenarioPromptCollapse')
+                  : tFormat('scenarioPromptMore', { count: hiddenPromptCount })}
+                <ExpandChevronIcon expanded={promptsExpanded} />
+              </motion.button>
+            )}
+          </>
+        ) : (
+          (category?.items ?? []).map((item) => {
+            if (item.kind === 'skill') {
+              const spec = findSkillChipSpec(item.value)
+              if (!spec) return null // registry 里被移除的技能静默跳过
               return (
                 <motion.button
-                  key={item.label}
+                  key={item.value}
                   type="button"
                   variants={CHIP_VARIANTS}
                   whileHover={CHIP_HOVER}
                   whileTap={CHIP_TAP}
-                  className="flex items-center gap-1.5 rounded-[10px] bg-foreground/[0.05] px-[13px] py-2 text-[13.5px] font-medium text-foreground transition-colors hover:bg-foreground/[0.09] dark:bg-white/[0.08] dark:hover:bg-white/[0.13]"
-                  onClick={() => onFillPrompt(item.text)}
+                  className={(compact ? 'flex shrink-0 items-center gap-1.5 whitespace-nowrap ' : 'flex items-center gap-2 ') + chipCls}
+                  onClick={() => onInsertSkill(item.value)}
                 >
-                  {item.label}
-                  <FillArrowIcon />
+                  <SkillChipIcon src={spec.image} size={compact ? 15 : 16} />
+                  {spec.label ?? item.value.slice(1)}
                 </motion.button>
               )
-            })
-          )}
-        </motion.div>
-      </AnimatePresence>
-    </motion.div>
+            }
+            return (
+              <motion.button
+                key={item.label}
+                type="button"
+                variants={CHIP_VARIANTS}
+                whileHover={CHIP_HOVER}
+                whileTap={CHIP_TAP}
+                className={(compact ? 'flex shrink-0 items-center gap-1.5 whitespace-nowrap ' : 'flex items-center gap-1.5 ') + chipCls}
+                onClick={() => onFillPrompt(item.text)}
+              >
+                {item.label}
+                <FillArrowIcon />
+              </motion.button>
+            )
+          })
+        )}
+      </motion.div>
+    </AnimatePresence>
   )
+
+  return { tabs, chips }
 }
