@@ -279,6 +279,42 @@ export function findBuiltinSkillChipSpec(value: string): SkillChipSpec | null {
 export const FALLBACK_SKILL_ICON = '/skill-icons/petal.png'
 
 /**
+ * 技能 chip 的染色（2026-09-17，空态「居中聚焦」改版设计稿 ① 的浅红「制作PPT」
+ * chip 落地）：composer 里的技能 chip 按图标主色铺一层淡底、文字换同色系深色，
+ * 一眼对上左边的彩色图标，也和普通文件 mention 的灰 chip 区分开。
+ *
+ * 为什么按**图标路径**查而不是在 SkillChipSpec 上加 tint 字段：远端场景目录
+ * 只下发 label + icon（见上方覆盖层），加字段就得同步改后台 JSON 契约；按图标
+ * 查，远端条目只要用了内置图标就自动带上颜色，换成没登记的图标（含外链图）
+ * 则回落中性灰 chip——不会染错色。
+ *
+ * 色值是对 public/skill-icons/*.png 取「饱和像素均值」量出来的主色（脚本见
+ * 同日会话记录），不是手挑的：新增图标时按同样方法量一个补进来，漏补只是
+ * 该技能 chip 维持灰色，不会出错。只存原色，浅/暗两档的底色与文字深浅都在
+ * styles/index.css 里用 color-mix 从这个原色派生。
+ */
+const SKILL_ICON_TINTS: Readonly<Record<string, string>> = {
+  '/skill-icons/ppt.png': '#fb635a',
+  '/skill-icons/image.png': '#1dbdfb',
+  '/skill-icons/sheet.png': '#12a37b',
+  '/skill-icons/video.png': '#8957fa',
+  '/skill-icons/writing.png': '#44c54d',
+  '/skill-icons/write.png': '#1a72eb',
+  '/skill-icons/tender.png': '#f8840a',
+  '/skill-icons/doc-convert.png': '#6e4fe8',
+  '/skill-icons/translate.png': '#0e8ea1',
+  '/skill-icons/news.png': '#ec5c37',
+  '/skill-icons/code.png': '#2334b2',
+  '/skill-icons/web.png': '#07afbf',
+  '/skill-icons/petal.png': '#864cf0'
+}
+
+/** 技能 chip 的染色原色；图标没登记时返回 null（chip 维持中性灰）。 */
+export function skillChipTint(spec: SkillChipSpec): string | null {
+  return SKILL_ICON_TINTS[spec.image] ?? null
+}
+
+/**
  * Look up a bespoke chip spec by its literal value, or `null`.
  * 远端覆盖优先，内置表兜底——远端没配过的技能（用户自己装的 skill、
  * proposal-writer 这类客户端拦截命令）照常走内置注册。
