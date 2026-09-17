@@ -30,7 +30,7 @@ import {
   type ProseMirrorComposerInputHandle
 } from '../../../composer/ProseMirrorComposerInput'
 import { QueuePanel } from './QueuePanel'
-import { ScenarioRail } from './ScenarioRail'
+import { useScenarioRail } from './ScenarioRail'
 import { SkillCaseShowcase } from './SkillCaseShowcase'
 import { useSkillCases } from './useSkillCases'
 import { AgentTeamBar } from './AgentTeamBar'
@@ -311,21 +311,20 @@ function TurnFailedBanner({ sessionId }: { sessionId: string | null }): React.JS
  * Composer 的两种形态：
  *   - 'default' — 底部 dock（有消息后）：卡片 + 裸排的工作目录/权限 chips，
  *     维持原布局不动。
- *   - 'hero'    — EmptyState 空态（原型 docs/empty-state-composer-prototype
- *     .html）：卡片上方多一条 ScenarioRail（分类 tab + 技能/推荐 prompt
- *     chips），卡片和底行一起包进一个浅灰圆角「托盘」，底行成为托盘露出的
- *     延伸条——WorkBuddy 参考里的「选择工作空间 / 默认权限」灰条。
+ *   - 'hero'    — EmptyState 空态，按有无案例（compact）分两种布局：
+ *     · 非紧凑（没有案例）：原型 docs/empty-state-composer-prototype.html——
+ *       卡片上方叠 ScenarioRail（分类 tab + 技能/推荐 prompt chips），卡片和
+ *       底行一起包进浅灰圆角「托盘」，底行是托盘露出的工作目录/权限延伸条。
+ *     · 紧凑（下方有案例条；2026-09-17「居中聚焦」改版，三方案对比稿 ① 定稿）：
+ *       卡片上方居中一排分类 tab、下方一行 chips；撤掉托盘，工作目录/权限
+ *       chip 收进卡片工具栏左侧——托盘在这里让「桌面 / 全自动」像飘在输入框
+ *       外面，且多占一排高度，和案例条抢 800px 窗口的空间。
+ *     非紧凑维持旧布局是用户明确要求（没案例时空间充裕，旧版没问题）。
  */
 export function Composer({
-  variant = 'default',
-  heroLeading = null
+  variant = 'default'
 }: {
   variant?: 'default' | 'hero'
-  /**
-   * hero 形态下塞进 ScenarioRail 分类 tab 同一行左侧的节点（EmptyState 用它
-   * 在「紧凑模式」把收成一行的大标题放到 tab 旁边，见 ThreadView EmptyState）。
-   */
-  heroLeading?: React.ReactNode
 } = {}): React.JSX.Element {
   const t = useT()
   // 紧凑模式（选中了有案例的技能）：rail 的 chip 行改单行横滑、输入区收矮，
@@ -510,6 +509,24 @@ export function Composer({
   // 里 ProseMirrorComposerInputHandle 的注释）。
   const composerInputRef = useRef<ProseMirrorComposerInputHandle | null>(null)
 
+  // 场景导航（分类 tab + 技能/推荐 chip 行）：hook 必须无条件调用，dock 态
+  // 算出来不渲染即可（开销只是一次 composer.text 订阅）。挂在 Composer 内而
+  // 不是 EmptyState：它的动作都要驱动 composerInputRef（插 slash chip /
+  // fillBody 填正文），ref 不出组件边界，联动状态走 assistant-ui store。
+  const scenarioRail = useScenarioRail({
+    compact,
+    onInsertSkill: (value) => {
+      // PPT 技能不再随安装包发布，首次点它要先下载（见 stores/pptSkill）。
+      // 未就绪时弹进度层并中止本次插入——装好后进度层自动关闭，用户再
+      // 点一次；不替他自动执行，免得几分钟后被动跳进一个已经忘了的流程。
+      if (isPptSkillCommand(value) && !ensurePptSkillReady()) return
+      composerInputRef.current?.resetWithSlashCommand(value)
+    },
+    onFillPrompt: (text) => composerInputRef.current?.fillBody(text),
+    snapshotDraft: () => composerInputRef.current?.snapshotDoc() ?? null,
+    restoreDraft: (snapshot) => composerInputRef.current?.restoreDoc(snapshot)
+  })
+
   // Agent-team takeover addressing (2026-07-19, fourth pass): there's no
   // separate mailbox UI (user rejected a second standalone input box in
   // AgentTeamDetail, "都共用这个input不可以吗") — the ONE shared composer
@@ -601,25 +618,17 @@ export function Composer({
           (AttachmentDropzone / Attachments / Send / Cancel / Dictation)
           remain. */}
       {variant === 'hero' ? (
-        // 场景导航挂在 Composer 内（而不是 EmptyState）：它的两个动作都要
-        // 驱动 composerInputRef（插 slash chip / fillBody 填正文），ref 不
-        // 出组件边界，联动状态（composer.text）走 assistant-ui store。
-        <div className="mb-4">
-          <ScenarioRail
-            compact={compact}
-            leading={heroLeading}
-            onInsertSkill={(value) => {
-              // PPT 技能不再随安装包发布，首次点它要先下载（见 stores/pptSkill）。
-              // 未就绪时弹进度层并中止本次插入——装好后进度层自动关闭，用户再
-              // 点一次；不替他自动执行，免得几分钟后被动跳进一个已经忘了的流程。
-              if (isPptSkillCommand(value) && !ensurePptSkillReady()) return
-              composerInputRef.current?.resetWithSlashCommand(value)
-            }}
-            onFillPrompt={(text) => composerInputRef.current?.fillBody(text)}
-            snapshotDraft={() => composerInputRef.current?.snapshotDoc() ?? null}
-            restoreDraft={(snapshot) => composerInputRef.current?.restoreDoc(snapshot)}
-          />
-        </div>
+        compact ? (
+          // 紧凑：只有分类 tab 居中在卡片上方，chips 挪到卡片下方（见下）。
+          <div className="mb-4">{scenarioRail.tabs}</div>
+        ) : (
+          // 非紧凑：tab + chips 一起叠在卡片上方（改版前布局）。外层 layout
+          // 过渡接住 chip 行一行 ↔ 两行的高度变化，不让卡片被硬顶下去。
+          <motion.div layout transition={{ type: 'spring', bounce: 0.15, visualDuration: 0.3 }} className="mb-4">
+            {scenarioRail.tabs}
+            {scenarioRail.chips}
+          </motion.div>
+        )
       ) : null}
       {/* Agent team bar — mounted unconditionally in both variants; it
           self-hides (returns null) when the session has no workflow team
@@ -627,9 +636,9 @@ export function Composer({
       <AgentTeamBar />
       <div
         className={
-          variant === 'hero'
-            ? // hero 托盘：比页面底色深一档的圆角灰壳，白卡叠在上面，底部
-              // 露出工作目录/权限延伸条（原型 .composer-shell）。
+          variant === 'hero' && !compact
+            ? // 非紧凑 hero 托盘：比页面底色深一档的圆角灰壳，白卡叠在上面，
+              // 底部露出工作目录/权限延伸条（原型 .composer-shell）。
               'relative rounded-[28px] bg-foreground/[0.035] dark:bg-white/[0.045]'
             : 'relative'
         }
@@ -710,9 +719,9 @@ export function Composer({
             // 一降全跟着透出玻璃；发送/停止钮的实心色是功能色（就绪/生成中状态），
             // 不在这次"材质"调整范围内。
             'relative overflow-hidden rounded-[22px] bg-popover/45 ring-1 ring-black/[0.08] backdrop-blur-xl backdrop-saturate-150 transition-all focus-within:ring-0 focus-within:shadow-[0_0_0_1px_hsl(var(--accent)/0.55),0_0_0_4px_hsl(var(--accent)/0.12),0_2px_6px_rgba(0,0,0,0.04),0_10px_32px_-6px_hsl(var(--accent)/0.22)] group-data-[dragging=true]/dropzone:ring-2 group-data-[dragging=true]/dropzone:ring-[hsl(var(--brand)/0.5)] group-data-[dragging=true]/dropzone:bg-brand/[0.08] dark:ring-white/[0.08]' +
-            // hero：卡片浮在托盘上，需要一层柔和投影把「白卡叠灰壳」的层次
-            // 立起来（dock 态背景就是页面底色，不加）。聚焦时投影被
-            // focus-within 整体接管（主题色环境光替换中性环境光），失焦回落。
+            // hero：一层柔和投影把卡片立起来——非紧凑是「白卡叠灰壳」的层次，
+            // 紧凑是卡片直接浮在页面中段（dock 态贴窗口底，不加）。聚焦时投影
+            // 被 focus-within 整体接管（主题色环境光替换中性环境光），失焦回落。
             (variant === 'hero'
               ? ' shadow-[0_1px_2px_rgba(0,0,0,0.04),0_10px_28px_-4px_rgba(0,0,0,0.07)]'
               : '')
@@ -860,6 +869,21 @@ export function Composer({
                     onPick={(value) => composerInputRef.current?.insertSlashCommand(value)}
                   />
 
+                  {/* 紧凑 hero：工作目录 / 知识库 / 权限模式 chip 收进工具栏左侧
+                      （其它形态在卡片下方那排，见下）。一条细竖线把它们和「+ /
+                      技能」隔开——前者是「往里加东西」，后者是「这次在哪、按什么
+                      权限跑」。 */}
+                  {variant === 'hero' && compact ? (
+                    <>
+                      <span className="mx-1 h-4 w-px shrink-0 bg-border" aria-hidden="true" />
+                      <WorkspaceDirPicker />
+                      {proposalActiveHere || composerLeadsProposal ? (
+                        <ComposerKbChip label={t('catKnowledgeBase')} />
+                      ) : null}
+                      <PermissionModePicker />
+                    </>
+                  ) : null}
+
                   {/* （已退役，2026-07-16）ComposerModePicker——通用/设计/幻灯
                       片/写作/写方案/处理表格/制作视频的模式弹窗。模式入口统一
                       收敛到 EmptyState 的 ScenarioRail 技能 chip：chip 直接把
@@ -961,10 +985,11 @@ export function Composer({
             会话实际模型取值，模型切换到非 200k 窗口时百分比会算错。组件与
             数据链路（engine.ts usage 事件的三个分量字段）保留，待窗口容量
             改成按模型动态取值后再挂回这排。 */}
+        {!(variant === 'hero' && compact) ? (
         <div
           className={
             variant === 'hero'
-              ? // hero：这排就是托盘露出的延伸条（原型 .composer-footer），
+              ? // 非紧凑 hero：这排就是托盘露出的延伸条（原型 .composer-footer），
                 // 间距从托盘内侧起算，不再需要 mt。
                 'flex items-center gap-4 px-6 pb-3.5 pt-3'
               : 'mt-3 flex items-center gap-4 px-2'
@@ -982,7 +1007,12 @@ export function Composer({
             <PermissionModePicker />
           </div>
         </div>
+        ) : null}
       </div>
+      {variant === 'hero' && compact ? (
+        // 紧凑：技能 / 推荐 prompt chip 行在卡片正下方（设计稿 ①「试试」行）。
+        <div className="mt-2.5">{scenarioRail.chips}</div>
+      ) : null}
       {variant === 'hero' ? (
         // 技能最佳实践案例（后台「客户端技能案例」页配置）：挂在 Composer 内的
         // 理由同上方 ScenarioRail——「用这个提示词试试」要驱动 composerInputRef

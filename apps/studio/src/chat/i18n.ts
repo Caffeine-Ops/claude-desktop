@@ -158,6 +158,7 @@ const STRINGS = {
     emptyStateHintAfter: ' 查看所有命令。',
     emptyStateExampleAsk: '查看我电脑桌面有哪些文件夹',
     emptyStateScenarioHint: '本地运行、自主规划、安全可控的 AI 工作搭子',
+    scenarioTryLabel: '试试',
 
     // Scenario cards (clickable starter prompts)
     scenarioPptTitle: '生成幻灯片',
@@ -574,6 +575,7 @@ const STRINGS = {
     emptyStateHintAfter: ' to browse commands.',
     emptyStateExampleAsk: 'list folders on my desktop',
     emptyStateScenarioHint: 'A local-first, self-planning, safe AI work companion',
+    scenarioTryLabel: 'Try',
 
     // Scenario cards (clickable starter prompts)
     scenarioPptTitle: 'Generate slides',
