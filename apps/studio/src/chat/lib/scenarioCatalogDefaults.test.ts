@@ -127,6 +127,45 @@ describe('内置场景目录 · 日常翻译', () => {
   })
 })
 
+const NEWS_VALUE = '/claude-desktop:news'
+
+describe('内置场景目录 · 最新新闻', () => {
+  it('日常办公分类里有最新新闻，且紧跟在日常翻译之后', () => {
+    const daily = DEFAULT_SCENARIO_CATALOG.categories.find((c) => c.id === 'daily')
+    expect(daily).toBeDefined()
+    const values = daily!.items.map((i) => i.value)
+    const translateIdx = values.indexOf(TRANSLATE_VALUE)
+    const newsIdx = values.indexOf(NEWS_VALUE)
+    expect(translateIdx).toBeGreaterThanOrEqual(0)
+    // 新闻是「获取信息」类，跟文档处理/翻译一起归在「处理与获取信息」一簇；
+    // 写方案/审标书是产出型业务链，排在后面。摆放顺序即产品叙事。
+    expect(newsIdx).toBe(translateIdx + 1)
+  })
+
+  it('六条话术：今日要闻 / 民生新规 / 热门话题 / 国际热点 / 行业动态 / 解读新闻', () => {
+    const item = allSkillItems().find((i) => i.value === NEWS_VALUE)
+    expect(item?.prompts?.length).toBe(6)
+  })
+
+  it('没有一条话术带文件槽——新闻靠联网拿，不该弹文件选择器', () => {
+    // 文件槽的识别规则是「【…文件】」（filePlaceholderPlugin 的 PLACEHOLDER_RE）。
+    // 「解读这条新闻」用的是「【粘贴链接或正文】」，刻意不以「文件」结尾，
+    // 否则用户点进去会看到一个跟新闻无关的文件选择器。
+    const item = allSkillItems().find((i) => i.value === NEWS_VALUE)
+    for (const p of item?.prompts ?? []) {
+      expect(p.text).not.toMatch(/【[^【】]{0,24}文件】/)
+    }
+  })
+
+  it('裸名与命名空间两种写法都注册了同一套 chip 外观', () => {
+    const ns = findBuiltinSkillChipSpec(NEWS_VALUE)
+    const bare = findBuiltinSkillChipSpec('/news')
+    expect(ns?.label).toBe('最新新闻')
+    expect(bare?.label).toBe('最新新闻')
+    expect(bare?.image).toBe(ns?.image)
+  })
+})
+
 describe('内置目录里每个技能条目都能查到 chip 外观', () => {
   // ScenarioRail 对 findSkillChipSpec 返回 null 的 chip 会整条静默跳过
   // （见 stores/scenarioCatalog.ts 的注释：「配了却看不见，最难查」）。

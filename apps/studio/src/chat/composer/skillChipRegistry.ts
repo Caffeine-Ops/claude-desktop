@@ -202,6 +202,22 @@ export const SKILL_CHIP_SPECS: readonly SkillChipSpec[] = [
     label: '日常翻译',
     description: '中英互译、文件翻译、双语对照'
   },
+  // news — 最新新闻。namespaced + 裸名双注册，理由同 ppt-creator。
+  // 纯手册技能（无脚本）：新闻靠 WebSearch/WebFetch 联网拿，SKILL.md 负责立
+  // 规矩——每条带来源和日期、查不到就明说、绝不凭记忆编「今天的新闻」，
+  // 搜索不可用时降级到直接抓固定聚合页。
+  {
+    match: '/claude-desktop:news',
+    image: '/skill-icons/news.png',
+    label: '最新新闻',
+    description: '今日要闻、民生新规、热门话题、新闻解读'
+  },
+  {
+    match: '/news',
+    image: '/skill-icons/news.png',
+    label: '最新新闻',
+    description: '今日要闻、民生新规、热门话题、新闻解读'
+  },
   // 代码开发场景伪命令（日常开发 / 网站开发 / Agent 应用）——ScenarioRail
   // 的二级导航标签，不是真实 CLI skill：发送时 FusionRuntimeProvider.onNew
   // 会把命令剥掉只发正文（stripScenarioSlash）。从 SCENARIO_SLASH_SPECS
