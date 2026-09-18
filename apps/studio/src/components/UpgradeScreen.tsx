@@ -3,7 +3,7 @@
 /**
  * 订阅购买页（全屏 overlay）——账户菜单「升级订阅」的落点。
  *
- * 视觉是 docs/ui-prototype-subscription.html 的落地（2026-07-06 用户确认
+ * 视觉是 ui-prototype-subscription.html（原型稿未入库）的落地（2026-07-06 用户确认
  * 方向）：延续登录页科技感体系（--lg-* 双主题变量，定义在 login.css，
  * 作用域已扩展到 .upgrade-screen）；月付/年付用 shadcn Tabs、徽章用
  * Badge、CTA 用 Button。开关走 useUpgradeStore（内存态，理由见 store

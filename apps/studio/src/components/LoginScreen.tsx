@@ -7,7 +7,7 @@
  * `POST /auth/login/phone`），不做邮箱登录。手机号首次登录由后端自动
  * 注册，因此没有独立的「没有账号」提示——诚实反映这条链路的真实行为。
  *
- * 视觉是 docs/ui-prototype-login-v2.html HUD 分屏布局的落地（2026-07-06
+ * 视觉是 ui-prototype-login-v2.html（原型稿未入库）HUD 分屏布局的落地（2026-07-06
  * 用户从极光玻璃改选 HUD 分屏）：左 44% 品牌面（发光 C 核 + 双轨道环反向
  * 慢转 + slogan + mono 状态行），右侧表单面；画布铺品牌绿光晕呼吸 + 细
  * 网格。与原型的刻意差异：输入框不用浮动 label，用标准 shadcn「Label

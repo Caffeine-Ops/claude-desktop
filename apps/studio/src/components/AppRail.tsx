@@ -147,7 +147,7 @@ function goSurface(value: 'chat' | 'canvas'): void {
 }
 
 /* 账户菜单 V1「精修基准」（2026-07-07 二次定稿，原型见
- * docs/ui-prototype-account-menu.html；先定 V3 后用户改选 V1——绿只留
+ * ui-prototype-account-menu.html（原型稿未入库）；先定 V3 后用户改选 V1——绿只留
  * 套餐状态点与升级文字动作，渐变钮/头像圆随 V3 退役）的品牌绿墨色：
  * 绿一律派生自 --brand（HSL 三元组，tokens.css 已分亮/暗档），不硬编码
  * 第二套绿。亮档文字/图标压深 18%（亮底上纯 brand 绿对比不足，对应
@@ -702,7 +702,7 @@ export function AppRail({ overlay = false }: { overlay?: boolean } = {}) {
               </Button>
             </DropdownMenuTrigger>
             {/* side="top"：chip 在 rail 最底，菜单必须向上弹。2026-07-07
-              * 二次定稿 V1「精修基准」（原型 docs/ui-prototype-account-menu.html，
+              * 二次定稿 V1「精修基准」（原型 ui-prototype-account-menu.html 未入库，
               * 用户先选 V3 后改选 V1）：无头像圆，用户名 13.5 semibold + 邮箱
               * 副行直接撑层级；套餐行用光圈绿点表状态、「升级」降为绿字动作
               * （黑 pill / 绿渐变钮两代权重过载方案先后退役）；外观 seg 收成
