@@ -481,8 +481,9 @@ body[data-rail-collapsed] .shell-content-card {
 }
 
 /* ── 登录页（LoginScreen.tsx）专属：科技感背景/动效 ─────────────────────
- * docs/ui-prototype-login-v2.html「极光玻璃」的 1:1 落地，调整请先改原型
- * 看效果再同步回来。全部 login- 命名空间：登录墙是全局 overlay，这些类
+ * ui-prototype-login-v2.html「极光玻璃」的 1:1 落地（该原型稿从未入库，
+ * 原先「先改原型看效果再同步回来」的流程已不可行，调整直接改本文件）。
+ * 全部 login- 命名空间：登录墙是全局 overlay，这些类
  * 决不能命中 chat/canvas 任何元素。
  *
  * 登录页固定深色（品牌 moment，独立于用户明暗主题），色值刻意写死——
