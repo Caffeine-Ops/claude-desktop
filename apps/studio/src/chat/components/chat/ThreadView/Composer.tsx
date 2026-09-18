@@ -1379,12 +1379,30 @@ function modelMetaOf(id: string, apiDisplayName?: string): ModelMeta {
   const { family, is1m } = normalizeModelId(id)
   const localBase = MODEL_META[family]
   if (localBase?.auto) return localBase
-  const trimmedApiName = apiDisplayName?.trim()
+  const trimmedApiName = apiDisplayName ? stripContextNote(apiDisplayName) : ''
   const base = trimmedApiName ? { name: trimmedApiName } : (localBase ?? { name: id })
-  if (is1m && !base.auto) {
+  if (is1m && !base.auto && !/\b1m\b/i.test(base.name)) {
     return { ...base, name: `${base.name} · 1M` }
   }
   return base
+}
+
+/**
+ * 去掉 API 显示名里的上下文窗口括注，如 `Opus (1M context)` → `Opus`
+ * （2026-09-17 修：chip 显示成「Opus (1M context) · 1M」——后端的 display_name
+ * 自带 1M 括注，modelMetaOf 又按 id 叠一次「· 1M」，信息重复还把 chip 撑过
+ * 96px 截断阈值，实测 135px，截成「Opus (1M con…」）。
+ *
+ * 为什么是剥括注再统一叠后缀，而不是「名字里有 1M 就不叠」：后者会让同一个
+ * 1M 变体在 chip 上时而「Opus (1M context)」（API 列表已到）时而「Opus 4.8 · 1M」
+ * （列表未到、走本地表），两种写法来回跳；统一成「名字 · 1M」只剩名字本身的
+ * 差异。只剥**含 1M 字样**的括注——只有它会和「· 1M」后缀重复；别的括注
+ * （`Default (recommended)`、非 1M 变体的 `(200k context)`）原样保留，那是
+ * 叠不出重复、剥了反而丢信息的内容。上面 `\b1m\b` 的判断仍保留，兜底后端把 1M 写进名字
+ * 正文（非括注）的情况，免得叠出「Opus 1M · 1M」。
+ */
+function stripContextNote(name: string): string {
+  return name.replace(/\s*\((?=[^)]*\b1m\b)[^)]*\)/gi, '').trim()
 }
 
 /** 两个 model id 是否指同一模型（归一化家族 + 1m 变体都相等）。 */
