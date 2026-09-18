@@ -189,7 +189,10 @@ jobs:
           KEYCHAIN_PWD="ci-temp-$RANDOM"
           security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
-          if security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MAC_CSC_KEY_PASSWORD" -T /usr/bin/codesign 2>&1; then
+          # -T 两个都给：codesign 签 .app、productbuild 签 pkg（当前只出
+          # dmg/zip 用不到 pkg，但与 electron-builder 自己 importCerts 的授权
+          # 面保持一致，免得以后加 pkg target 时又踩一次无提示访问被拒）。
+          if security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MAC_CSC_KEY_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productbuild 2>&1; then
             echo "✓ 证书导入成功（base64 完整 + 密码正确）"
             echo "--- 钥匙串内的签名身份 ---"
             security find-identity -v -p codesigning "$KEYCHAIN"
@@ -218,11 +221,46 @@ jobs:
             security delete-keychain "$KEYCHAIN" 2>/dev/null || true
             exit 1
           fi
-          # 自检用的临时钥匙串删掉——electron-builder 会自己再建它需要的钥匙串。
-          security delete-keychain "$KEYCHAIN" 2>/dev/null || true
+          # ⚠️ 这个钥匙串**不再删**，而是留给 electron-builder 直接用（2026-09-18
+          # v0.0.55 实锤修复）。原先删掉、让 electron-builder 自建一个，但它
+          # createKeychain() 里有个 bug：钥匙串用随机口令 create-keychain，接着
+          # importCerts() 却把 **.p12 的口令** 传给
+          # `security set-key-partition-list -k`——而 -k 要的是**钥匙串口令**。
+          # 两者不同，于是 `SecKeychainUnlock: The user name or passphrase you
+          # entered is not correct` → 整个 mac 构建挂掉。
+          # 旧 macOS 上这条命令即便口令不对也能过（钥匙串已解锁），2026-09-07 的
+          # runner 镜像（macos-26-arm64，image 20260907.0351.1）起开始严格校验，
+          # 于是 arm64 leg 必挂、x64 leg（macos-15-intel，老系统）照样过——同一
+          # 套 secret 一半成功一半失败就是这么来的，不是密码配错。
+          # 判据留给下次：失败日志里 set-key-partition-list 的 -k 后面那串被
+          # 打成 ***（那是 p12 口令被 secret 掩码），而不是我们这里的随机
+          # KEYCHAIN_PWD。
+          #
+          # 绕法用的是 electron-builder 自己的逃生口（macPackager.js：cscLink
+          # 为空时 `keychainFile = process.env.CSC_KEYCHAIN`）：证书由**本步骤**
+          # 导入自建钥匙串，下面 Build 步骤**不再传 CSC_LINK**、只传
+          # CSC_KEYCHAIN，它就不会进那段 createKeychain 代码；签名身份仍由
+          # CSC_IDENTITY_AUTO_DISCOVERY=true 从这个钥匙串里找（上面已断言里面
+          # 确有 Developer ID Application 且 Team 正确），公证不受影响。
+          # 三条让钥匙串真的能被 codesign 用的收尾：
+          #   1) set-key-partition-list 用**正确的钥匙串口令**授权 codesign /
+          #      productbuild 无提示访问私钥（不做的话签名时会弹 UI 卡死 CI）；
+          #   2) 加进 user 搜索域（codesign 只认搜索域里的钥匙串），原有条目
+          #      一并保留，别把 login 钥匙串挤掉；
+          #   3) set-keychain-settings 不带 -t：关掉自动锁定超时，长构建
+          #      （公证动辄十几分钟）中途不会被锁回去。
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PWD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          security set-keychain-settings "$KEYCHAIN"
+          echo "CSC_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          # CSC_FILE 仍然导出：它是后续步骤「这次配了证书、该断言签名」的开关
+          # （见 Verify mac signature 的 if），不再用作 CSC_LINK。
           echo "CSC_FILE=$RUNNER_TEMP/cert.p12" >> "$GITHUB_ENV"
 
       # mac 签名 + 公证（自动更新的硬前提，2026-07-05 起）：
+      #   - （2026-09-18 起 mac 不再走 CSC_LINK，改由上一步自建钥匙串 +
+      #     CSC_KEYCHAIN，理由见上一步末尾。下面这段 CSC_LINK 的说明保留作
+      #     历史记录，仍然解释着「为什么 win 必须拿空串」。）
       #   - CSC_LINK 指向上一步解码出的 .p12 **文件路径**（win 拿空串跳过——
       #     CSC_LINK 是 electron-builder 跨平台通用签名 env，win 侧看到 mac
       #     证书会误当 Windows 代码签名证书解析，报 `WIN_CSC_LINK is not
@@ -279,8 +317,11 @@ jobs:
           # One runner = one arch, now actually enforced.
           EB_MAC_ARCH_NAME: ${{ matrix.arch }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.platform == 'mac' && 'true' || 'false' }}
-          CSC_LINK: ${{ matrix.platform == 'mac' && env.CSC_FILE || '' }}
-          CSC_KEY_PASSWORD: ${{ matrix.platform == 'mac' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
+          # CSC_LINK 刻意**不传**（2026-09-18）：传了 electron-builder 就会自建
+          # 钥匙串，撞上它 set-key-partition-list 传错口令的 bug（详见上面
+          # Decode signing certificate 步骤末尾那段长注释）。证书已由该步骤导入
+          # 到 CSC_KEYCHAIN 指向的钥匙串，签名身份从那里发现。
+          CSC_KEYCHAIN: ${{ matrix.platform == 'mac' && env.CSC_KEYCHAIN || '' }}
           APPLE_ID: ${{ matrix.platform == 'mac' && secrets.APPLE_ID || '' }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.platform == 'mac' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
           APPLE_TEAM_ID: ${{ matrix.platform == 'mac' && secrets.APPLE_TEAM_ID || '' }}
