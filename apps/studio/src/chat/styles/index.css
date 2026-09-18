@@ -438,6 +438,29 @@
   --composer-chip-bg-hover: hsl(0 0% 100% / 0.13);
 }
 
+/*
+ * 技能 chip 染色（2026-09-17，空态改版设计稿 ① 的浅红「制作PPT」chip）：
+ * chipNodeView 给登记过图标主色的技能 chip 挂 data-chip-tint + inline
+ * --chip-tint（原色），这里在 chip 元素自身上重定义上面那组变量——
+ * chip 的 inline background/color 本来就读 var()，于是自动吃到染色值。
+ * 变量必须定义在 chip 元素上而不是 .pm-composer-input 上：自定义属性在
+ * 声明处求值，挂在祖先上时 var(--chip-tint) 还不存在。
+ *
+ * 文字色与原色按比例混黑（浅色）/混白（暗色）：图标主色里有 #1dbdfb 这类
+ * 很亮的青，原色直接当字色在浅底上对比度不够；62% 是按最亮那几个色值
+ * 调到可读的比例，偏暗的原色（#2334b2）混完照样清楚。
+ */
+.pm-composer-input [data-chip-tint] {
+  --composer-chip-bg: color-mix(in srgb, var(--chip-tint) 10%, transparent);
+  --composer-chip-bg-hover: color-mix(in srgb, var(--chip-tint) 17%, transparent);
+  --composer-chip-fg: color-mix(in srgb, var(--chip-tint) 62%, black);
+}
+.dark .pm-composer-input [data-chip-tint] {
+  --composer-chip-bg: color-mix(in srgb, var(--chip-tint) 20%, transparent);
+  --composer-chip-bg-hover: color-mix(in srgb, var(--chip-tint) 28%, transparent);
+  --composer-chip-fg: color-mix(in srgb, var(--chip-tint) 45%, white);
+}
+
 .pm-composer-input.is-empty::before {
   content: attr(data-placeholder);
   position: absolute;

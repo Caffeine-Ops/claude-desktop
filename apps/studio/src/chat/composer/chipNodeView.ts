@@ -2,7 +2,7 @@ import type { Node as PMNode } from 'prosemirror-model'
 import type { EditorView, NodeView } from 'prosemirror-view'
 
 import { fileTypeIconPaths, type IconPath } from '../components/chat/FileTypeIcon'
-import { findSkillChipSpec } from './skillChipRegistry'
+import { findSkillChipSpec, skillChipTint } from './skillChipRegistry'
 import { autoOpenPreviewPanel, previewPanelKind } from '../runtime/imageAttachmentAdapter'
 import { splitWorkspaceBusyNow } from '../stores/filePreview'
 import { templateKindFromPath, TEMPLATE_MENTION_ICON } from '../lib/mentionDisplay'
@@ -373,7 +373,9 @@ export function createChipNodeView(
       border: '1px solid transparent',
       borderRadius: '8px',
       background: 'var(--composer-chip-bg)',
-      color: 'hsl(var(--foreground))',
+      // --composer-chip-fg 只在染色技能 chip 上有定义（见下方 tint），其余
+      // chip 走回落值，与改动前完全一致。
+      color: 'var(--composer-chip-fg, hsl(var(--foreground)))',
       fontWeight: '500',
       fontSize: '13px',
       lineHeight: '1.35',
@@ -390,6 +392,17 @@ export function createChipNodeView(
       userSelect: 'none',
       transition: 'background 0.15s ease'
     } satisfies Partial<CSSStyleDeclaration>)
+
+    // 技能染色（2026-09-17）：只在元素上挂原色 + 标记属性，浅/暗两档的底色、
+    // hover 底色、文字色由 styles/index.css 的 [data-chip-tint] 规则在**本元素上**
+    // 重定义 --composer-chip-bg(-hover) / --composer-chip-fg——上面 inline 的
+    // var() 与 hover 时切换的 var() 都自动读到染色值，hover 逻辑一行不用改。
+    // 为什么不直接 inline 写颜色：inline style 吃不到 .dark，暗色档无从切换。
+    const tint = skill ? skillChipTint(skill) : null
+    if (tint) {
+      dom.setAttribute('data-chip-tint', '')
+      dom.style.setProperty('--chip-tint', tint)
+    }
 
     // 文件 mention 混排在正文任意位置，与相邻文字之间常无空格字符（占位
     // 槽 replaceWith、模板紧贴中文），chip 会贴着字——水平 margin 给出与
