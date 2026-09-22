@@ -43,8 +43,6 @@
 .app .avatar-popover,
 .df-row-popover,
 .viewer-mode-popover,
-.lang-menu-popover,
-.conv-menu,
 .plugin-share-popover,
 .design-card-menu,
 .app .working-dir-pill-menu,
@@ -63,16 +61,14 @@
 
 /* 容器 padding 统一 6px（= 基件 p-1.5）。.chat-history-menu 除外——
  * 它的 head/列表自带满宽 padding + border-bottom，容器加 padding 会把
- * 头部底线截短。.conv-menu 同理有满幅 header，但其原生 8px padding
- * 本就存在（header 底线原本就不满幅），收到 6px 无结构影响。 */
+ * 头部底线截短。（同族的 .conv-menu 原本也是这个豁免的理由之一，其宿主
+ * ConversationsMenu 已于 2026-09-22 删除。） */
 .present-menu,
 .share-menu-popover,
 .zoom-menu-popover,
 .app .avatar-popover,
 .df-row-popover,
 .viewer-mode-popover,
-.lang-menu-popover,
-.conv-menu,
 .plugin-share-popover,
 .design-card-menu,
 .app .working-dir-pill-menu,
@@ -92,7 +88,6 @@
 .avatar-item,
 .df-row-popover button,
 .viewer-mode-menu-item,
-.lang-menu-item,
 .plugin-share-item,
 .design-card-menu button,
 .app .working-dir-pill-menu-item,
@@ -114,7 +109,6 @@
 .avatar-item:hover,
 .df-row-popover button:hover,
 .viewer-mode-menu-item:hover:not(.active),
-.lang-menu-item:hover:not(.active),
 .plugin-share-item:hover,
 .plugin-share-item:focus-visible,
 .design-card-menu button:hover,
@@ -178,8 +172,6 @@
 .app .avatar-popover,
 .df-row-popover,
 .viewer-mode-popover,
-.lang-menu-popover,
-.conv-menu,
 .plugin-share-popover,
 .design-card-menu,
 .app .working-dir-pill-menu,
@@ -190,19 +182,17 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .present-menu,
-  .share-menu-popover,
-  .zoom-menu-popover,
-  .app .avatar-popover,
-  .df-row-popover,
-  .viewer-mode-popover,
-  .lang-menu-popover,
-  .conv-menu,
-  .plugin-share-popover,
-  .design-card-menu,
-  .app .working-dir-pill-menu,
-  .handoff-menu,
-  .chat-history-menu,
-  .viewer-viewport-menu {
+.share-menu-popover,
+.zoom-menu-popover,
+.app .avatar-popover,
+.df-row-popover,
+.viewer-mode-popover,
+.plugin-share-popover,
+.design-card-menu,
+.app .working-dir-pill-menu,
+.handoff-menu,
+.chat-history-menu,
+.viewer-viewport-menu {
     animation: none;
   }
 }

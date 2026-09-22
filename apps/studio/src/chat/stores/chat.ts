@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo } from 'react'
 import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
 import type { ThreadMessageLike } from '@assistant-ui/react'
@@ -152,6 +152,14 @@ interface ChatState {
    * waiting for main to finish spawning a new fusion-code child.
    * Foreground-scoped — a background session's spawn does NOT flip
    * this.
+   *
+   * 这是**交互守卫**用的原始标志（composer 禁用经
+   * `useExternalStoreRuntime.isLoading` 直接读它），任何时候都别给它加延迟。
+   * 加载态的**视觉装饰**是另一回事：缓存命中的切换在一两帧内就 true→false，
+   * 立刻点亮 chrome 只会闪一下、读起来像「这 app 一直在忙」。所以装饰一律
+   * 走 `sessionSwitching` 驱动的骨架屏（见下条注释）。
+   * （曾有个 useDelayedSessionLoading(200ms) 防抖 hook 专门干这事，唯一消费者
+   * ThreadListSidebar 退役后它也没人用了，已于 2026-09-22 删除。）
    */
   sessionLoading: boolean
   /**
@@ -2323,64 +2331,4 @@ export function useEditingSvgFile(): EditingSvgFile | null {
     }
     return latest
   }, [messages, streaming])
-}
-
-/**
- * Debounced view of `sessionLoading` for *visual* loading affordances.
- * Returns `true` only if the raw `sessionLoading` flag has been
- * continuously true for at least `delayMs`, and resets to `false` the
- * instant the flag clears.
- *
- * 现存唯一消费者是 ThreadListSidebar 的整列调暗（2026-07-17 起）：原先的另
- * 一个消费者 ThreadView 顶部进度条已删，切换加载态改由骨架屏承担——骨架订
- * 阅的是 `sessionSwitching` 而非本 hook，两者别混（见 sessionSwitching 注释）。
- *
- * Why this exists
- * ---------------
- * A switch to a recently-visited session now resolves almost instantly:
- * the history-cache hit (FusionRuntimeProvider) mounts the transcript
- * synchronously and the lazy engine returns from `switchToSession` in a
- * single microtask. In that common case `sessionLoading` flips
- * true→false within a frame or two — yet the old code lit the progress
- * bar / dimmed the sidebar immediately, producing a visible flicker that
- * read as "the app is always busy".
- *
- * Gating the *visual* signal (NOT the functional one) behind a short
- * delay means a fast switch shows no loading chrome at all, while a real
- * cold start (~3-8s) still surfaces the bar after the threshold. The
- * composer-disable path keeps reading the RAW flag via
- * `useExternalStoreRuntime.isLoading`, so input is still correctly gated
- * during the sub-threshold window — we only suppress the *decoration*,
- * never the interaction guard.
- *
- * Default `delayMs` of 200ms sits just above a cache-hit switch (a few
- * frames) and just below the point a human reads a blank wait as "stuck".
- */
-export function useDelayedSessionLoading(delayMs = 200): boolean {
-  const loading = useChatStore((s) => s.sessionLoading)
-  const [shown, setShown] = useState(false)
-  const timerRef = useRef<number | null>(null)
-
-  useEffect(() => {
-    if (loading) {
-      // Arm a timer; only flip `shown` true if we're still loading when
-      // it fires. A fast switch clears `loading` first and the cleanup
-      // below cancels the timer, so `shown` never turns on.
-      timerRef.current = window.setTimeout(() => {
-        setShown(true)
-      }, delayMs)
-      return () => {
-        if (timerRef.current !== null) {
-          window.clearTimeout(timerRef.current)
-          timerRef.current = null
-        }
-      }
-    }
-    // Not loading → hide immediately (no trailing delay on the way out,
-    // so the bar disappears the moment the session is ready).
-    setShown(false)
-    return undefined
-  }, [loading, delayMs])
-
-  return shown
 }

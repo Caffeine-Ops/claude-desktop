@@ -19,75 +19,6 @@
   background: var(--bg-subtle);
   box-shadow: 0 0 0 1px var(--od-accent);
 }
-
-/* Conversations dropdown — pill in the project topbar */
-.conv-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius);
-  background: var(--bg-panel);
-  font: inherit;
-  font-size: 12px;
-  color: inherit;
-  cursor: pointer;
-  user-select: none;
-  max-width: 220px;
-}
-.conv-pill:hover { background: var(--bg-subtle); }
-.conv-pill.open { background: var(--bg-subtle); border-color: var(--od-accent); }
-.conv-pill-icon { font-size: 13px; line-height: 1; }
-.conv-pill-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.conv-pill-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 6px;
-  border-radius: 9px;
-  background: var(--bg-subtle);
-  color: var(--text-muted);
-  font-size: 10px;
-}
-.conv-menu {
-  position: fixed;
-  width: 320px;
-  max-height: 420px;
-  overflow-y: auto;
-  background: var(--bg-panel);
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
-  z-index: 200;
-  padding: 8px;
-}
-.conv-menu-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 4px 6px 8px;
-  border-bottom: 1px solid var(--od-border);
-  margin-bottom: 6px;
-  font-size: 11px;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-.conv-add-btn { padding: 2px 8px; font-size: 11px; }
-.conv-menu-empty {
-  padding: 16px 8px;
-  font-size: 12px;
-  color: var(--text-muted);
-  text-align: center;
-}
-.conv-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .conv-item {
   display: flex;
   align-items: stretch;
@@ -95,19 +26,6 @@
   border-radius: 6px;
 }
 .conv-item.active { background: var(--bg-subtle); }
-.conv-item-button {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 6px 8px;
-  border: none;
-  background: transparent;
-  text-align: left;
-  border-radius: 6px;
-  cursor: pointer;
-}
-.conv-item-button:hover { background: var(--bg-subtle); }
 .conv-item-name {
   font-size: 12px;
   overflow: hidden;
@@ -1185,60 +1103,6 @@
      would float over content awkwardly — fall back to the header toggle. */
   .ds-modal-stage-handle { display: none; }
 }
-
-/* Examples gallery toolbar — filter pills + richer card metadata */
-.examples-toolbar {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  position: sticky;
-  top: 0;
-  /* Sit above example preview iframes while scrolling (iframes get their own
-     compositor layer; z-index: 2 was not always enough for a clean mask). */
-  z-index: 20;
-  isolation: isolate;
-  margin: 0;
-  padding: 0 0 14px;
-  background: var(--bg);
-  border-bottom: 1px solid var(--border-soft);
-  box-shadow: var(--od-shadow-sm);
-}
-.examples-search {
-  position: relative;
-  /* Full-width band so scrolling previews cannot show through beside a narrow
-     search field on wide layouts (toolbar stays sticky; iframes layer high). */
-  width: 100%;
-  max-width: 100%;
-  align-self: stretch;
-  background: var(--bg);
-}
-.examples-search input {
-  display: block;
-  width: 100%;
-  max-width: 360px;
-  padding: 7px 12px 7px 32px;
-  background: var(--bg-panel);
-  border: 1px solid var(--od-border);
-  border-radius: 8px;
-  font-size: 13px;
-  color: var(--text);
-}
-.examples-search input::placeholder { color: var(--text-faint); }
-.examples-search input:focus {
-  outline: none;
-  border-color: var(--od-accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-.examples-search .search-icon {
-  position: absolute;
-  left: 10px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--text-faint);
-  pointer-events: none;
-  display: inline-flex;
-  align-items: center;
-}
 .examples-filter-row {
   display: flex;
   flex-wrap: wrap;
@@ -1299,52 +1163,4 @@ button.filter-pill:hover:not(:disabled) .filter-pill-count,
   color: currentColor;
   opacity: 0.9;
 }
-.example-card-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-.example-tags {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-top: 2px;
-}
-/* Tag variants — keep the worktree base .example-tag style; these add
-   color-coded variants for mode/platform pills. */
-.example-tag.platform-mobile { color: var(--od-accent); border-color: var(--accent-soft); background: var(--accent-soft); }
-.example-tag.mode-deck { color: var(--od-accent); border-color: var(--accent-soft); background: var(--accent-soft); }
-
-/* Example preview hover affordance + click-through overlay */
-.example-preview {
-  cursor: zoom-in;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-.example-preview:hover {
-  border-color: var(--od-accent);
-  box-shadow: 0 6px 18px rgba(201, 100, 66, 0.10);
-}
-.example-preview:focus-visible {
-  outline: none;
-  border-color: var(--od-accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-.example-preview-overlay {
-  position: absolute;
-  bottom: 10px;
-  right: 10px;
-  padding: 5px 12px;
-  font-size: 11.5px;
-  font-weight: 400;
-  color: white;
-  background: rgba(28, 27, 26, 0.78);
-  border-radius: 999px;
-  opacity: 0;
-  transition: opacity 0.15s;
-  pointer-events: none;
-  letter-spacing: 0.02em;
-}
-.example-preview:hover .example-preview-overlay,
-.example-preview:focus-visible .example-preview-overlay { opacity: 1; }
 
