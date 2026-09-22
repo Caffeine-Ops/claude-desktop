@@ -50,7 +50,9 @@ const MAX_IMAGES_PER_FILE = 12
  *
  * 为什么运行期读文件而不是 Vite `?raw` 编译期内联（设计 §5.3 修订）：`?raw` 是
  * Vite 专属语法，bun test 解析不了，会弄挂本目录全部 proposal 测试；而 skills/
- * 整树本就随包发布（tools/pack resources.ts）且 dev/bun test 下可经 cwd 候选回落
+ * 整树本就随包发布（本 fork 是 apps/studio/scripts/prebundle-daemon.mjs 的
+ * RESOURCE_DIRS 清单干的，不是上游的 tools/pack resources.ts——tools/pack 是
+ * vendored 上游包，不在本仓的构建链里）且 dev/bun test 下可经 cwd 候选回落
  * 仓库根，resolveBundledSkillsPluginDir 是现成解析器（engine 挂 plugin 用的同一个）。
  * 附带收益：dev 改模板对下一个 spawn 的会话即时生效，无需重启。
  *
