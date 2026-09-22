@@ -316,8 +316,10 @@ export const IPC_CHANNELS = {
    * Renderer → main. Returns the set of session ids whose fusion-code
    * runtime is currently alive (i.e. a pump is running in the
    * background). The renderer uses this to render "still running"
-   * badges in ThreadListSidebar and to decide which session ids it
-   * needs a subscription on in the multi-runtime model.
+   * badges on the session list (which now lives in the shell's nav
+   * rail — the in-renderer ThreadListSidebar was deleted 2026-09-22)
+   * and to decide which session ids it needs a subscription on in the
+   * multi-runtime model.
    *
    * "Alive" means the runtime has a handle or queue — pure empty
    * slots from a never-sent lazy switch are excluded.

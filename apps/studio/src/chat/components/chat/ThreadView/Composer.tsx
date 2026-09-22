@@ -981,10 +981,11 @@ export function Composer({
             FUNCTIONAL（2026-07-05 与模型 chip 互换位置后落这排）——它切换
             引擎的权限模式（default/plan/acceptEdits/bypass/dontAsk）。上下文
             用量 chip（ContextUsageChip，2026-07-10）暂时隐藏不挂载——它的
-            200k 窗口分母是从 ThreadListSidebar 抄来的写死常量，没有按当前
-            会话实际模型取值，模型切换到非 200k 窗口时百分比会算错。组件与
-            数据链路（engine.ts usage 事件的三个分量字段）保留，待窗口容量
-            改成按模型动态取值后再挂回这排。 */}
+            200k 窗口分母是写死常量（原先与 ThreadListSidebar 的 badge 各存
+            一份副本，那个侧栏已于 2026-09-22 删除），没有按当前会话实际模型
+            取值，模型切换到非 200k 窗口时百分比会算错。组件与数据链路
+            （engine.ts usage 事件的三个分量字段）**刻意保留**，待窗口容量
+            改成按模型动态取值后再挂回这排——别当死代码清掉。 */}
         {!(variant === 'hero' && compact) ? (
         <div
           className={

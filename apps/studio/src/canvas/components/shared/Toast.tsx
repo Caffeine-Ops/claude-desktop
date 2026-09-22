@@ -1,7 +1,10 @@
-// Lightweight transient toast for the new project-actions toolbar
-// (Continue in CLI / Finalize design package — #451). Mirrors the
-// canonical state-based pattern from PromptTemplatePreviewModal:
-// transient state cleared on a setTimeout, no portal, no DOM
+// Lightweight transient toast。最初是为 project-actions 工具条
+// （Continue in CLI / Finalize design package — #451）写的，那个工具条后来
+// 撤了（ProjectActionsToolbar，见 ProjectView 里的 00efdcba 注释），但本组件
+// 已被 DesignsTab / ProjectView / PluginsHomeSection / NewProjectPanel /
+// FileViewer 五处接管，是 canvas 侧的通用轻提示。
+//
+// 形态：transient state cleared on a setTimeout, no portal, no DOM
 // imperative work. Single-toast queue; multi-toast support is
 // deliberately deferred to a follow-up.
 //

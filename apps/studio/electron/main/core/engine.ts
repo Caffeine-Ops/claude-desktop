@@ -783,10 +783,11 @@ export class ChatEngine extends EventEmitter {
    * hasn't exited — either handle or queue is still set. Empty slots
    * from a new-session click that never got send()'d are excluded.
    *
-   * Used by the renderer to render running-badges in ThreadListSidebar
+   * Used by the renderer to render running-badges on the session list
    * (so the user can see which threads still have agent work in
    * flight) and to decide what to subscribe to in the multi-runtime
-   * IPC bridge.
+   * IPC bridge. That list lives in the shell's nav rail now — the old
+   * in-renderer ThreadListSidebar was deleted 2026-09-22.
    */
   listActiveRuntimeIds(): string[] {
     const ids: string[] = []

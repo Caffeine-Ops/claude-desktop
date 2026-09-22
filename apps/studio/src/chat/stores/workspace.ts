@@ -4,8 +4,10 @@ import { create } from 'zustand'
  * Workspace state（统一会话管理，2026-07-07 起为「会话级工作区」模型）。
  *
  * `current` 仍是引擎默认工作区（桌面）的渲染侧镜像 —— App.tsx 从
- * `getWorkspace()` seed，WorkspaceTreePanel 读它来 scope 文件树。它不再
- * 代表「所有会话的 cwd」：每个会话有自己的工作区。
+ * `getWorkspace()` seed，并以它作为 FusionRuntimeProvider 的 remount key。
+ * 它不再代表「所有会话的 cwd」：每个会话有自己的工作区。
+ * （原先还有个消费者 WorkspaceTreePanel 拿它 scope 文件树，右栏退役后该
+ * 组件已删，2026-09-22。）
  *
  * 会话级状态分两张表：
  *   - `sessionWorkspaces`：磁盘上已有 transcript 的会话 → 归属工作区。

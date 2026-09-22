@@ -64,8 +64,8 @@ export interface PreviewSidebar {
 // before Sidebar/Fullscreen/Share. Used by the plugin detail
 // wrappers to surface a "Use plugin" action without having to fork
 // the whole modal layout. Stays optional so existing callers
-// (DesignSystemPreviewModal, ExamplesTab) can keep their current
-// chrome unchanged.
+// (DesignSystemPreviewModal 等) can keep their current chrome
+// unchanged.
 export interface PreviewPrimaryAction {
   label: string;
   onClick: () => void;

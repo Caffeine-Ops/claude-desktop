@@ -1014,7 +1014,7 @@ export function CanvasConfirm({
             // ui-prototype-confirm-actionbar-tags.html，2026-07-13 用户选
             // 定）：品牌绿淡底 + 绿字 + 勾选图标，与右侧确认按钮同色呼
             // 应——「这些是你确认过的选择」。配色沿用 app 里既有的同款
-            // chip 词汇（ThreadListSidebar 的 bg-brand/[0.12]+text-brand、
+            // chip 词汇（bg-brand/[0.12]+text-brand，同款还有
             // PermissionFloatCard 的 bg-brand/[0.09]），全静态 brand
             // token：此前三轮「怎么调都发灰」的教训是 --card/--background
             // 会被外观设置运行时改写、深浅关系随用户主题漂移，brand 不在

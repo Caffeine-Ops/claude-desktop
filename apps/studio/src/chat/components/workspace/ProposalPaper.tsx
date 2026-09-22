@@ -458,9 +458,10 @@ export function ProposalPaper(): React.JSX.Element {
     } else {
       // 原图既不在 preferredIndex、其余块里也数不出恰好一个候选（漂移到找不到 / 歧义），
       // 应用被放弃。审阅项照样摘除（不留僵尸卡），但这一步是「用户点了应用却什么也没发生」，
-      // 不能悄无声息——控制台留痕，方便用户反馈「应用没反应」时靠 devtools 定位（同
-      // WorkspaceTreePanel openFile 失败的既有先例：本处也没有 toast 槽位，不为这一个
-      // 边缘场景新起一套 toast 机制）。
+      // 不能悄无声息——控制台留痕，方便用户反馈「应用没反应」时靠 devtools 定位。
+      // 只 warn 不弹提示是因为本处没有 toast 槽位，不值得为这一个边缘场景新起一套
+      // toast 机制（这条取舍原本援引 WorkspaceTreePanel openFile 失败的先例，该组件
+      // 已于 2026-09-22 删除）。
       console.warn('[proposal] 应用改图失败：原图已不在本节，已放弃该修订', {
         reviewId: review.id,
         sectionId: review.sectionId,

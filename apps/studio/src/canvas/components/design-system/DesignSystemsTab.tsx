@@ -111,7 +111,8 @@ export function DesignSystemsTab({
   const [category, setCategory] = useState<string>('All');
   // Cache fetched showcase HTML across re-renders so cards never re-flicker
   // when the user filters / scrolls back. null = "in flight"; undefined =
-  // "not yet requested". Mirrors the pattern used by ExamplesTab.
+  // "not yet requested". 这个三态缓存原本抄自 ExamplesTab（已删，
+  // 2026-09-22），现在本文件是它唯一的留存实现。
   const [thumbs, setThumbs] = useState<Record<string, string | null>>({});
 
   const librarySystems = useMemo(

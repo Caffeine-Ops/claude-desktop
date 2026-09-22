@@ -7,10 +7,12 @@ import { useChatStore } from '../../../stores/chat'
 import { useComposerOverlayStore } from '../../../stores/composerOverlay'
 
 /**
- * Claude's effective context window in tokens. Mirrors the constant in
- * ThreadListSidebar's sidebar badge (kept as a separate copy rather than
- * a shared import — both are small, self-contained presentational
- * helpers and a shared constant isn't worth the cross-file coupling).
+ * Claude's effective context window in tokens.
+ *
+ * 写死值，**这正是本组件当前不挂载的原因**——模型切到非 200k 窗口时百分比
+ * 会算错，挂回去之前必须先改成按当前会话模型动态取值（见 Composer.tsx
+ * chips 那段注释）。原先 ThreadListSidebar 的 badge 也各存一份副本，那个
+ * 侧栏已于 2026-09-22 删除，现在这里是唯一一处。
  */
 const CONTEXT_WINDOW_TOKENS = 200_000
 
