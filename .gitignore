@@ -41,7 +41,7 @@ skills/**/__pycache__/
 skills-src/**/__pycache__/
 
 # prebundle 打包产物 (~160M)：scripts/prebundle-daemon.mjs 生成（每次先 rm 重建），
-# 内容全是从 repo 别处复制来的（daemon bundle + apps/web/out + skills/
+# 内容全是从 repo 别处复制来的（daemon bundle + apps/studio/out + skills/
 # design-systems/… 等根目录资源），无唯一副本。electron-builder 打包时用，
 # 重新生成用 `bun run prebundle:daemon`。不入库。
 apps/studio/prebundled/
@@ -84,7 +84,6 @@ env.json
 apps/studio/next-env.d.ts
 
 .tmp/
-apps/web/out
 e2e/.od-data
 
 # 设计原型稿 (一次性方向稿, 不入库)
@@ -109,3 +108,12 @@ garden-gpt-image-2/
 apps/studio/public/skill-icons/writing_raw.png
 apps/studio/public/skill-icons/writing_keyed.png
 apps/studio/public/skill-icons/writing_check.png
+
+# 周报产物 (本机个人文档，非源码)：`desktop/` 是周报的约定存放处——文件名
+# 卢畅_周报_YYYY-MM-DD至MM-DD.html，每周生成一份。内容是对三个仓库 git log 的
+# 人工复述，对代码零作用，且逐周累积会持续污染 git status。目录继续用，不入库。
+desktop/
+
+# 早期生成 Word 版周报的一次性脚本 (python-docx)：周报格式已定稿为「只出 HTML」，
+# 这个 .docx 生成器随之作废；且它的输出路径写死本机绝对路径，换机即失效。
+create_report.py
