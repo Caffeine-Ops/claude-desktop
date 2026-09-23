@@ -26,17 +26,20 @@ import { MotionConfig } from 'motion/react'
  *     main                      (flex column, fills remaining height)
  *       FusionRuntimeProvider   (runtime context — no DOM)
  *         horizontal flex row
- *           ThreadListSidebar   (w-64, left rail — chats)
- *           ThreadView          (flex-1, main chat area)
+ *           ThreadView          (flex-1, 独占整行)
  *
- * The horizontal flex row lives *inside* the runtime provider so both
- * the sidebar (ThreadListPrimitive) and the chat view (ThreadPrimitive)
- * share the same AssistantRuntime — otherwise the sidebar couldn't
- * resolve its context.
+ * 两条侧栏都已退役，本 renderer 现在只渲染 ThreadView：
+ *   - 左侧会话列表搬去了 shell 的 nav rail（另一个 webContents，经
+ *     SHELL_SESSION_SWITCH 回到本 runtime——详见下方 FusionRuntimeProvider
+ *     那段注释）；
+ *   - 右栏（待办 + 文件）整体移除。
+ * 对应的三个组件文件（ThreadListSidebar / TodoListPanel / WorkspaceTreePanel）
+ * 已于 2026-09-22 随死代码清理删除，要看旧实现去 git 历史。
  *
- * The right rail (待办 TodoListPanel + 文件 WorkspaceTreePanel) was
- * removed — ThreadView now fills the full width to the right of the
- * chat list. Both component files still exist but are no longer mounted.
+ * 那个 flex row 现在只有一个孩子，但**仍然留在 runtime provider 内部**：
+ * 任何要和 ThreadView 并排挂的东西（当年的站内会话列表就是这样）都得拿到
+ * 同一个 AssistantRuntime 才能解析自己的 context——row 挪到 provider 外面
+ * 就等于给未来挖坑。
  *
  * Workspace
  * ---------

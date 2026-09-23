@@ -1277,25 +1277,6 @@
   gap: 6px;
   min-width: 0;
 }
-.entry-side-foot .foot-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  padding: 3px 8px;
-  min-height: 24px;
-  background: var(--bg-subtle);
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius-pill);
-  font-size: 10.5px;
-  color: var(--text-muted);
-  align-self: flex-start;
-  cursor: pointer;
-  text-decoration: none;
-}
-.entry-side-foot-row .foot-pill {
-  min-width: 0;
-}
 .entry-side-foot-row .foot-pill-follow {
   flex: 0 1 auto;
 }
@@ -1315,78 +1296,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.entry-side-foot .foot-pill:hover { background: var(--bg-panel); border-color: var(--border-strong); color: var(--text); }
-.entry-side-foot .foot-pill .ico { font-size: 12px; opacity: 0.7; }
-/* The Icon component renders inline SVG with `stroke: currentColor`, so by
-   default it tracks the pill's text color exactly. Override via opacity to
-   keep the glyph muted relative to the label — on hover the icon "lifts"
-   just enough to feel active without going full black, which would make
-   it compete with the label for attention. */
-.entry-side-foot .foot-pill svg {
-  width: 10px;
-  height: 10px;
-  opacity: 0.55;
-  transition: opacity 120ms ease;
-}
-.entry-side-foot .foot-pill:hover svg {
-  opacity: 0.75;
-}
-
-/* Language switcher pill + popover (entry sidebar foot). */
-.lang-menu-wrap {
-  position: relative;
-  align-self: flex-start;
-}
-.lang-menu-wrap .lang-pill {
-  font-variant-numeric: tabular-nums;
-}
-.lang-menu-popover {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 0;
-  z-index: 50;
-  min-width: 180px;
-  width: max-content;
-  max-width: min(280px, calc(100vw - 48px));
-  display: flex;
-  flex-direction: column;
-  padding: 4px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border-strong);
-  border-radius: 10px;
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.12);
-}
-.lang-menu-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 10px;
-  background: transparent;
-  border: 0;
-  border-radius: 7px;
-  font-size: 12.5px;
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-}
-.lang-menu-label {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.lang-menu-item:hover { background: var(--bg-subtle); }
-.lang-menu-item.active { background: var(--bg-subtle); }
-.lang-menu-item .lang-menu-code {
-  color: var(--text-faint);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.02em;
-}
-.lang-menu-item .lang-menu-check {
-  color: var(--text-muted);
-  display: inline-flex;
-  align-items: center;
 }
 
 /* Right side */

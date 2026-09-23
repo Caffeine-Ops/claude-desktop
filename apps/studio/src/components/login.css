@@ -1,5 +1,5 @@
 /* ── 登录页（LoginScreen.tsx）专属：科技感背景/动效 ─────────────────────
- * docs/ui-prototype-login-v2.html「HUD 分屏」的落地。全部 login- 命名空间：
+ * ui-prototype-login-v2.html「HUD 分屏」的落地（原型稿未入库）。全部 login- 命名空间：
  * 登录墙是全局 overlay，这些类决不能命中 chat/canvas 任何元素。由
  * LoginScreen.tsx 直接 import（App Router 组件级全局 CSS），刻意不进
  * globals.css——和 chat/canvas 样式链彻底解耦。

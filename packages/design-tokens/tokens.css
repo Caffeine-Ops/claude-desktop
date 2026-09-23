@@ -1,6 +1,9 @@
 /*
  * Shared design tokens — the single source of truth for color across the
- * monorepo. The sole UI consumer today is apps/studio (the unified Next.js
+ * monorepo. The design language these values implement is written up in the
+ * repo-root `DESIGN.md`（Apple 设计语言：色彩 / 字体 / 间距 / 圆角）——本文件
+ * 是它的实现。色值对得上；圆角刻度已各走各的（以 canvas 的 `--od-radius-*`
+ * 为准），DESIGN.md 开头的核对说明写明了差异。 The sole UI consumer today is apps/studio (the unified Next.js
  * frontend); its TWO surfaces import this file through their own Tailwind v4
  * entrypoints and live in ONE document (SurfaceHost keep-alive):
  *

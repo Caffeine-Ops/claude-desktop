@@ -1,6 +1,5 @@
 // HTML-preview detail surface for plugins that ship a runnable
-// `od.preview` entry or example output (the same surface ExamplesTab
-// uses for skill cards). Wraps the shared PreviewModal so the user
+// `od.preview` entry or example output. Wraps the shared PreviewModal so the user
 // gets the full chrome — sandboxed iframe, Fullscreen, Share menu
 // (Export PDF / HTML / Zip / Open in new tab) — plus a primary
 // "Use plugin" action that routes through the home applyPlugin flow.

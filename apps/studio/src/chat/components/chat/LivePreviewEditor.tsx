@@ -40,7 +40,7 @@ const APPLY_ANNOTATION_TEXT = '应用我的标注'
 
 /**
  * 就绪进度（N/M 张已就绪）的跨组件出口：2026-07-07 工作区重设计
- * （docs/ui-prototype-ppt-workspace.html）删掉了 56px 的「幻灯片预览」
+ * （ui-prototype-ppt-workspace.html，原型稿未入库）删掉了 56px 的「幻灯片预览」
  * 标题头——它唯一的有效信息是这个进度，上移到 SlidesWorkspace tab 栏
  * 右端的胶囊里。editor 挂载期间持续写入、卸载清空，所以胶囊只在
  * 「预览幻灯片」tab 活跃（= 本组件挂着）时出现，切走即消失。
@@ -1976,7 +1976,7 @@ export function LivePreviewEditor({
       </div>
 
       {/* ── bottom dock: 已选 + 本页标注 + 应用（2026-07-07 原型定稿，
-          docs/ui-prototype-ppt-workspace.html）。三簇靠留白分区——上一版的
+          ui-prototype-ppt-workspace.html，原型稿未入库）。三簇靠留白分区——上一版的
           border-l 竖线把 dock 切成表格感，是被毙的主因之一。已选簇定宽
           260px：空态提示与芯片列表天然宽度不同，跟内容走会让整条 dock 在
           选中/取消时左右抖动（2026-07-07 用户实锤）。dock 回到明面

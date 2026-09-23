@@ -273,6 +273,27 @@ components:
     padding: 64px
 ---
 
+> **先分清是哪一份 DESIGN.md。** 本仓有两类同名文件，用途完全不同：
+> - **本文（仓库根 `DESIGN.md`）**——对 apple.com 设计语言的一份详尽拆解，
+>   本项目拿它当**自家 UI chrome 的设计北极星**。
+> - `design-systems/<brand>/DESIGN.md`——152 个品牌设计系统包各自的规范，
+>   是**出图/建站技能的素材**（`craft/` 里说的 "the active DESIGN.md" 指这些）。
+>   两者没有从属关系，别互相引用。
+>
+> **本文不是过期文档。** 它的实现在 `packages/design-tokens/tokens.css`——
+> 那里的注释直接引用本文的色值（"Apple Blue (#0071e3)"、"Apple's signature
+> light gray #f5f5f7"）。
+>
+> 2026-09-22 逐项核对过，与当前代码的对应关系是：
+> - **色彩：一致。** `--primary` / `--accent` = `211 100% 45%`（#0071e3），
+>   canvas `#f5f5f7`、ink `#1d1d1f` 都还是本文的值。
+> - **圆角：已偏离。** 本文写 xs 5 / sm 8 / md 11 / lg 18，实际 canvas 用的是
+>   `--od-radius-sm: 6px` / `--od-radius: 8px` / `--od-radius-lg: 12px` /
+>   `--od-radius-pill: 999px`（见 `apps/studio/src/canvas/styles/base.css`）。
+>   **以代码为准**，本文这张表只作历史参考。
+> - **本文未覆盖**：品牌绿 `--brand`（`142 76% 36%`）是后加的身份色，刻意不跟
+>   用户主题走，不属于这套 Apple 语言——用户可调的主题色才是 `--accent`。
+
 ## Overview
 
 Apple's web presence is a masterclass in **reverent product photography framed by near-invisible UI**. Every page is a stack of edge-to-edge product "tiles" — alternating light and dark canvases, each centered on a hero headline, a one-line tagline, two tiny blue pill CTAs, and an impossibly crisp product render. Nothing competes with the product. Typography is confident but quiet; color is either pure white, an off-white parchment, or a near-black tile; interactive elements are a single, quiet blue.
