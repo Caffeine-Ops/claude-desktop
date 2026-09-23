@@ -474,12 +474,6 @@ select:where(:not([data-slot], .chat-app *)):focus {
    ring. Using rgba directly because the Next CSS pipeline collapses
    `color-mix(in srgb, var(--text) 8%, transparent)` to a solid var(--text)
    ring (would render a 3px black band — too loud). */
-.entry-side input:focus,
-.entry-side textarea:focus,
-.entry-side select:focus {
-  border-color: var(--text);
-  box-shadow: 0 0 0 3px rgba(28, 27, 26, 0.08);
-}
 /* Native <select> on macOS uses its own intrinsic min-height that ends up
    shorter than <input> at the same `padding: 7px 10px` rule above, so any
    form that flex-aligns an input next to a select (e.g. the memory editor's
@@ -1058,39 +1052,6 @@ body[data-rail-collapsed] .app-chrome-header {
 
 /* -------- Avatar menu (replaces in-topbar agent picker) ------------- */
 .avatar-menu { position: relative; }
-.avatar-btn {
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border-radius: 50%;
-  background: var(--accent-tint);
-  border: 1px solid var(--od-border);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  transition: box-shadow 120ms ease, transform 120ms ease;
-}
-.avatar-btn:hover:not(:disabled) {
-  box-shadow: 0 0 0 3px rgba(194, 83, 45, 0.18);
-  border-color: transparent;
-}
-.avatar-btn:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(194, 83, 45, 0.32);
-  border-color: transparent;
-}
-.avatar-btn:active:not(:disabled) { transform: scale(0.96); }
-.avatar-btn-photo {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: 50% 22%;
-  display: block;
-  user-select: none;
-  -webkit-user-drag: none;
-  pointer-events: none;
-}
 .avatar-popover {
   position: absolute;
   top: calc(100% + 8px);
@@ -1756,20 +1717,6 @@ a.avatar-item:visited {
   position: relative;
   min-height: 88px;
 }
-.composer-input-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  min-height: 88px;
-  padding: 0;
-  color: var(--text);
-  font: inherit;
-  line-height: normal;
-  pointer-events: none;
-  white-space: pre-wrap;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-}
 .composer-input-overlay-inner {
   min-height: 100%;
   padding: 4px;
@@ -1854,40 +1801,6 @@ a.avatar-item:visited {
  * toggle state, so they stay pills rather than becoming round icon discs,
  * but adopt desktop's softer chrome: borderless, pill radius, gentle
  * foreground-tinted hover. The accent `.on` state is preserved. */
-.composer-import {
-  background: transparent;
-  border: none;
-  border-radius: 9999px;
-  padding: 5px 12px;
-  font-size: 12px;
-  color: hsl(var(--muted-foreground) / 0.8);
-  transition: background-color 120ms ease, color 120ms ease;
-}
-.composer-import:hover:not(:disabled) { background: hsl(var(--foreground) / 0.06); color: hsl(var(--foreground)); }
-.composer-research {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: transparent;
-  border: none;
-  border-radius: 9999px;
-  padding: 5px 12px;
-  font-size: 12px;
-  color: hsl(var(--muted-foreground) / 0.8);
-  cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease;
-}
-.composer-research:hover:not(:disabled) { background: hsl(var(--foreground) / 0.06); color: hsl(var(--foreground)); }
-.composer-research.on {
-  background: hsl(var(--primary) / 0.12);
-  color: var(--od-accent);
-}
-.composer-research-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--od-accent);
-}
 /* Send / Stop button — aligned to the desktop app's circular icon button
  * (apps/desktop ComposerPrimitive.Send / .Cancel): a 36px (size-9) round
  * solid-accent disc holding only an icon, with a soft accent-tinted

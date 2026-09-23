@@ -64,49 +64,6 @@
   /* The sidebar width is driven by an inline style fed from local state,
      with sensible bounds enforced in JS. */
 }
-.entry-side {
-  position: relative;
-  min-width: 280px;
-  max-width: 560px;
-  min-height: 0;
-}
-.entry-side-resizer {
-  position: absolute;
-  top: 0;
-  right: -3px;
-  width: 6px;
-  height: 100%;
-  cursor: col-resize;
-  z-index: 5;
-  background: transparent;
-  border: 0;
-  padding: 0;
-  transition: background-color 120ms ease;
-}
-.entry-side-resizer:hover,
-.entry-side-resizer.dragging { background: var(--accent-soft); }
-body.entry-resizing { cursor: col-resize; user-select: none; }
-
-/* ============================================================
-   Composer Import popover (coming-soon menu)
-   ============================================================ */
-.composer-import-wrap { position: relative; }
-.composer-import-menu {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 0;
-  min-width: 240px;
-  background: var(--bg-panel);
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius);
-  box-shadow: var(--od-shadow-md);
-  padding: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  z-index: 30;
-  animation: pop-in 180ms cubic-bezier(0.21, 1.02, 0.73, 1);
-}
 .composer-import-item {
   display: flex;
   align-items: center;
@@ -995,20 +952,7 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
    ============================================================ */
 .composer-row .icon-btn svg { display: block; }
 .composer-row .icon-btn.active { background: var(--bg-subtle); color: var(--text); }
-.composer-import {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
 .composer-send svg { display: block; }
-
-/* Make the composer's leading icons share the same hit target. */
-.composer-row .composer-icon-divider {
-  width: 1px;
-  height: 18px;
-  background: var(--od-border);
-  margin: 0 2px;
-}
 
 /* ============================================================
    Deck navigation toolbar (prev / counter / next)

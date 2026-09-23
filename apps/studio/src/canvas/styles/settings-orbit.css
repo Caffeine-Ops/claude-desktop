@@ -101,44 +101,6 @@
   animation: pulse 2.4s ease-in-out infinite;
 }
 
-.orbit-run-cta {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 14px;
-  background: var(--od-accent);
-  color: #fff;
-  border: 1px solid var(--od-accent);
-  border-radius: var(--od-radius-sm);
-  font-size: 12.5px;
-  font-weight: 600;
-  letter-spacing: 0.005em;
-  cursor: pointer;
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--accent-strong) 22%, transparent) inset, var(--od-shadow-xs);
-  transition: background 120ms ease, border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
-}
-.orbit-run-cta:hover:not(:disabled) {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
-  transform: translateY(-1px);
-}
-.orbit-run-cta:focus-visible {
-  outline: 2px solid var(--od-accent);
-  outline-offset: 2px;
-}
-.orbit-run-cta:disabled {
-  cursor: not-allowed;
-  opacity: 0.7;
-  transform: none;
-}
-.orbit-run-cta.is-busy {
-  background: color-mix(in srgb, var(--od-accent) 75%, #000);
-  border-color: transparent;
-}
-.orbit-run-cta .icon-spin {
-  color: #fff;
-}
-
 @media (max-width: 620px) {
   .orbit-hero {
     grid-template-columns: auto minmax(0, 1fr);
@@ -206,19 +168,6 @@
 .orbit-automation.is-locked .orbit-automation-title,
 .orbit-automation.is-locked .orbit-automation-sub {
   color: var(--text-soft);
-}
-.orbit-automation.is-locked .orbit-time-input,
-.orbit-automation.is-locked .orbit-switch,
-.orbit-automation.is-locked .orbit-template-select-input,
-.orbit-automation.is-locked .orbit-automation-sub-action {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-.orbit-automation.is-locked .orbit-time-input:disabled,
-.orbit-automation.is-locked .orbit-template-select-input:disabled {
-  /* The native :disabled state already dims; keep our own opacity tuned
-     so it matches the surrounding desaturated card. */
-  background: color-mix(in srgb, var(--text-soft) 6%, var(--bg-subtle));
 }
 
 /* Lock banner — sits above the configuration rows and names the gate
@@ -292,91 +241,12 @@
   line-height: 1.45;
 }
 
-/* Custom switch control — rebuilt rather than reusing .toggle-row so the
-   Orbit section owns the pattern and can tune track/thumb proportions. */
-.orbit-switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 4px 12px 4px 4px;
-  background: transparent;
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius-pill);
-  cursor: pointer;
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
-}
-.orbit-switch:hover { border-color: var(--border-strong); }
-.orbit-switch.is-on {
-  background: color-mix(in srgb, var(--accent-tint) 70%, var(--bg-panel));
-  border-color: color-mix(in srgb, var(--od-accent) 36%, var(--od-border));
-  color: var(--accent-strong);
-}
-.orbit-switch:focus-visible {
-  outline: 2px solid var(--od-accent);
-  outline-offset: 2px;
-}
-.orbit-switch:disabled,
-.orbit-switch.is-locked {
-  cursor: not-allowed;
-  opacity: 0.55;
-  border-color: var(--od-border);
-  background: transparent;
-  color: var(--text-soft);
-}
-.orbit-switch:disabled .orbit-switch-track,
-.orbit-switch.is-locked .orbit-switch-track {
-  background: var(--od-border);
-}
-.orbit-switch:disabled.is-on .orbit-switch-track,
-.orbit-switch.is-locked.is-on .orbit-switch-track {
-  background: color-mix(in srgb, var(--od-accent) 35%, var(--od-border));
-}
-.orbit-switch-track {
-  position: relative;
-  width: 34px;
-  height: 20px;
-  border-radius: 999px;
-  background: var(--border-strong);
-  transition: background 160ms ease;
-}
-.orbit-switch-thumb {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 3px rgba(28, 27, 26, 0.22);
-  transition: transform 180ms cubic-bezier(0.2, 0, 0.2, 1);
-}
-.orbit-switch.is-on .orbit-switch-track { background: var(--od-accent); }
-.orbit-switch.is-on .orbit-switch-thumb { transform: translateX(14px); }
-.orbit-switch-text {
-  font-variant-numeric: tabular-nums;
-  min-width: 22px;
-  text-align: right;
-}
-
 .orbit-automation-schedule-controls {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 6px;
   min-width: 0;
-}
-.orbit-time-input {
-  width: 140px;
-  padding: 6px 10px;
-  font-variant-numeric: tabular-nums;
-  font-size: 13px;
-  letter-spacing: 0.02em;
-  text-align: center;
-  border-radius: var(--od-radius-sm);
 }
 .orbit-next-run {
   display: inline-flex;
@@ -414,10 +284,6 @@
   .orbit-automation-schedule-controls {
     align-items: stretch;
   }
-  .orbit-time-input {
-    width: 100%;
-  }
-  .orbit-switch { align-self: flex-start; }
 }
 
 /* ---------- 3. Template row (folded into Automation card) ----------
@@ -474,33 +340,6 @@
   color: #6c3f0f;
   font-weight: 600;
 }
-.orbit-automation-sub-action {
-  appearance: none;
-  -webkit-appearance: none;
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 8px;
-  margin-left: auto;
-  font: inherit;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: #8a5217;
-  background: var(--bg-panel);
-  border: 1px solid color-mix(in srgb, #c47a2c 32%, var(--od-border));
-  border-radius: var(--od-radius-pill);
-  cursor: pointer;
-  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
-}
-.orbit-automation-sub-action:hover {
-  color: #6c3f0f;
-  border-color: color-mix(in srgb, #c47a2c 55%, var(--od-border));
-  background: color-mix(in srgb, #c47a2c 8%, var(--bg-panel));
-}
-.orbit-automation-sub-action:focus-visible {
-  outline: 2px solid color-mix(in srgb, #c47a2c 65%, var(--od-accent));
-  outline-offset: 2px;
-}
 
 /* Native select wrapper. Originally a labelled grid (label + select);
    the row title now carries the inline label, so the select stretches
@@ -509,55 +348,6 @@
   display: flex;
   flex: 1;
   min-width: 0;
-}
-.orbit-template-select-wrap {
-  position: relative;
-  display: flex;
-  align-items: center;
-  width: 100%;
-  min-width: 0;
-}
-.orbit-template-select-input {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 100%;
-  padding: 8px 32px 8px 12px;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 400;
-  color: var(--text);
-  background: var(--bg-subtle);
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius-sm);
-  cursor: pointer;
-  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  overflow: hidden;
-}
-.orbit-template-select-input:hover:not(:disabled) {
-  border-color: var(--border-strong);
-  background: var(--bg-panel);
-}
-.orbit-template-select-input:focus-visible {
-  outline: none;
-  border-color: color-mix(in srgb, var(--od-accent) 50%, var(--od-border));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--od-accent) 18%, transparent);
-}
-.orbit-template-select-input:disabled {
-  /* While the skill registry is loading we show a progress cursor; the
-     locked variant overrides this back to not-allowed via the parent
-     `.orbit-automation.is-locked` rule above. */
-  cursor: progress;
-  opacity: 0.65;
-}
-.orbit-template-select-chevron {
-  position: absolute;
-  right: 10px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--text-soft);
-  pointer-events: none;
 }
 
 @media (max-width: 620px) {

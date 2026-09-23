@@ -180,7 +180,6 @@
 }
 .app .app-chrome-back,
 .app .settings-icon-btn,
-.app .avatar-btn,
 .app .project-instructions-toggle {
   width: 30px;
   height: 30px;
@@ -533,10 +532,6 @@
 }
 /* web-only pill buttons keep a pill radius; the real icon buttons and the
  * send button are round discs (handled below). */
-.app .composer-import,
-.app .composer-research {
-  border-radius: 9999px;
-}
 .app .composer-row .icon-btn {
   width: 36px;
   height: 36px;

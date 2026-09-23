@@ -1165,57 +1165,6 @@
   border-left: 1px solid rgba(0, 0, 0, 0.05);
 }
 
-/* Legacy list classes kept for any consumer outside the tab — the gallery
-   itself no longer renders these. Safe to remove once nothing references
-   them. */
-.ds-list { display: flex; flex-direction: column; gap: 8px; }
-.ds-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
-  background: var(--bg-panel);
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius-sm);
-  cursor: pointer;
-}
-.ds-row:hover { border-color: var(--border-strong); }
-.ds-row.active { background: var(--accent-tint); border-color: var(--od-accent); }
-.ds-row-body { flex: 1; min-width: 0; }
-.ds-row-title {
-  font-weight: 600;
-  font-size: 14px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.ds-row-default {
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  padding: 2px 6px;
-  background: var(--accent-soft);
-  color: var(--od-accent);
-  border-radius: 4px;
-}
-.ds-row-summary { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
-.ds-row-swatches {
-  display: inline-flex;
-  align-items: center;
-  gap: 0;
-  border-radius: 6px;
-  border: 1px solid var(--od-border);
-  overflow: hidden;
-  flex-shrink: 0;
-  height: 24px;
-}
-.ds-row-swatch {
-  display: block;
-  width: 16px;
-  height: 100%;
-}
-.ds-row-swatch + .ds-row-swatch { border-left: 1px solid rgba(0, 0, 0, 0.05); }
-
 @media (max-width: 900px) {
   .entry {
     grid-template-columns: 56px 1fr !important;
