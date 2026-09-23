@@ -165,50 +165,6 @@
   background: var(--bg-subtle);
 }
 
-.ws-tabs-actions { display: inline-flex; gap: 4px; align-items: center; }
-.ws-focus-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius-sm);
-  background: var(--bg);
-  color: var(--text-muted);
-  font-size: 12px;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-.ws-focus-toggle:hover {
-  background: var(--bg-subtle);
-  color: var(--text);
-  border-color: var(--border-strong);
-}
-.ws-focus-toggle:focus-visible {
-  outline: 2px solid var(--od-accent);
-  outline-offset: 2px;
-}
-.ws-tab-action {
-  padding: 4px 12px;
-  font-size: 12.5px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--od-radius-sm);
-  color: var(--text-muted);
-}
-.ws-tab-action:hover:not(:disabled) { background: var(--bg-subtle); color: var(--text); border-color: transparent; }
-.ws-tab-action.share {
-  background: var(--text);
-  color: var(--bg);
-  border-color: var(--text);
-  font-weight: 400;
-}
-.ws-tab-action.share:hover:not(:disabled) {
-  background: #000;
-  border-color: #000;
-}
-
 .ws-body {
   flex: 1;
   min-height: 0;
@@ -663,12 +619,6 @@
 .df-pagination-center {
   justify-content: center;
 }
-.df-pagination-end {
-  justify-content: flex-end;
-}
-.df-pagination-right {
-  margin-left: auto;
-}
 .df-pagination label {
   display: inline-flex;
   align-items: center;
@@ -918,33 +868,6 @@
 .df-row:hover .df-row-menu { opacity: 1; }
 .df-row-menu:focus { opacity: 1; }
 .df-row-menu:hover { background: var(--od-border); color: var(--text); }
-.df-section-more {
-  margin: 6px 20px 10px;
-  width: auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  background: var(--bg-subtle);
-  border: 1px solid var(--od-border);
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1;
-}
-.df-section-more:hover:not(:disabled) {
-  background: var(--bg-muted);
-  color: var(--text);
-}
-.df-row-collapse {
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  padding: 0;
-  width: 18px;
-  text-align: center;
-  font-size: 12px;
-  cursor: pointer;
-}
 .df-empty {
   flex: 1;
   display: flex;
@@ -1062,15 +985,6 @@
   background: var(--bg-panel);
   border-left: 1px solid var(--od-border);
   position: relative;
-}
-.df-preview-empty {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-faint);
-  font-size: 13px;
-  padding: 32px;
 }
 .df-preview-thumb {
   margin: 16px;

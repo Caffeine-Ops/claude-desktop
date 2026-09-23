@@ -1049,26 +1049,6 @@ html.settings-overlay .modal-backdrop:has(.modal-settings) {
 }
 .font-stepper button:hover:not(:disabled) { background: var(--bg-subtle); }
 .font-stepper button:disabled { opacity: 0.4; cursor: not-allowed; }
-.font-stepper-value {
-  min-width: 38px;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-  color: var(--text);
-}
-
-.settings-checkbox-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  cursor: pointer;
-  color: var(--text);
-}
-.settings-checkbox-row input[type='checkbox'] {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 auto;
-  cursor: pointer;
-}
 
 /* ============================================================
    Appearance section — grouped cards (prototype: ui-prototype-settings-b)
@@ -1081,12 +1061,6 @@ html.settings-overlay .modal-backdrop:has(.modal-settings) {
    ============================================================ */
 /* Two-class selector so this beats the later base `.settings-section`
    rule (both single-class otherwise, and the base one wins by order). */
-.settings-section.settings-section--cards {
-  display: flex;
-  flex-direction: column;
-  /* Prototype card spacing: 22px between groups. */
-  gap: 22px;
-}
 .settings-card {
   background: var(--bg-elevated);
   border: 1px solid var(--od-border);
@@ -1095,142 +1069,23 @@ html.settings-overlay .modal-backdrop:has(.modal-settings) {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03), 0 2px 10px rgba(0, 0, 0, 0.03);
   padding: 20px 22px;
 }
-.settings-card-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-muted);
-  letter-spacing: 0.02em;
-  margin-bottom: 14px;
-}
 /* Card rows: label/desc on the left, control on the right, hairline between. */
-.settings-section--cards .settings-card .field {
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 16px 0;
-  border-bottom: 1px solid var(--border-soft, var(--od-border));
-}
-.settings-section--cards .settings-card .field:first-child { padding-top: 0; }
-.settings-section--cards .settings-card .field:last-child {
-  padding-bottom: 0;
-  border-bottom: none;
-}
-.settings-section--cards .settings-card .field-label {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-}
-.settings-section--cards .settings-card .field > .hint {
-  flex-basis: 100%;
-  margin-top: 12px;
-}
 /* Full-width controls (segmented theme picker, CLI backend) inside a card
    shouldn't be squeezed into the right column — let them span the card.
    Also re-tune the segmented control to the prototype's `.segmented`
    metrics (radius 10, padding 4, gap 4) — the shared .seg-control defaults
    differ, so override them scoped to the appearance cards. */
-.settings-section--cards .settings-card > .seg-control {
-  width: 100%;
-  border: none;
-  border-radius: 10px;
-  padding: 4px;
-  gap: 4px;
-  min-height: 0;
-}
-.settings-section--cards .settings-card .seg-btn {
-  border-radius: 7px;
-  padding: 0 12px;
-  min-height: 38px;
-}
-.settings-section--cards .settings-card .seg-btn.active {
-  background: var(--bg-elevated);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 1px 1px rgba(0, 0, 0, 0.04);
-}
-.settings-section--cards .settings-card .seg-btn .seg-title {
-  font-size: 13.5px;
-}
 /* Accent swatches: bigger, with an accent double-ring on the active one
    (matches the prototype). Scoped so the pet-config swatches keep their
    smaller default look. */
-.settings-section--cards .pet-swatch {
-  width: 26px;
-  height: 26px;
-}
-.settings-section--cards .pet-swatch.active {
-  border-color: transparent;
-  box-shadow: 0 0 0 2px var(--bg-elevated), 0 0 0 4px var(--od-accent);
-}
 /* Custom-color slot — render as the prototype's grey "+" circle rather
    than echoing the picked color. A grey disc with a centered plus glyph
    (SVG data-URI) sits on the input; the native color swatch is made
    transparent so the grey+plus shows through. Clicking still opens the
    OS color picker. */
-.settings-section--cards .pet-swatch-picker {
-  width: 26px;
-  height: 26px;
-  border: none;
-  border-radius: 50%;
-  overflow: hidden;
-  background-color: #ececeb;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 16 16' fill='none' stroke='%239b9b96' stroke-width='1.6' stroke-linecap='round'%3E%3Cpath d='M8 3v10M3 8h10'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: center;
-}
-.settings-section--cards .pet-swatch-picker::-webkit-color-swatch-wrapper {
-  padding: 0;
-}
-.settings-section--cards .pet-swatch-picker::-webkit-color-swatch {
-  border: none;
-  border-radius: 50%;
-  /* The native swatch paints the picked color over our grey+plus
-     background; hide it so only the grey "+" disc shows (1:1 with the
-     prototype's custom-color slot). */
-  opacity: 0;
-}
-.dark .settings-section--cards .pet-swatch-picker {
-  background-color: rgba(255, 255, 255, 0.1);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 16 16' fill='none' stroke='%23a0a09a' stroke-width='1.6' stroke-linecap='round'%3E%3Cpath d='M8 3v10M3 8h10'/%3E%3C/svg%3E");
-}
 /* Font stepper → pill stepper (rounded, divided cells). */
-.settings-section--cards .font-stepper {
-  border-radius: 999px;
-  border-color: var(--border-strong, var(--od-border));
-  padding: 0;
-  gap: 0;
-  height: 34px;
-  overflow: hidden;
-  background: var(--bg-elevated);
-}
-.settings-section--cards .font-stepper button {
-  width: 38px;
-  height: 100%;
-  border-radius: 0;
-}
-.settings-section--cards .font-stepper-value {
-  min-width: 56px;
-  padding: 0 4px;
-  border-left: 1px solid var(--od-border);
-  border-right: 1px solid var(--od-border);
-  align-self: stretch;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
 /* Pointer-cursor checkbox → accent-filled check (prototype's blue square,
    but accent-driven so it matches the theme). */
-.settings-section--cards .settings-checkbox-row {
-  width: 100%;
-  flex-direction: row-reverse;
-  justify-content: space-between;
-}
-.settings-section--cards .settings-checkbox-row input[type='checkbox'] {
-  width: 20px;
-  height: 20px;
-  border-radius: 6px;
-  /* Prototype uses a fixed blue check (#2f6bff), not the theme accent. */
-  accent-color: #2f6bff;
-}
 
 .seg-control {
   display: grid;
@@ -1264,75 +1119,10 @@ html.settings-overlay .modal-backdrop:has(.modal-settings) {
   border-color: transparent;
   box-shadow: var(--od-shadow-xs);
 }
-.seg-btn .seg-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
-}
-.seg-btn.active .seg-title { font-weight: 600; }
-.seg-btn .seg-meta { display: none; }
 .seg-btn:disabled { opacity: 0.55; cursor: not-allowed; }
 /* Inline variant: title and meta sit on a single row instead of
    stacking, which saves a row of vertical space inside the
    execution-mode tabs (Local CLI · 2 installed / BYOK · API provider). */
-.seg-btn--inline {
-  flex-direction: row;
-  align-items: baseline;
-  gap: 8px;
-  padding-block: 8px;
-}
-.seg-btn--inline > .seg-title { min-width: 0; flex: 0 0 auto; }
-.seg-btn--inline > .seg-meta { min-width: 0; flex: 1 1 auto; }
-
-/* Secondary protocol selector — pill chips, wraps to multiple rows */
-.protocol-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 4px 0 8px;
-  padding: 0;
-  min-width: 0;
-}
-.protocol-chip {
-  flex: 0 1 auto;
-  max-width: 100%;
-  min-width: 0;
-  background: transparent;
-  border: 1px solid var(--od-border);
-  border-radius: 999px;
-  padding: 4px 12px;
-  font-size: 12px;
-  font-weight: 400;
-  color: var(--text-muted);
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: background 120ms ease, color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
-}
-.protocol-chip:hover:not(.active) {
-  background: var(--bg-subtle);
-  color: var(--text);
-  border-color: var(--border-strong);
-}
-.protocol-chip.active {
-  background: var(--selected);
-  border-color: color-mix(in srgb, var(--selected) 86%, var(--text-strong));
-  color: #fff;
-  font-weight: 600;
-  box-shadow:
-    0 0 0 3px var(--selected-soft),
-    0 1px 2px color-mix(in srgb, var(--selected) 22%, transparent);
-}
-.protocol-chip.active:hover {
-  background: color-mix(in srgb, var(--selected) 88%, var(--text-strong));
-  border-color: color-mix(in srgb, var(--selected) 80%, var(--text-strong));
-  color: #fff;
-}
 
 .settings-section { display: flex; flex-direction: column; gap: 12px; }
 .settings-section-connectors { gap: 16px; }
@@ -1345,95 +1135,4 @@ html.settings-overlay .modal-backdrop:has(.modal-settings) {
 }
 .settings-section-connectors > .connectors-panel-embedded {
   margin-top: 0;
-}
-.settings-rescan-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 96px;
-  justify-content: center;
-}
-.settings-rescan-btn.loading {
-  border-color: var(--accent-soft);
-  background: var(--accent-tint);
-  color: var(--accent-strong);
-}
-.settings-rescan-status,
-.settings-test-status {
-  margin: -4px 0 0;
-  padding: 7px 10px;
-  border: 1px solid var(--green-border);
-  border-radius: var(--od-radius-sm);
-  background: var(--green-bg);
-  color: var(--green);
-  font-size: 12px;
-  line-height: 1.4;
-  word-wrap: break-word;
-  overflow-wrap: break-word;
-}
-.settings-rescan-status.error,
-.settings-test-status.error {
-  border-color: var(--red-border);
-  background: var(--red-bg);
-  color: var(--red);
-}
-.settings-rescan-status-inline {
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--green);
-  font-size: 11.5px;
-  white-space: nowrap;
-}
-.settings-rescan-status-inline.error {
-  color: var(--red);
-}
-.settings-test-status.warn {
-  border-color: var(--amber-border, var(--orange-border, var(--green-border)));
-  background: var(--amber-bg, var(--orange-bg, var(--green-bg)));
-  color: var(--amber, var(--orange, var(--green)));
-}
-.settings-test-status.running {
-  border-color: var(--accent-soft);
-  background: var(--accent-tint);
-  color: var(--accent-strong);
-}
-.settings-test-actions {
-  margin-top: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.settings-test-actions-hint {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-.settings-test-actions-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.settings-test-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 64px;
-  justify-content: center;
-}
-.settings-test-btn.loading {
-  border-color: var(--accent-soft);
-  background: var(--accent-tint);
-  color: var(--accent-strong);
-}
-.section-head-actions .seg-control {
-  display: inline-grid;
-  grid-template-columns: repeat(var(--seg-cols, 2), auto);
-  min-height: unset;
-  min-width: unset;
-}
-.section-head-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
 }

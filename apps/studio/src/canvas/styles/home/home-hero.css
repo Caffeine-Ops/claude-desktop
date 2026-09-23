@@ -341,9 +341,6 @@
   min-width: 0;
   border-radius: calc(var(--od-radius-lg) - 6px);
 }
-.home-hero__prompt-surface--with-inputs {
-  padding: 0;
-}
 .home-hero__prompt-editor {
   position: relative;
   min-width: 0;
@@ -944,82 +941,6 @@
 }
 .home-hero__attach:active {
   transform: scale(0.95);
-}
-.home-hero__working-dir-wrap {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-}
-.home-hero__working-dir {
-  appearance: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 32px;
-  max-width: 220px;
-  min-width: 0;
-  padding: 0 14px;
-  border: 1px solid var(--od-border);
-  border-radius: 999px;
-  background: var(--bg-panel);
-  /* Flat pill utility button — no chrome shadow (Apple). */
-  box-shadow: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  font: inherit;
-  font-size: 14px;
-  letter-spacing: -0.012em;
-  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, transform 120ms ease;
-}
-.home-hero__working-dir:active {
-  transform: scale(0.95);
-}
-.home-hero__working-dir:hover {
-  background: var(--bg-subtle);
-  border-color: var(--border-strong);
-  color: var(--od-accent);
-}
-.home-hero__working-dir.picked {
-  padding-right: 30px;
-  border-color: color-mix(in srgb, var(--od-accent) 45%, var(--od-border));
-  background: color-mix(in srgb, var(--od-accent) 8%, var(--bg-panel));
-  color: var(--text-strong);
-}
-.home-hero__working-dir span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.home-hero__working-dir-clear {
-  appearance: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  margin-left: -22px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--text-soft);
-  cursor: pointer;
-  opacity: 0;
-  transition: color 120ms ease, opacity 120ms ease;
-}
-.home-hero__working-dir-wrap:hover .home-hero__working-dir-clear,
-.home-hero__working-dir-clear:focus-visible {
-  opacity: 0.8;
-}
-.home-hero__working-dir-clear:hover {
-  color: var(--od-accent);
-  opacity: 1;
-}
-.home-hero__working-dir-clear:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--od-accent) 22%, transparent);
-  outline-offset: 2px;
 }
 .home-hero__active-type-chip {
   appearance: none;
@@ -2006,46 +1927,12 @@
   color: var(--od-accent);
   transform: translate(1px, -1px);
 }
-
-/* ------------------------------------------------------------
-   Stage B of plugin-driven-flow-plan: Home intent rail.
-   Two flex sub-groups ("create" outputs vs. lower starter shortcuts)
-   separated by a hairline divider. The whole rail wraps cleanly
-   onto multiple rows on narrow viewports — no horizontal scroll.
-   Visual language matches the active-plugin chip inside the
-   input card (pill, accent-tint when selected), and the shortcut
-   variant uses the page's --bg-subtle surface so secondary
-   intents recede without losing affordance.
-   ------------------------------------------------------------ */
-.home-hero__rail {
-  position: relative;
-  z-index: 1;
-  width: 100%;
-  max-width: 720px;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 8px 12px;
-  padding: 4px 2px 0;
-}
-.home-hero__rail--shortcuts {
-  padding-top: 0;
-}
 .home-hero__rail-group {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
   gap: 6px;
-}
-.home-hero__rail-divider {
-  display: inline-block;
-  width: 1px;
-  height: 18px;
-  background: var(--border-soft);
-  border-radius: 1px;
-  flex: 0 0 auto;
 }
 .home-hero__rail-chip {
   appearance: none;
@@ -2131,12 +2018,6 @@
      scrolling. The base rule already wraps; on narrow viewports
      the two groups stack onto separate rows, so the divider
      becomes visual noise — hide it. */
-  .home-hero__rail-divider {
-    display: none;
-  }
-  .home-hero__rail {
-    gap: 6px 8px;
-  }
   .home-hero__foot-left {
     flex-wrap: wrap;
   }

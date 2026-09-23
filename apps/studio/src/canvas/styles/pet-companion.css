@@ -273,6 +273,11 @@
   border-color: var(--border-strong);
 }
 
+/* frameless 独立宠物窗（`body.desktop-pet-shell`）的样式。**零消费者是预期
+   状态、不是死代码**：它与 app/globals.css 里 Windows/Linux 那条
+   `body:not(.desktop-pet-shell) *` 的 app-region 豁免口子配套，那边注释写着
+   「当前没有任何写入方，纯预留」——两半必须同去同留。2026-09-23 死代码扫描
+   误删过一次，靠 CDP 查运行时样式表才发现，补这段注释挡住下一次。 */
 body.desktop-pet-shell {
   width: 100vw;
   height: 100vh;
@@ -704,66 +709,6 @@ body.desktop-pet-shell .pet-task-item {
   background: transparent;
   padding: 0;
   cursor: pointer;
-}
-
-/* ============================================================
-   Pet — discovery surfaces (welcome teaser, composer)
-   ============================================================ */
-
-/* ----- Welcome dialog teaser ----- */
-.welcome-pet-teaser {
-  margin-top: 10px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  background: var(--accent-tint);
-  border: 1px solid var(--od-accent);
-  border-radius: var(--od-radius);
-  cursor: pointer;
-  text-align: left;
-  color: var(--text);
-  width: 100%;
-}
-.welcome-pet-teaser:hover {
-  filter: brightness(1.02);
-}
-.welcome-pet-glyph {
-  font-size: 24px;
-  line-height: 1;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: var(--bg-panel);
-  border: 1px solid var(--od-accent);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-}
-.welcome-pet-copy {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
-}
-.welcome-pet-copy strong {
-  font-size: 12.5px;
-  color: var(--text-strong);
-}
-.welcome-pet-copy span {
-  font-size: 11px;
-  color: var(--text-muted);
-  line-height: 1.35;
-}
-.welcome-pet-cta {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11.5px;
-  color: var(--accent-strong);
-  font-weight: 600;
-  white-space: nowrap;
 }
 
 /* ----- Composer pet button + popover ----- */
@@ -1835,19 +1780,16 @@ body.desktop-pet-shell .pet-task-item {
 
 /* Scope line-height increase to prose and chat to avoid breaking compact UI chrome */
 [dir="rtl"] .prose,
-[dir="rtl"] .chat-message,
 [dir="rtl"] .msg .user-text {
   line-height: 1.7;
 }
 
 [dir="rtl"] .avatar-item,
-[dir="rtl"] .settings-tab,
 [dir="rtl"] .ds-item-name {
   text-align: right;
 }
 
 [dir="rtl"] .app-chrome-back svg,
-[dir="rtl"] .back-btn svg,
 [dir="rtl"] .icon-btn svg[data-lucide="chevron-left"],
 [dir="rtl"] .icon-btn svg[data-lucide="chevron-right"],
 [dir="rtl"] .icon-btn svg[data-lucide="arrow-left"],
@@ -1856,8 +1798,7 @@ body.desktop-pet-shell .pet-task-item {
 [dir="rtl"] .icon-only svg[data-lucide="chevron-left"],
 [dir="rtl"] .icon-only svg[data-lucide="chevron-right"],
 [dir="rtl"] .icon-only svg[data-lucide="arrow-left"],
-[dir="rtl"] .icon-only svg[data-lucide="arrow-right"],
-[dir="rtl"] .welcome-pet-teaser svg {
+[dir="rtl"] .icon-only svg[data-lucide="arrow-right"] {
   transform: scaleX(-1);
 }
 

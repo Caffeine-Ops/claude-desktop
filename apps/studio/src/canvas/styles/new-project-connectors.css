@@ -768,19 +768,6 @@
 .live-artifact-thumb::after {
   display: none;
 }
-.live-artifact-thumb-glyph {
-  width: 46px;
-  height: 46px;
-  border-radius: 16px;
-  display: grid;
-  place-items: center;
-  color: var(--od-accent);
-  background: var(--bg-panel);
-  border: 1px solid color-mix(in srgb, var(--od-accent) 24%, var(--od-border));
-  box-shadow: var(--od-shadow-xs);
-  font-size: 18px;
-  line-height: 1;
-}
 .design-card-badges,
 .live-artifact-badges {
   display: flex;
@@ -1017,23 +1004,6 @@
   .design-kanban-card:hover {
     transform: none;
   }
-}
-.example-prompt {
-  font-size: 13px;
-  color: var(--text-muted);
-  line-height: 1.55;
-  font-style: italic;
-}
-.example-cta { align-self: flex-start; padding: 8px 18px; }
-.example-tag {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  padding: 2px 8px;
-  border-radius: var(--od-radius-pill);
-  background: var(--od-accent);
-  color: white;
-  flex-shrink: 0;
 }
 
 /* Design systems gallery — masonry-style cards with lazy showcase iframes

@@ -50,11 +50,6 @@
   color: var(--text-strong);
   letter-spacing: 0.011em;
 }
-.plugins-home__count {
-  font-size: 12px;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-}
 .plugins-home__head-tools {
   display: flex;
   align-items: center;
@@ -391,15 +386,6 @@
 .plugins-home__facet-row--inline .plugins-home__chip {
   flex: 0 0 auto;
 }
-.plugins-home__facet-label {
-  padding-top: 7px;
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-  font-variant-numeric: tabular-nums;
-}
 .plugins-home__facet-pills {
   display: flex;
   flex-wrap: wrap;
@@ -510,9 +496,6 @@
   .plugins-home__facet-row--inline {
     flex-direction: row;
     align-items: center;
-  }
-  .plugins-home__facet-label {
-    padding-top: 0;
   }
 }
 

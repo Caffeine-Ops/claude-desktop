@@ -19,42 +19,6 @@
   background: var(--bg-subtle);
   box-shadow: 0 0 0 1px var(--od-accent);
 }
-.conv-item {
-  display: flex;
-  align-items: stretch;
-  gap: 4px;
-  border-radius: 6px;
-}
-.conv-item.active { background: var(--bg-subtle); }
-.conv-item-name {
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.conv-item-meta {
-  font-size: 10px;
-  color: var(--text-muted);
-}
-.conv-item-del {
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 16px;
-  width: 24px;
-  cursor: pointer;
-  border-radius: 6px;
-}
-.conv-item-del:hover { background: var(--bg-subtle); color: var(--text); }
-.conv-rename-input {
-  flex: 1;
-  border: 1px solid var(--od-accent);
-  border-radius: 6px;
-  background: var(--bg-panel);
-  padding: 6px 8px;
-  font: inherit;
-  font-size: 12px;
-}
 
 /* Collapsible system-reminder block in chat */
 .system-reminder-block {

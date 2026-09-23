@@ -1098,18 +1098,6 @@
     grid-column: 1 / -1;
   }
 }
-.settings-field-error {
-  color: var(--red);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.settings-about-list {
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
 .mcp-client-body {
   display: flex;
   flex-direction: column;
@@ -1161,80 +1149,11 @@
   color: var(--text-muted);
   line-height: 1.5;
 }
-.settings-about-list > div {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px;
-  background: var(--bg-panel);
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius-sm);
-}
-.settings-about-version-row {
-  justify-content: space-between;
-}
-.settings-about-list dt {
-  font-size: 12px;
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-.settings-about-list dd {
-  margin: 0;
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
 .settings-notify-card {
   padding: 12px;
   background: var(--bg-panel);
   border: 1px solid var(--od-border);
   border-radius: var(--od-radius-sm);
-}
-.settings-notify-card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.settings-notify-card-header h4 {
-  margin: 0;
-}
-.settings-notify-card-hint {
-  margin: 16px 0 0;
-}
-.settings-about-version-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.settings-about-version-num {
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 600;
-}
-.settings-about-download-link {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 9px;
-  font-size: 11px;
-  font-weight: 400;
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  text-decoration: none;
-  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
-  white-space: nowrap;
-}
-.settings-about-download-link:hover:not(:disabled) {
-  background: var(--bg-subtle);
-  color: var(--text);
-  border-color: var(--border-strong);
-}
-.settings-about-download-link:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 
 .media-provider-reload-row {
@@ -1250,34 +1169,6 @@
 }
 .media-provider-reload-btn:hover {
   color: var(--text);
-}
-.settings-about-diagnostics {
-  display: flex;
-  flex-direction: row;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px;
-  background: var(--bg-panel);
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius-sm);
-}
-.settings-about-diagnostics-text {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.settings-about-diagnostics h4 {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-}
-.settings-about-diagnostics-text .hint {
-  margin: 0;
-  font-size: 12px;
 }
 .diagnostics-export-row {
   display: flex;
@@ -1345,35 +1236,6 @@
 .media-provider-hint {
   font-size: 11px;
   color: var(--text-muted);
-}
-.media-provider-badge {
-  align-self: flex-start;
-  font-size: 10px;
-  font-weight: 600;
-  padding: 2px 7px;
-  border-radius: var(--od-radius-pill);
-  border: 1px solid var(--od-border);
-}
-.media-provider-badges {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 6px;
-}
-.media-provider-badge.integrated {
-  color: #137a3d;
-  background: color-mix(in srgb, #1f9d55 10%, transparent);
-  border-color: color-mix(in srgb, #1f9d55 28%, var(--od-border));
-}
-.media-provider-badge.unsupported {
-  color: var(--text-soft);
-  background: var(--bg-subtle);
-  border-color: var(--od-border);
-}
-.media-provider-badge.on {
-  color: #3155c9;
-  background: color-mix(in srgb, #4169e1 10%, transparent);
-  border-color: color-mix(in srgb, #4169e1 28%, var(--od-border));
 }
 .media-provider-body {
   display: grid;
@@ -1445,8 +1307,7 @@
   keeps the button at its content width even when the description gets
   long; long button labels are then guarded by their own copy budget.
 */
-.section-head > button,
-.section-head .section-head-actions > button {
+.section-head > button {
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -1454,92 +1315,18 @@
 .section-head .hint { margin-top: 2px; }
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field-label { font-size: 12px; font-weight: 400; color: var(--text-muted); }
-.field-required {
-  margin-left: 4px;
-  color: var(--red);
-  font-weight: 700;
-}
-.field-error,
-.field-inline-status {
-  font-size: 11.5px;
-  line-height: 1.35;
-}
-.field-error {
-  color: var(--red);
-}
-.field-inline-status.running {
-  color: var(--accent-strong);
-}
-.field-inline-status.success {
-  color: var(--green);
-}
 .field-row { display: flex; gap: 6px; align-items: stretch; }
 .field-row input { flex: 1; }
 .field-row .icon-btn { white-space: nowrap; padding: 6px 12px; }
-.settings-base-url-readonly .field-row input[readonly] {
-  color: var(--text-muted);
-  cursor: default;
-}
-.settings-base-url-customize {
-  flex-shrink: 0;
-}
 .settings-language-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 8px;
 }
-.settings-language-tile {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  background: var(--bg-panel);
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius-sm);
-  color: var(--text);
-  text-align: left;
-  box-shadow: none;
-  min-width: 0;
-}
-.settings-language-tile-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.settings-language-tile-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-  overflow-wrap: anywhere;
-}
-.settings-language-tile-code {
-  font-size: 11px;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.02em;
-}
-.settings-language-tile:hover {
-  border-color: var(--border-strong);
-  background: var(--bg-subtle);
-}
 /* Differentiate hover, selected, and keyboard-focus states so the
    currently-selected language is visually distinct even when the
    pointer is hovering a different tile. Issue #628 (carries over from
    the previous dropdown form). */
-.settings-language-tile.active {
-  background: var(--accent-tint);
-  border-color: var(--od-accent);
-  color: var(--od-accent);
-  font-weight: 400;
-}
-.settings-language-tile.active .settings-language-tile-title { color: var(--od-accent); }
-.settings-language-tile.active:hover { background: var(--accent-soft); }
-.settings-language-tile:focus-visible {
-  outline: 2px solid var(--od-accent);
-  outline-offset: -2px;
-}
 .empty-card {
   padding: 16px;
   border: 1px dashed var(--od-border);
@@ -1548,124 +1335,10 @@
   font-size: 12px;
   background: var(--bg-subtle);
 }
-
-.agent-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 8px;
-}
-.agent-grid-installed {
-  grid-template-columns: minmax(0, 1fr);
-}
-.agent-group {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.agent-group-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.agent-group-head h4 {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text);
-}
-.agent-group-head-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-.agent-group-rescan-btn {
-  min-width: 92px;
-  min-height: 32px;
-}
-.agent-install-collapse {
-  margin-top: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--od-radius-sm);
-  background: var(--bg-subtle);
-}
-.agent-install-collapse-summary {
-  list-style: none;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 600;
-  user-select: none;
-}
-.agent-install-collapse-summary::-webkit-details-marker {
-  display: none;
-}
-.agent-install-collapse-summary::before {
-  content: '';
-  width: 0;
-  height: 0;
-  border-left: 5px solid currentColor;
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
-  transition: transform 0.15s ease;
-}
-.agent-install-collapse[open] > .agent-install-collapse-summary::before {
-  transform: rotate(90deg);
-}
-.agent-grid-unavailable {
-  margin-top: 10px;
-}
 /* Test feedback row injected into the agent grid right after the
    tested/selected card. Spans both columns so the result reads as a
    continuation of that card's row, instead of a top-of-section banner
    that pushes the grid down on every Test/Rescan click. */
-.agent-test-result-row {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.agent-test-result-row > .settings-test-status {
-  margin: 0;
-}
-.agent-test-result-row > .settings-test-actions {
-  margin-top: 0;
-}
-.agent-card {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  /* Uniform height regardless of state: an installed agent only renders
-     name + version, while an unavailable one adds an Install/Docs row.
-     Without `min-height` the two variants render ~50px vs ~68px and the
-     grid looks ragged. Pinning to ~64px lets installed cards center their
-     two-line body in the same box that the action variant fills. */
-  min-height: 64px;
-  padding: 6px 10px;
-  background: var(--bg-panel);
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius-sm);
-  cursor: pointer;
-  text-align: left;
-  position: relative;
-  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
-}
-.agent-card-installed {
-  padding: 0;
-  min-height: 72px;
-  overflow: hidden;
-  /* Installed cards are the execution-mode "pick your CLI" list — the one
-     surface where the Apple card grammar should read most clearly. Bump
-     8px(--od-radius-sm) → 11px(--od-radius) so the corners match the dialog's
-     own radius family; scoped to -installed so the denser unavailable
-     list below keeps its tighter sm corners. */
-  border-radius: var(--od-radius);
-}
 .agent-card-select {
   flex: 1;
   min-width: 0;
@@ -1687,196 +1360,26 @@
    un-scaled while 5px padding grows the visible box to ~42px. Scoped to
    -installed so the unavailable list (no tile in the reference) is
    untouched. */
-.agent-card-installed .agent-card-select > .agent-icon {
-  box-sizing: content-box;
-  padding: 5px;
-  background: var(--bg-subtle);
-  border: 1px solid var(--border-soft);
-  border-radius: 10px;
-}
 /* On the selected card the tile lifts onto the panel surface so it reads
    above the accent-tinted row fill (matches the reference). */
-.agent-card-installed.active .agent-card-select > .agent-icon {
-  background: var(--bg-panel);
-}
-.agent-card-test-btn {
-  align-self: stretch;
-  flex-shrink: 0;
-  min-width: 112px;
-  margin: 0;
-  padding: 0 18px;
-  border: 0;
-  border-left: 1px solid var(--border-soft);
-  border-radius: 0;
-  background: transparent;
-  color: var(--text);
-  font-weight: 600;
-}
-.agent-card-test-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent-tint) 58%, transparent);
-  color: var(--accent-strong);
-}
-.agent-card:hover:not(.disabled) {
-  border-color: var(--border-strong);
-}
-.agent-card.active {
-  border-color: var(--od-border);
-  background: color-mix(in srgb, var(--accent-tint) 54%, var(--bg-panel));
-  box-shadow: none;
-}
 /* Selected installed card carries an explicit accent hairline + a wider
    leading bar so the pick reads decisively (the reference draws a clear
    blue frame, not just a tint). Only -installed: the unavailable list is
    never "selected", so its neutral .active styling stays as-is. */
-.agent-card-installed.active {
-  border-color: color-mix(in srgb, var(--od-accent) 35%, var(--od-border));
-}
-.agent-card.active::before {
-  content: '';
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 3px;
-  background: var(--od-accent);
-}
-.agent-card-installed.active::before {
-  width: 4px;
-}
 /* The test action's divider tracks the row's accent on a selected card,
    so the trailing "测试" zone reads as part of the blue frame rather than
    a neutral seam (mirrors the hover state already defined above). */
-.agent-card-installed.active .agent-card-test-btn {
-  border-left-color: color-mix(in srgb, var(--od-accent) 22%, var(--od-border));
-}
-.agent-card.disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-.agent-card.disabled.agent-card-unavailable {
-  opacity: 0.72;
-}
-.agent-card-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-  margin-top: 3px;
-}
 /* Inline variant: links sit to the right of the agent name as a sibling
    of .agent-card-body, so unavailable cards collapse to a single row
    (no "not installed" label, no version meta) and the long tail of
    unavailable adapters shrinks. */
-.agent-card-actions--inline {
-  margin-top: 0;
-  flex: 0 0 auto;
-  flex-wrap: nowrap;
-  align-items: center;
-}
-.agent-card-link {
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--text-muted);
-  text-decoration: none;
-  transition: color 120ms ease;
-}
-.agent-card-link:hover {
-  color: var(--text);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
 /* Docs link: secondary affordance, plain muted text. Sits to the left
    of the Install ghost button so the primary "do this" action keeps the
    right edge. Hover toggles the underline only — no background, no
    color change — to keep visual weight low. */
-.agent-card-link--muted {
-  color: var(--text-muted);
-  font-weight: 400;
-}
-.agent-card-link--muted:hover {
-  color: var(--text);
-}
 /* Install link: primary affordance for an unavailable card, styled as
    a ghost button (transparent + outlined) so it reads as a real
    actionable target rather than yet another text link. */
-.agent-card-link--ghost {
-  display: inline-flex;
-  align-items: center;
-  padding: 3px 10px;
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius-sm);
-  background: transparent;
-  color: var(--text);
-}
-.agent-card-link--ghost:hover {
-  background: var(--bg-subtle);
-  border-color: var(--border-strong);
-  text-decoration: none;
-}
-.agent-install-path-hint {
-  margin-top: 10px;
-  margin-bottom: 0;
-}
-.agent-install-guide {
-  margin-top: 10px;
-}
-.agent-install-steps {
-  margin: 8px 0 0;
-  padding-left: 18px;
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.45;
-}
-.agent-install-steps li + li {
-  margin-top: 4px;
-}
-.agent-card-body { display: flex; flex-direction: column; min-width: 0; flex: 1; }
-.agent-card-name {
-  display: flex;
-  align-items: baseline;
-  gap: 5px;
-  min-width: 0;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-}
-.agent-card-name > span:first-child,
-.agent-card-tagline {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.agent-card-name > span:first-child {
-  flex: 0 1 auto;
-}
-.agent-card-name-divider,
-.agent-card-tagline {
-  color: var(--text-muted);
-  font-weight: 400;
-}
-.agent-card-tagline {
-  flex: 1 1 auto;
-}
-.agent-card-description {
-  margin-top: 1px;
-  font-size: 11px;
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.agent-card-meta {
-  font-size: 11px; color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  line-height: 1.35;
-}
-.agent-card-meta .muted { color: var(--text-soft); font-style: italic; }
-.agent-model-row-head {
-  font-size: 12px;
-  color: var(--text);
-}
-.agent-model-row-head strong {
-  font-weight: 600;
-}
 .agent-model-row {
   display: flex;
   flex-direction: column;
@@ -1887,11 +1390,7 @@
   background: var(--bg-panel);
 }
 .agent-model-row select,
-.agent-model-row input,
-.agent-cli-env select,
-.agent-cli-env input,
-.settings-section-byok select,
-.settings-section-byok input {
+.agent-model-row input {
   background-color: var(--bg-subtle);
 }
 /*
@@ -1918,110 +1417,7 @@
   letter-spacing: 0.04em;
   color: var(--text-muted);
 }
-.agent-model-source-badge {
-  display: inline-flex;
-  align-items: center;
-  min-height: 18px;
-  padding: 2px 6px;
-  border: 1px solid var(--od-border);
-  border-radius: 999px;
-  background: var(--bg-subtle);
-  color: var(--text-muted);
-  font-size: 10.5px;
-  font-weight: 600;
-  line-height: 1;
-  letter-spacing: 0;
-  text-transform: none;
-}
-.agent-model-source-badge.live {
-  border-color: var(--green-border);
-  background: var(--green-bg);
-  color: var(--green);
-}
-.agent-model-source-badge.fallback {
-  min-height: auto;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 11.5px;
-  font-weight: 400;
-}
-.agent-model-source-badge.fallback::before {
-  content: '·';
-  margin-right: 6px;
-  color: var(--text-muted);
-}
 .agent-model-row .hint { margin: 0; font-size: 11.5px; }
-.agent-model-select-wrap {
-  position: relative;
-}
-.agent-model-select-wrap select {
-  appearance: none;
-  -webkit-appearance: none;
-  background-image: none;
-  padding-right: 28px;
-  width: 100%;
-}
-.agent-model-select-chevron {
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--text-soft);
-  pointer-events: none;
-}
-.agent-cli-env {
-  padding: 10px 12px;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--od-radius-sm);
-  background: var(--bg-panel);
-}
-.agent-cli-env-summary {
-  list-style: none;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  user-select: none;
-}
-.agent-cli-env-summary::-webkit-details-marker {
-  display: none;
-}
-.agent-cli-env-summary::before {
-  content: '';
-  width: 0;
-  height: 0;
-  border-left: 5px solid currentColor;
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
-  color: var(--text-muted);
-  transition: transform 0.15s ease;
-}
-.agent-cli-env[open] > .agent-cli-env-summary::before {
-  transform: rotate(90deg);
-}
-.agent-cli-env-summary-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-}
-.agent-cli-env-body {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 10px;
-}
-.agent-cli-env-body .hint {
-  margin: 0;
-  font-size: 11.5px;
-}
-.agent-cli-env-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
 .status-dot {
   width: 8px; height: 8px;
   border-radius: 50%;
@@ -2083,68 +1479,4 @@
   border-radius: var(--od-radius-sm);
   background: var(--bg-subtle);
 }
-.activity-header { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 6px; }
-.activity-header .dot {
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  background: var(--text-muted);
-  flex: 0 0 auto;
-}
-.activity-header .dot[data-active="true"] {
-  background: var(--od-accent);
-  animation: pulse 1.2s ease-in-out infinite;
-}
-.activity-title { font-weight: 600; }
-.activity-stats {
-  margin-left: auto;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-  font-size: 11px;
-}
-.activity-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  max-height: 280px;
-  overflow-y: auto;
-}
-.activity-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  font-size: 12px;
-  line-height: 1.4;
-  padding: 2px 0;
-}
-.activity-item .badge {
-  flex: 0 0 auto;
-  display: inline-block;
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-size: 10px;
-  font-weight: 400;
-  letter-spacing: 0.02em;
-  background: var(--bg-subtle);
-  color: var(--text-muted);
-  border: 1px solid var(--od-border);
-  min-width: 56px;
-  text-align: center;
-}
-.activity-item .badge-tool { background: var(--blue-bg); border-color: var(--blue-border); color: var(--blue); }
-.activity-item .badge-result { background: var(--green-bg); border-color: var(--green-border); color: var(--green); }
-.activity-item .badge-error,
-.activity-item .badge-result.badge-error {
-  background: var(--red-bg); border-color: var(--red-border); color: var(--red);
-}
-.activity-item .badge-thinking { background: var(--purple-bg); border-color: var(--purple-border); color: var(--purple); }
-.activity-item .badge-status { background: var(--bg-panel); }
-.activity-item .badge-text { background: transparent; border-color: var(--od-border); }
-.activity-item .badge-usage { background: var(--bg-panel); color: var(--text-muted); }
-.activity-item .detail { flex: 1; min-width: 0; overflow-wrap: break-word; word-break: break-word; }
-.activity-item .detail.muted { color: var(--text-muted); }
-.activity-item .thinking-text { font-style: italic; color: var(--text-muted); }
-.activity-waiting { font-size: 11px; color: var(--text-muted); font-style: italic; }
 

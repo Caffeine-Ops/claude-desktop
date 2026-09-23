@@ -673,40 +673,6 @@
   line-height: 1.55;
 }
 
-.onboarding-view__handoff-status {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 13px 14px;
-  border: 1px solid color-mix(in srgb, var(--od-accent) 34%, var(--od-border));
-  border-radius: 10px;
-  color: var(--text);
-  background: color-mix(in srgb, var(--od-accent) 7%, var(--bg-panel));
-}
-
-.onboarding-view__handoff-status > svg {
-  flex: 0 0 auto;
-  margin-top: 2px;
-  color: var(--od-accent);
-}
-
-.onboarding-view__handoff-status span {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.onboarding-view__handoff-status strong {
-  font-size: 13px;
-  line-height: 1.25;
-}
-
-.onboarding-view__handoff-status small {
-  color: var(--text-muted);
-  font-size: 12.5px;
-  line-height: 1.45;
-}
-
 .onboarding-view__actions {
   display: flex;
   flex-wrap: wrap;
@@ -717,8 +683,7 @@
 }
 
 .onboarding-view__primary,
-.onboarding-view__secondary,
-.onboarding-view__ghost {
+.onboarding-view__secondary {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -744,21 +709,13 @@
   border: 1px solid var(--od-border);
 }
 
-.onboarding-view__ghost {
-  color: var(--text-muted);
-  background: transparent;
-  border: 1px solid transparent;
-}
-
 .onboarding-view__primary:hover,
-.onboarding-view__secondary:hover,
-.onboarding-view__ghost:hover {
+.onboarding-view__secondary:hover {
   transform: translateY(-1px);
 }
 
 .onboarding-view__primary:focus-visible,
 .onboarding-view__secondary:focus-visible,
-.onboarding-view__ghost:focus-visible,
 .onboarding-view__steps li button:focus-visible,
 .onboarding-view__card:focus-visible {
   outline: 2px solid var(--od-accent);
@@ -843,12 +800,6 @@
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.45;
-}
-
-.onboarding-view__setup-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: -2px;
 }
 
 .onboarding-view__setup-head-actions {

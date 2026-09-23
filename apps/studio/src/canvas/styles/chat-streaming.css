@@ -23,7 +23,6 @@
   max-width: 44ch;
 }
 .chat-empty-title { font-weight: 600; color: var(--text-strong); font-size: 15px; }
-.chat-empty-hint { line-height: 1.6; }
 
 .chat-examples {
   display: flex;
@@ -168,25 +167,6 @@
     opacity: 1;
     transform: translateY(0);
   }
-}
-
-.assistant-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11.5px;
-  color: var(--text-muted);
-  margin-bottom: 8px;
-}
-.assistant-header .dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--text-muted);
-}
-.assistant-header .dot[data-active="true"] {
-  background: var(--od-accent);
-  animation: pulse 1.2s ease-in-out infinite;
 }
 .assistant-label { font-weight: 600; color: var(--text-strong); font-size: 12.5px; }
 .assistant-stats { font-variant-numeric: tabular-nums; margin-left: auto; }
@@ -1682,12 +1662,6 @@
   background: var(--bg-subtle);
   border: 1px solid var(--od-border);
   border-radius: var(--od-radius-sm);
-}
-.picker-label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
 }
 .picker select {
   border: none;

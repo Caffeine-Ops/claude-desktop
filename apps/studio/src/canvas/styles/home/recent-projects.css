@@ -43,14 +43,6 @@
   color: var(--accent-strong);
   background: var(--accent-tint);
 }
-.recent-projects__empty {
-  color: var(--text-muted);
-  font-size: 13px;
-  padding: 20px 16px;
-  border: 1px dashed var(--od-border);
-  border-radius: var(--od-radius);
-  text-align: center;
-}
 .recent-projects__row {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
