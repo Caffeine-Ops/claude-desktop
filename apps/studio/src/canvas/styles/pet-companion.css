@@ -354,27 +354,6 @@ body.desktop-pet-shell .pet-task-item {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.seg-btn.small {
-  padding: 4px 10px !important;
-  font-size: 12px !important;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  border-radius: var(--od-radius-pill);
-  border: 1px solid var(--od-border);
-  background: var(--bg-subtle);
-  color: var(--text-muted);
-  cursor: pointer;
-}
-.seg-btn.small.active {
-  background: var(--accent-tint);
-  color: var(--accent-strong);
-  border-color: var(--od-accent);
-}
-.seg-btn.small[disabled] {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 
 /* Pet source tabs — pill row that splits the panel into three
    exclusive surfaces (built-in / custom / community). Sits flush
@@ -877,16 +856,6 @@ body.desktop-pet-shell .pet-task-item {
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
-}
-.seg-btn.small.ghost {
-  background: transparent;
-  border-color: var(--od-border);
-  color: var(--text-muted);
-}
-.seg-btn.small.ghost:hover {
-  background: var(--bg-subtle);
-  color: var(--text);
-  border-color: var(--border-strong);
 }
 .pet-image-error {
   color: var(--red) !important;

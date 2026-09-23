@@ -1100,26 +1100,6 @@ html.settings-overlay .modal-backdrop:has(.modal-settings) {
   min-height: 42px;
   min-width: 0;
 }
-.seg-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 4px 12px;
-  border: 1px solid transparent;
-  border-radius: var(--od-radius-sm);
-  background: transparent;
-  cursor: pointer;
-  text-align: center;
-  min-width: 0;
-}
-.seg-btn:hover:not(:disabled):not(.active) { color: var(--text); }
-.seg-btn.active {
-  background: var(--bg-panel);
-  border-color: transparent;
-  box-shadow: var(--od-shadow-xs);
-}
-.seg-btn:disabled { opacity: 0.55; cursor: not-allowed; }
 /* Inline variant: title and meta sit on a single row instead of
    stacking, which saves a row of vertical space inside the
    execution-mode tabs (Local CLI · 2 installed / BYOK · API provider). */

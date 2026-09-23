@@ -182,36 +182,6 @@
   background: transparent;
   border-radius: var(--od-radius);
 }
-.sv2 .seg-btn {
-  height: 38px;
-  border: none;
-  background: transparent;
-  border-radius: var(--od-radius-sm);
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  font-size: 13.5px;
-  color: var(--text-soft);
-  font-weight: 500;
-  transition: background 0.12s, color 0.12s, box-shadow 0.12s;
-}
-.sv2 .seg-btn:hover:not(.active):not(:disabled) {
-  color: var(--text);
-}
-.sv2 .seg-btn.active {
-  background: var(--bg-subtle);
-  color: var(--text);
-  font-weight: 600;
-  box-shadow: none;
-  border: 1px solid var(--border-soft);
-}
-.sv2 .seg-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 
 /* Accent swatches (legacy pet-swatch markup used by Appearance). */
 .sv2 .pet-swatch {
