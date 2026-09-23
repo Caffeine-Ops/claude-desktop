@@ -1,0 +1,76 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+
+  // 死代码扫描器。本仓没有 ESLint，typecheck 是唯一全局防线，但它抓不到
+  // 「文件 / 导出 / 依赖没人用」这类问题——2026-09 连着两轮人工清理
+  // （PR #63 删了 19 个组件 5560 行 + ~130 条孤儿 CSS）就是人在补这个缺口。
+  // knip 把「定期人工打扫」变成一条可重复的命令：bun run knip。
+
+  // tools/* 与 plugins/_official/ 是 vendored 上游（open-design）代码：
+  // postinstall 每次 install 都构建它们，但本 fork 的打包链不调 tools/pack，
+  // 所以它们「看着零消费者」是**预期状态、不是死代码**（见根 CLAUDE.md）。
+  // 扫它们只会得到一屏必须忽略的假阳性。
+  // packages/* 与 apps/daemon 是被多方消费的库，entry 语义另说，先不纳入,
+  // 免得假阳性淹掉真问题；要扩范围时一个一个加、每加一个核一轮。
+  "ignoreWorkspaces": ["tools/*", "packages/*", "apps/daemon"],
+
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/*.{mjs,ts}", "scripts/**/*.test.ts"],
+      "project": ["scripts/**/*.{mjs,ts}"],
+
+      // scripts/kb-index/embed.ts 直接 import @huggingface/transformers，
+      // 但那个包装在 apps/studio——根脚本靠 bun workspace 的 hoisting 借到它。
+      // 已在根 devDependencies 里显式声明（哪天 studio 不装它了，根脚本会
+      // 当场炸而不是静默）；这里不需要再 ignore。
+      "ignoreBinaries": ["markitdown", "soffice"]
+    },
+
+    "apps/studio": {
+      // electron 侧入口 electron-vite 插件识别不全：4 个 worker 是
+      // utilityProcess.fork 的独立 rollup input（见 electron.vite.config.ts
+      // 里那几段长注释），不是被 import 进来的——漏登记会被误判成死文件。
+      "entry": [
+        "electron/main/index.ts",
+        "electron/main/workers/*Worker.ts",
+        "electron/preload/index.ts",
+        "scripts/*.{mjs,ts}",
+        "**/*.test.ts",
+
+        // sdkPilot.ts 是带 shebang 的独立 POC 脚本（bun 直接跑，不进 Electron，
+        // 用来验证 agent SDK 能否驱动 fusion-code CLI）。没有任何人 import 它
+        // 是**设计如此**，不是死代码。
+        "electron/main/pilot/sdkPilot.ts"
+      ],
+      "project": [
+        "electron/**/*.ts",
+        "src/**/*.{ts,tsx}",
+        "app/**/*.{ts,tsx}",
+        "scripts/**/*.{mjs,ts}"
+      ],
+
+      // 刻意保留、暂不挂载的组件——删了就真没了，注释里写明了回归条件。
+      // 加进来之前先读组件旁边那段注释，别凭「零引用」就下手。
+      "ignore": [
+        // ContextUsageChip：上下文用量 chip，200k 窗口分母是写死常量，模型切到
+        // 非 200k 窗口会算错百分比，故 2026-09 起不挂载。组件与 engine.ts 的
+        // usage 事件数据链路刻意留着，待窗口容量改成按模型动态取值后挂回
+        // Composer 那排 chip（见 Composer.tsx 该 chip 处的长注释）。
+        "src/chat/components/chat/ThreadView/ContextUsageChip.tsx"
+      ],
+
+      // tailwindcss / tw-animate-css / @claude-desktop/design-tokens /
+      // @open-design/ui 都不经 JS import 消费——前三个从 CSS 里 @import（Tailwind
+      // v4 的用法），@open-design/ui 是 source-only 包走 next.config.ts 的
+      // transpilePackages。knip 只看 JS 依赖图，必然误报，不是它们真没用。
+      // @types/adm-zip 是 adm-zip（在 dependencies 里活着）的类型包，同理。
+      "ignoreDependencies": [
+        "tailwindcss",
+        "tw-animate-css",
+        "@claude-desktop/design-tokens",
+        "@open-design/ui",
+        "@types/adm-zip"
+      ]
+    }
+  }
+}
