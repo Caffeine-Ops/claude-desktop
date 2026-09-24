@@ -224,6 +224,29 @@ export function pickArtifact(
   return platform ? entry.artifacts[platform] : undefined
 }
 
+/**
+ * 决定这一轮要处理哪些组件、按什么顺序。
+ *
+ * 排序：required 排前面——启动那道门只等必需组件，可选组件不该拖慢放行。
+ *
+ * `only`：只重装指定的一个组件（设置页「运行时组件」分区每行各自的「重新下载」）。
+ * **找不到就返回空数组，绝不退化成「没过滤」**：清单是服务端下发的，将来完全可能
+ * 不再包含某个 id（或前端传了个过期 id）。若那时当作整表处理，用户点一下「重下
+ * Python 环境」会把 AI 引擎 233MB 一起重下——自建源出口带宽 ~1.1MB/s 且所有用户
+ * 共享，那是几分钟的代价，且完全不是他要的。宁可什么都不做（UI 会显示该组件不在
+ * 当前清单里）。
+ *
+ * 不就地排序传入数组：调用方的 `manifest.components` 是缓存下来复用的
+ * （cachedManifest），就地 sort 会悄悄改掉缓存的顺序。
+ */
+export function selectComponentsToEnsure(
+  components: readonly ComponentEntry[],
+  only?: ComponentId | null
+): ComponentEntry[] {
+  const pool = only ? components.filter((c) => c.id === only) : [...components]
+  return pool.sort((a, b) => Number(b.required) - Number(a.required))
+}
+
 /** 下载地址：优先清单里写死的绝对 url，否则同目录拼接。 */
 export function artifactUrl(base: string, artifact: ComponentArtifact): string {
   if (artifact.url && artifact.url.trim()) return artifact.url.trim()
@@ -258,6 +281,28 @@ export function formatBytes(n: number): string {
   return `${(n / 1048576).toFixed(1)} MB`
 }
 
+/**
+ * 一个组件当前状态的中文一行文案（设置页「运行时组件」每行显示）。
+ *
+ * 顺序不能调：**error 必须压过 detail**。worker 报错时不保证清空 detail，若按
+ * detail 优先，用户会看到红色错误图标配一句「正在下载…」——自相矛盾的界面比
+ * 没有状态更让人不敢动。
+ *
+ * 进行中直接用 `detail`：它在契约里就被定义成「一句大白话」（如「正在校验…」
+ * 「第 2 次重试（15 秒后）」），main 侧已经把重试次数、限速这些都揉进去了，
+ * 这里再拼一遍只会两处漂移。两个兜底串是为了不让 UI 出现空白行——detail 在
+ * 状态刚建好、还没进入任何阶段时是空的。
+ *
+ * 注：这里刻意不做「下载中拼进度百分比」——进度是 done/total 两个数字，交给
+ * 调用方渲染成进度条比塞进一句话里清楚。
+ */
+export function componentStatusText(c: ComponentStatus): string {
+  if (c.phase === 'error') return c.error ?? '安装失败'
+  if (c.phase === 'ready') return '已就绪'
+  return c.detail || '等待中…'
+}
+
+/** 有任何组件处于非终态（checking/downloading/verifying/installing）。 */
 export function isRuntimeComponentsBusy(s: RuntimeComponentsState): boolean {
   return s.components.some(
     (c) => c.phase === 'checking' || c.phase === 'downloading' || c.phase === 'verifying' || c.phase === 'installing'

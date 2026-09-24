@@ -27,6 +27,7 @@ import {
   initialRuntimeComponentsState,
   parseComponentsManifest,
   pickArtifact,
+  selectComponentsToEnsure,
   type ComponentEntry,
   type ComponentId,
   type ComponentPlatform,
@@ -158,8 +159,20 @@ export function requiredComponentsReady(): boolean {
 /**
  * 确保组件就绪。并发调用共享同一次执行（单飞）。任何失败都收敛成状态里的
  * `phase:'error'`，**不 throw**——调用方拿到的就是终态。
+ *
+ * `only`：只处理这一个组件（设置页「运行时组件」分区每行的「重新下载」，配
+ * `force:true` 用）。见 selectComponentsToEnsure 的注释——传了个清单里没有的 id
+ * 会什么都不做，而不是退化成整表重装。
+ *
+ * **单飞对 only 同样生效，且这是刻意的**：已有一轮在跑时，本次调用复用那个
+ * promise、不会另起一轮。两个 worker 同时装同一个组件会在 staging→rename 那步
+ * 打架（componentWorker 的落位假设自己是唯一写手）。所以 UI 侧的纪律是——任何
+ * 组件处于非终态（不是 ready/error）时把所有「重新下载」按钮置灰，别让用户点了
+ * 没反应还以为坏了。
  */
-export function ensureRuntimeComponents(opts: { force?: boolean } = {}): Promise<RuntimeComponentsState> {
+export function ensureRuntimeComponents(
+  opts: { force?: boolean; only?: ComponentId } = {}
+): Promise<RuntimeComponentsState> {
   if (inflight) return inflight
   inflight = run(opts).finally(() => {
     inflight = null
@@ -192,7 +205,7 @@ async function fetchManifest(): Promise<ComponentsManifest | null> {
   return parsed
 }
 
-async function run(opts: { force?: boolean }): Promise<RuntimeComponentsState> {
+async function run(opts: { force?: boolean; only?: ComponentId }): Promise<RuntimeComponentsState> {
   getRuntimeComponentsState() // 保证表已初始化
   ensureComponentDirs()
 
@@ -228,8 +241,8 @@ async function run(opts: { force?: boolean }): Promise<RuntimeComponentsState> {
   }
 
   const platform = currentComponentPlatform()
-  // required 排前面：门只等它们，可选组件不该拖慢放行。
-  const ordered = [...manifest.components].sort((a, b) => Number(b.required) - Number(a.required))
+  // 选组件 + 排序（required 优先）都在纯函数里，可 bun test 直测。
+  const ordered = selectComponentsToEnsure(manifest.components, opts.only)
 
   for (const entry of ordered) {
     await ensureOne(entry, platform, opts.force === true)

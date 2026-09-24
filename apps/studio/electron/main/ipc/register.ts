@@ -259,9 +259,11 @@ import {
   ensureRuntimeComponents,
   ensureRuntimeComponentsInBackground,
   getRuntimeComponentsState,
-  requiredComponentsReady
+  requiredComponentsReady,
+  runtimeComponentDir,
+  runtimeComponentsRoot
 } from '../services/componentInstaller'
-import type { RuntimeComponentsState } from '../../shared/runtimeComponents'
+import type { ComponentId, RuntimeComponentsState } from '../../shared/runtimeComponents'
 import { DAEMON_PORT } from '../services/openDesignServices'
 import {
   getUsageFilterOptions,
@@ -604,6 +606,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.PPT_SKILL_ENSURE)
   ipcMain.removeHandler(IPC_CHANNELS.RUNTIME_COMPONENTS_GET_STATE)
   ipcMain.removeHandler(IPC_CHANNELS.RUNTIME_COMPONENTS_ENSURE)
+  ipcMain.removeHandler(IPC_CHANNELS.RUNTIME_COMPONENTS_GET_PATHS)
   ipcMain.removeHandler(IPC_CHANNELS.USAGE_FILTER_OPTIONS_GET)
   ipcMain.removeHandler(IPC_CHANNELS.USAGE_STATS_GET)
   ipcMain.removeHandler(IPC_CHANNELS.USAGE_MODELS_GET)
@@ -2583,8 +2586,28 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.RUNTIME_COMPONENTS_ENSURE,
-    async (_event, force: unknown): Promise<RuntimeComponentsState> => {
-      return ensureRuntimeComponents({ force: force === true })
+    async (_event, force: unknown, only: unknown): Promise<RuntimeComponentsState> => {
+      // 入参防御（同 AUTH_LOGIN 的纪律：renderer 被攻破时 main 是最后防线）：
+      // only 只认两个合法 id，别的一律当没传——当成没传就是整表，那是保守的
+      // 既有行为；反过来把垃圾值透下去会让 selectComponentsToEnsure 返回空数组，
+      // 表现成「点了重新下载什么也没发生」，更难排查。
+      const onlyId =
+        only === 'cli' || only === 'python-runtime' ? (only as ComponentId) : undefined
+      return ensureRuntimeComponents({ force: force === true, only: onlyId })
+    }
+  )
+
+  // 路径只读，没有副作用，不需要入参。
+  ipcMain.handle(
+    IPC_CHANNELS.RUNTIME_COMPONENTS_GET_PATHS,
+    async (): Promise<{ root: string; dirs: Record<ComponentId, string> }> => {
+      return {
+        root: runtimeComponentsRoot(),
+        dirs: {
+          cli: runtimeComponentDir('cli'),
+          'python-runtime': runtimeComponentDir('python-runtime')
+        }
+      }
     }
   )
 

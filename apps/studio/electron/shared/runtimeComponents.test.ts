@@ -1,12 +1,16 @@
 import { describe, expect, test } from 'bun:test'
 import {
   artifactUrl,
+  componentStatusText,
   currentComponentPlatform,
   formatBytes,
   formatEta,
   parseComponentsManifest,
+  initialComponentStatus,
   pickArtifact,
-  type ComponentEntry
+  selectComponentsToEnsure,
+  type ComponentEntry,
+  type ComponentStatus
 } from './runtimeComponents'
 
 const SHA = 'a'.repeat(64)
@@ -303,5 +307,73 @@ describe('formatEta / formatBytes', () => {
     expect(formatBytes(512)).toBe('512 B')
     expect(formatBytes(2048)).toBe('2.0 KB')
     expect(formatBytes(84_000_000)).toBe('80.1 MB')
+  })
+})
+
+describe('selectComponentsToEnsure', () => {
+  // required 在后、可选在前，用来验证排序真的发生了（不是恰好保持原序）。
+  const entries: ComponentEntry[] = [
+    { id: 'python-runtime', kind: 'tar.gz', required: false, artifacts: {} },
+    { id: 'cli', kind: 'executable', required: true, artifacts: {} }
+  ]
+
+  test('不指定 only：返回全部，required 排在前面', () => {
+    expect(selectComponentsToEnsure(entries).map((e) => e.id)).toEqual(['cli', 'python-runtime'])
+  })
+
+  test('指定 only：只返回那一个组件', () => {
+    expect(selectComponentsToEnsure(entries, 'python-runtime').map((e) => e.id)).toEqual([
+      'python-runtime'
+    ])
+  })
+
+  test('only 指到清单里不存在的组件：返回空，绝不退化成整表', () => {
+    // 这是本函数最要紧的一条。清单是服务端下发的，将来完全可能不再包含某个 id
+    // （或前端传了个过期 id）。此时若「找不到就当没过滤」，用户点一下「重下
+    // Python」会变成把 AI 引擎 233MB 一起重下——在共享 1.1MB/s 的自建源上
+    // 是几分钟的代价，且完全不是他要的。
+    const onlyCli: ComponentEntry[] = [
+      { id: 'cli', kind: 'executable', required: true, artifacts: {} }
+    ]
+    expect(selectComponentsToEnsure(onlyCli, 'python-runtime')).toEqual([])
+  })
+
+  test('不改动传入的数组（排序不能就地改清单）', () => {
+    const input: ComponentEntry[] = [
+      { id: 'python-runtime', kind: 'tar.gz', required: false, artifacts: {} },
+      { id: 'cli', kind: 'executable', required: true, artifacts: {} }
+    ]
+    selectComponentsToEnsure(input)
+    expect(input.map((e) => e.id)).toEqual(['python-runtime', 'cli'])
+  })
+})
+
+describe('componentStatusText', () => {
+  function status(over: Partial<ComponentStatus> = {}): ComponentStatus {
+    return { ...initialComponentStatus('cli', true), ...over }
+  }
+
+  test('出错时显示错误文案，而不是残留的进度文案', () => {
+    // 关键行为：worker 报 error 时不一定清空 detail，若按 detail 优先，用户会看到
+    // 「正在下载…」配一个红色图标——自相矛盾。error 必须压过 detail。
+    const s = status({ phase: 'error', error: '校验失败：文件已损坏', detail: '正在下载…' })
+    expect(componentStatusText(s)).toBe('校验失败：文件已损坏')
+  })
+
+  test('出错但没有错误文案时有兜底，不返回空串', () => {
+    expect(componentStatusText(status({ phase: 'error', error: null }))).toBe('安装失败')
+  })
+
+  test('就绪时显示「已就绪」（此时 detail 恒为空）', () => {
+    expect(componentStatusText(status({ phase: 'ready', detail: '' }))).toBe('已就绪')
+  })
+
+  test('进行中原样显示 detail（它本就是给用户看的大白话）', () => {
+    const s = status({ phase: 'verifying', detail: '第 2 次重试（15 秒后）' })
+    expect(componentStatusText(s)).toBe('第 2 次重试（15 秒后）')
+  })
+
+  test('进行中但 detail 还没填时有兜底，不留空白行', () => {
+    expect(componentStatusText(status({ phase: 'checking', detail: '' }))).toBe('等待中…')
   })
 })

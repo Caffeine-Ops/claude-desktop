@@ -889,6 +889,16 @@ export const IPC_CHANNELS = {
    */
   RUNTIME_COMPONENTS_ENSURE: 'runtime-components:ensure',
   /**
+   * Renderer → main. 组件的安装路径（根目录 + 每个组件的目录），供设置页
+   * 「运行时组件」分区展示与「在文件管理器中显示」。**不发网络请求、不碰磁盘
+   * 内容**，只是把 main 侧的路径解析结果念出来。
+   *
+   * 为什么不塞进 RuntimeComponentsState：那张表是下载期间高频推送的（每几百毫秒
+   * 一次进度），而路径是进程生命周期内的常量——塞进去等于每帧都把两个字符串
+   * 重新发一遍。
+   */
+  RUNTIME_COMPONENTS_GET_PATHS: 'runtime-components:get-paths',
+  /**
    * Main → every renderer. 组件安装进度推送（下载 / 校验 / 安装三段 + 重试）。
    * worker 侧已按 100ms 节流，这里原样转发。
    */
@@ -3693,8 +3703,18 @@ export interface ChatApi {
    * 门只看 `requiredReady`。`force` 用于失败后的重试按钮。
    */
   ensureRuntimeComponents(
-    force?: boolean
+    force?: boolean,
+    /** 只处理这一个组件（设置页每行的「重新下载」）。省略 = 整表。 */
+    only?: import('./runtimeComponents').ComponentId
   ): Promise<import('./runtimeComponents').RuntimeComponentsState>
+
+  /**
+   * 组件安装路径（见 RUNTIME_COMPONENTS_GET_PATHS）。诊断用，设置页展示。
+   */
+  getRuntimeComponentPaths(): Promise<{
+    root: string
+    dirs: Record<import('./runtimeComponents').ComponentId, string>
+  }>
 
   /** 订阅组件安装进度推送（见 RUNTIME_COMPONENTS_STATE）。返回退订函数。 */
   onRuntimeComponentsState(

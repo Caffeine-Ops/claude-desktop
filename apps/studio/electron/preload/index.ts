@@ -183,7 +183,7 @@ import type { ProposalMetricRecord } from '../shared/proposal'
 import type { KbRemoteConfig } from '../shared/kbConfig'
 import type { KbSyncStatus } from '../shared/kbSyncStatus'
 import type { PptSkillStatus } from '../shared/pptSkillStatus'
-import type { RuntimeComponentsState } from '../shared/runtimeComponents'
+import type { ComponentId, RuntimeComponentsState } from '../shared/runtimeComponents'
 import type { KbCatalog, KbCatalogStatus } from '../shared/kbCatalog'
 import type { KbBuildStatus } from '../shared/kbBuildStatus'
 import type {
@@ -827,10 +827,18 @@ const chatApi: ChatApi = {
     ) as Promise<RuntimeComponentsState>
   },
 
-  ensureRuntimeComponents(force?: boolean): Promise<RuntimeComponentsState> {
+  getRuntimeComponentPaths(): Promise<{ root: string; dirs: Record<ComponentId, string> }> {
+    return ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_COMPONENTS_GET_PATHS) as Promise<{
+      root: string
+      dirs: Record<ComponentId, string>
+    }>
+  },
+
+  ensureRuntimeComponents(force?: boolean, only?: ComponentId): Promise<RuntimeComponentsState> {
     return ipcRenderer.invoke(
       IPC_CHANNELS.RUNTIME_COMPONENTS_ENSURE,
-      force === true
+      force === true,
+      only
     ) as Promise<RuntimeComponentsState>
   },
 
