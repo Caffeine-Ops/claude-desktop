@@ -30,14 +30,13 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve(__dirname, 'electron/main/index.ts'),
-          // embedWorker 是 utilityProcess 独立入口：KB 模型加载/向量检索全在
-          // 子进程，绝不进 main 主线程（冷加载 ~6s 会冻住所有 tab 的 engine）。
-          // kbSemanticSearch 用 utilityProcess.fork('out-electron/main/embedWorker.js')
-          // 指向此产物——漏配该入口 fork 会静默失败 → 检索永久降级 BM25。
-          embedWorker: resolve(__dirname, 'electron/main/workers/embedWorker.ts'),
-          // kbBuildWorker 同理：kbBuildRunner 用 utilityProcess.fork('out-electron/main/
-          // kbBuildWorker.js') 跑「扫描→转换→向量→写 index.json」。漏配此入口 = 产物不
-          // 生成 → fork 找不到文件 → 构建 worker 当场异常退出 → 索引永远建不出、管理页恒空。
+          // kbBuildWorker 是 utilityProcess 独立入口：kbBuildRunner 用
+          // utilityProcess.fork('out-electron/main/kbBuildWorker.js') 跑「扫描→转换→写
+          // index.json」（转换调外部 markitdown/soffice，是重活，绝不进 main）。漏配此
+          // 入口 = 产物不生成 → fork 找不到文件 → 构建 worker 当场异常退出 → 索引永远
+          // 建不出、管理页恒空。
+          // 注：这里原本还有一个 embedWorker 入口（KB 嵌入模型 + 向量检索的子进程），
+          // 2026-09-24 随整条向量化栈删除。
           kbBuildWorker: resolve(__dirname, 'electron/main/workers/kbBuildWorker.ts'),
           // pptSkillWorker 同理：ppt-creator skill 压缩 49MB、解压 12167 个
           // 文件，sha256 与解压全在子进程做，绝不进 main（那会把所有 tab 的

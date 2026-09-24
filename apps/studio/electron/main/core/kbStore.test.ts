@@ -16,7 +16,7 @@ async function fixture(): Promise<{ dirs: KbStoreDirs; src: string }> {
   mkdirSync(src, { recursive: true })
   mkdirSync(join(dirs.storeDir, '线A', '品1'), { recursive: true })
   writeFileSync(join(dirs.storeDir, '线A', '品1', '方案.txt'), '正文', 'utf8')
-  await buildKbIndex({ kbRoot: dirs.storeDir, outDir: dirs.outDir, now: 1000, vectors: false })
+  await buildKbIndex({ kbRoot: dirs.storeDir, outDir: dirs.outDir, now: 1000 })
   return { dirs, src }
 }
 
@@ -43,7 +43,7 @@ describe('kbStore 执行层', () => {
     expect(readIndex(dirs).files).toHaveLength(0)
   })
 
-  test('deleteDoc：原件+镜像+index 条目一起消失，且 bump builtAtMs 灭幽灵向量行', async () => {
+  test('deleteDoc：原件+镜像+index 条目一起消失，且 bump builtAtMs', async () => {
     const { dirs } = await fixture()
     const rel = join('线A', '品1', '方案.txt')
 
@@ -59,8 +59,9 @@ describe('kbStore 执行层', () => {
     expect(existsSync(join(dirs.storeDir, rel))).toBe(false)
     expect(existsSync(`${join(dirs.outDir, rel)}.md`)).toBe(false)
     expect(readIndex(dirs).files).toHaveLength(0)
-    // 命中条目的写操作必须 bump builtAtMs：vectors fingerprint 立即失配 → 语义检索
-    // 降级 BM25，窗口期内不会命中已删文档的向量行
+    // 命中条目的写操作必须 bump builtAtMs——它是索引内容的版本戳（远程同步 manifest 对账
+    // 与设置页「内容多新」都读它）。原本还兼作 vectors.bin 的 fingerprint 用来灭幽灵向量
+    // 行，那条理由随 2026-09-24 向量化栈删除消失，断言保留（见 kbStore.ts 头注释）。
     expect(readIndex(dirs).builtAtMs).not.toBe(1000)
   })
 

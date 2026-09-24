@@ -5,10 +5,12 @@ import {
   chunkText,
   rankChunks,
   clampPassageText,
+  passagesToHits,
   type RetrievalChunk,
   type RetrievedPassage,
   type RetrieveOpts
 } from './proposalRetrieve.core'
+import type { KbHit } from '../../shared/kbIndex'
 
 export type { RetrievedPassage } from './proposalRetrieve.core'
 
@@ -54,6 +56,36 @@ export function retrievePassages(
     console.warn('[proposalRetrieve] retrievePassages failed:', err)
     return []
   }
+}
+
+/**
+ * 知识库检索对外入口：BM25 关键词召回 + 命中字段映射。engine 的自动召回（send 热路径）
+ * 与 kb_search 工具都走这一条。
+ *
+ * 同步、不抛、绝不返 null——retrievePassages 自身吞掉所有异常返回 []，空 scopes（用户
+ * 没选产品）同样返 []，调用侧据此不注入召回块即可，无需再判错。
+ *
+ * ── 为什么这里没有向量检索（2026-09-24 拆除记录，别照着历史注释复活它）──
+ * 原本这一层叫 kbSemanticSearch，是个 ~170 行的包装：fork 一个 utilityProcess
+ * （embedWorker）加载 bge 嵌入模型 + vectors.bin，向量腿与 BM25 腿各取 top-k 后用 RRF
+ * 融合，配一整套降级机制（worker 未就绪 / 模型 stale / 1.5s 超时 → 退回 BM25）。
+ *
+ * 整条向量化栈已删除，原因不是「嫌它复杂」而是【它在正式版里从未生效过】：模型 23MB 从
+ * 来没进过安装包（打包配置里没有对应的 extraResources，prebundle:kb-model /
+ * verify:kb-model 两个脚本全链零调用），CI 又在 2026-07-06 因 runner 网络问题拆掉了下载
+ * 步骤。也就是说所有用户的检索一直走的就是下面这条 BM25 路径——删除向量腿对线上行为
+ * 【零变化】，只是把「看着像混合检索、实际永远降级」这个假象连同 52MB 依赖
+ * （onnxruntime-node + @huggingface/transformers）一起去掉。
+ *
+ * 要再上语义检索，别按老路复活：模型必须走运行时按需下载（componentInstaller 那套基建），
+ * 不能再指望打包进安装包。
+ */
+export function kbKeywordSearch(
+  query: string,
+  scopes: readonly ProposalProductScope[],
+  k = 5
+): KbHit[] {
+  return passagesToHits(retrievePassages(query, scopes, { topK: k }))
 }
 
 /**

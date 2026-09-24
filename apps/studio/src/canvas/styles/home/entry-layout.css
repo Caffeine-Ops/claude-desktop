@@ -58,45 +58,10 @@
   background: var(--bg);
   box-shadow: none;
 }
-
-/* Left rail */
-.entry-nav-rail {
-  width: var(--entry-rail-width, 64px);
-  border-right: 1px solid var(--od-border);
-  background: var(--bg-panel);
-  padding: 8px 0 10px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  /* The rail intentionally lets its descendants escape horizontally so
-     the hover tooltips and the bottom help popover can render to the
-     right of the icon column without being clipped. Vertical overflow
-     is still controlled by the parent `.entry` shell. */
-  overflow: visible;
-  /* `.entry-main--scroll` is `position: relative` with its own
-     background, which would otherwise paint *on top of* any absolutely
-     positioned descendant of the rail that escapes the 64px column
-     (hover tooltips, help popover). Elevating the rail above the main
-     area lets those floats appear over the scroll surface. */
-  position: relative;
-  z-index: 30;
-}
-.entry-nav-rail__group {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 5px;
-  width: 100%;
-}
 /* Extra breathing room above the first icon (home), mirroring the
    prototype's `.rail__top { padding-top: 26px }` macOS traffic-light
    clearance. Only the leading group gets it; the bottom group (settings)
    stays pinned by the rail's `justify-content: space-between`. */
-.entry-nav-rail__group:first-child {
-  padding-top: 18px;
-}
 /* ---------- Right-side hover tooltip (rail items only) ----------
    The rail is icon-only, so each button advertises its label via a
    `data-tooltip` attribute. The label slides in from the right on
@@ -104,49 +69,10 @@
    requested) and sits above siblings via z-index. We deliberately
    block tooltips while the help popover is open so the floating
    menu does not collide with the tooltip bubble. */
-.entry-nav-rail [data-tooltip] {
-  position: relative;
-}
-.entry-nav-rail [data-tooltip]::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  left: calc(100% + 10px);
-  top: 50%;
-  transform: translateY(-50%) translateX(-4px);
-  padding: 5px 9px;
-  font-size: 12px;
-  line-height: 1;
-  white-space: nowrap;
-  color: var(--bg-panel);
-  background: var(--text-strong, #111);
-  border-radius: 6px;
-  box-shadow: var(--od-shadow-sm, 0 4px 12px rgba(0, 0, 0, 0.12));
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 120ms ease, transform 120ms ease;
-  z-index: 60;
-}
-.entry-nav-rail [data-tooltip]:hover::after,
-.entry-nav-rail [data-tooltip]:focus-visible::after {
-  opacity: 1;
-  transform: translateY(-50%) translateX(0);
-}
-.entry-nav-rail [data-tooltip][aria-expanded='true']::after {
-  display: none;
-}
 /* RTL: the rail still lives on the left so the tooltip remains on
    the right of the button — but using `left: calc(100% + 10px)` in
    RTL would flip incorrectly via the parent's `dir="rtl"`. Pin the
    anchor explicitly so the bubble stays where the user expects. */
-[dir='rtl'] .entry-nav-rail [data-tooltip]::after {
-  left: auto;
-  right: calc(100% + 10px);
-  transform: translateY(-50%) translateX(4px);
-}
-[dir='rtl'] .entry-nav-rail [data-tooltip]:hover::after,
-[dir='rtl'] .entry-nav-rail [data-tooltip]:focus-visible::after {
-  transform: translateY(-50%) translateX(0);
-}
 
 .entry-updater-menu {
   position: relative;
@@ -231,14 +157,6 @@
      as a create button.
    It never carries `.is-active` (it opens a modal, not a view). The accent
    token itself is untouched — only the resting neutral color changed. */
-.entry-nav-rail__btn--action {
-  color: var(--text-soft);
-}
-.entry-nav-rail__btn--action:hover {
-  background: var(--accent-tint);
-  color: var(--od-accent);
-  border-color: color-mix(in srgb, var(--od-accent) 30%, var(--od-border));
-}
 .entry-nav-rail__btn:focus-visible {
   /* Double ring (panel-colored inner gap + accent outer) keeps the focus
      state legible even when it lands on the accent-tinted active button,
@@ -249,38 +167,6 @@
 @media (prefers-reduced-motion: reduce) {
   .entry-nav-rail__btn { transition-duration: 1ms; }
   .entry-nav-rail__btn:active { transform: none; }
-}
-
-/* Avatar / settings dropdown — language picker section.
-   The cog in the top-right corner opens an `avatar-popover` (shared
-   with the project view) and now hosts an inline collapsible
-   language list, so users can switch locales without opening the
-   full Settings dialog. The base popover styles live in
-   `index.css`; this block adds only the redesign-specific bits. */
-.avatar-item-chevron {
-  margin-left: 4px;
-  color: var(--text-faint);
-}
-.avatar-language-list {
-  display: flex;
-  flex-direction: column;
-  max-height: 220px;
-  overflow-y: auto;
-  margin: 2px 4px;
-  padding: 3px;
-  background: var(--bg-subtle);
-  border-radius: var(--od-radius-sm);
-  scrollbar-width: thin;
-}
-.avatar-item--lang {
-  padding-left: 14px;
-}
-.avatar-item--lang.is-active {
-  color: var(--od-accent);
-}
-.avatar-item--lang.is-active .avatar-item-meta {
-  color: var(--od-accent);
-  opacity: 0.8;
 }
 
 /* Center scroll column */
@@ -365,50 +251,6 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-}
-
-/* Stacked menu-item layout — the collapsed model-switcher row
-   shows two lines of text inside a single `.avatar-item` so the
-   active mode + agent reads as a header with the active model
-   underneath. Mirrors the chip's two-tier hierarchy. */
-.avatar-item .avatar-item-stack {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  min-width: 0;
-  flex: 1;
-}
-.avatar-item-stack__top {
-  font-weight: 600;
-  color: var(--text-strong);
-  font-size: 12.5px;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.avatar-item-stack__sub {
-  font-size: 11px;
-  color: var(--text-muted);
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Compact-only menu rows live inside `.avatar-popover` and mirror
-   the topbar chips when those chips are hidden by the responsive
-   breakpoint below. Default display is `none` so wide viewports
-   never show them; the matching @media block flips them on. */
-.avatar-item--compact-only,
-.avatar-popover__divider--compact-only {
-  display: none;
-}
-.avatar-popover__divider {
-  height: 1px;
-  background: var(--border-soft);
-  margin: 4px 6px;
 }
 
 
@@ -673,40 +515,6 @@
   line-height: 1.55;
 }
 
-.onboarding-view__handoff-status {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 13px 14px;
-  border: 1px solid color-mix(in srgb, var(--od-accent) 34%, var(--od-border));
-  border-radius: 10px;
-  color: var(--text);
-  background: color-mix(in srgb, var(--od-accent) 7%, var(--bg-panel));
-}
-
-.onboarding-view__handoff-status > svg {
-  flex: 0 0 auto;
-  margin-top: 2px;
-  color: var(--od-accent);
-}
-
-.onboarding-view__handoff-status span {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.onboarding-view__handoff-status strong {
-  font-size: 13px;
-  line-height: 1.25;
-}
-
-.onboarding-view__handoff-status small {
-  color: var(--text-muted);
-  font-size: 12.5px;
-  line-height: 1.45;
-}
-
 .onboarding-view__actions {
   display: flex;
   flex-wrap: wrap;
@@ -717,8 +525,7 @@
 }
 
 .onboarding-view__primary,
-.onboarding-view__secondary,
-.onboarding-view__ghost {
+.onboarding-view__secondary {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -744,21 +551,13 @@
   border: 1px solid var(--od-border);
 }
 
-.onboarding-view__ghost {
-  color: var(--text-muted);
-  background: transparent;
-  border: 1px solid transparent;
-}
-
 .onboarding-view__primary:hover,
-.onboarding-view__secondary:hover,
-.onboarding-view__ghost:hover {
+.onboarding-view__secondary:hover {
   transform: translateY(-1px);
 }
 
 .onboarding-view__primary:focus-visible,
 .onboarding-view__secondary:focus-visible,
-.onboarding-view__ghost:focus-visible,
 .onboarding-view__steps li button:focus-visible,
 .onboarding-view__card:focus-visible {
   outline: 2px solid var(--od-accent);
@@ -843,12 +642,6 @@
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.45;
-}
-
-.onboarding-view__setup-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: -2px;
 }
 
 .onboarding-view__setup-head-actions {
@@ -1395,9 +1188,6 @@
 }
 
 @media (max-width: 900px) {
-  .entry-nav-rail {
-    width: 56px;
-  }
   .entry-main__inner {
     padding: 24px 16px 56px;
   }
@@ -1410,12 +1200,6 @@
      one click away from the lone settings cog. */
   .entry-main__topbar-chips {
     display: none;
-  }
-  .avatar-item--compact-only {
-    display: flex;
-  }
-  .avatar-popover__divider--compact-only {
-    display: block;
   }
 }
 

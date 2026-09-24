@@ -3,14 +3,13 @@
  * 这里只做 fork/转发/回调。为什么不复用 kbSyncScheduler：sync 是定时拉取（周期驱动），
  * build 是写操作驱动（事件驱动），两者唯一的共同点「单飞行」已经薄到不值得抽象。
  */
-import { app, utilityProcess } from 'electron'
+import { utilityProcess } from 'electron'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   initialKbBuildStatus, reduceKbBuildStatus, type KbBuildEvent, type KbBuildStatus
 } from '../../shared/kbBuildStatus'
 import { kbOutDir, kbStoreDir } from './kbIndexStore'
-import { resetEmbedWorker, warmEmbedWorker } from './kbSemanticSearch'
 
 let status: KbBuildStatus = initialKbBuildStatus
 const listeners = new Set<(s: KbBuildStatus) => void>()
@@ -20,18 +19,12 @@ function dispatch(e: KbBuildEvent): void {
   for (const cb of listeners) cb(status)
 }
 
-/** 模型目录解析与 kbSemanticSearch.modelDir 同式（打包=resourcesPath，dev=apps/desktop/kb-model）。 */
-function modelDir(): string {
-  if (app.isPackaged) return join(process.resourcesPath, 'kb-model')
-  return join(dirname(fileURLToPath(import.meta.url)), '../../kb-model')
-}
-
 function start(): void {
   dispatch({ type: 'start' })
   const workerPath = join(dirname(fileURLToPath(import.meta.url)), 'kbBuildWorker.js')
-  const child = utilityProcess.fork(workerPath, [kbStoreDir(), kbOutDir(), String(Date.now()), modelDir()])
+  const child = utilityProcess.fork(workerPath, [kbStoreDir(), kbOutDir(), String(Date.now())])
   let done = false
-  child.on('message', (msg: { type: string; phase?: 'convert' | 'vectors'; done?: number; total?: number; ok?: boolean; error?: string; line?: string }) => {
+  child.on('message', (msg: { type: string; phase?: 'convert'; done?: number; total?: number; ok?: boolean; error?: string; line?: string }) => {
     if (msg.type === 'progress' && msg.phase) {
       dispatch({ type: 'progress', phase: msg.phase, done: msg.done ?? 0, total: msg.total ?? 0 })
     } else if (msg.type === 'log' && msg.line) {
@@ -46,12 +39,9 @@ function start(): void {
 
   function finish(ok: boolean, error: string | null): void {
     dispatch({ type: 'exit', ok, error, atMs: Date.now() })
-    if (ok) {
-      // 新 builtAtMs → 旧 embedWorker 的向量 fingerprint 必 stale：杀掉重温，
-      // 让语义检索在重建后自动恢复（而不是降级到重启 app 为止）
-      resetEmbedWorker()
-      warmEmbedWorker()
-    }
+    // 2026-09-24：这里原本在构建成功后 resetEmbedWorker()+warmEmbedWorker()——新
+    // builtAtMs 会让旧 embedding worker 的向量 fingerprint 变 stale，必须杀掉重热才能
+    // 让语义检索自动恢复。向量化栈删除后构建不再产出向量，检索也不再有常驻 worker。
     if (status.queued) start() // 尾随：构建期间的写操作合并成一轮
   }
 }

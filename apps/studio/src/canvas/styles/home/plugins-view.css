@@ -41,19 +41,6 @@
   line-height: 1.5;
 }
 
-.plugins-view__badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  flex: 0 0 auto;
-  padding: 7px 10px;
-  border: 1px solid var(--od-border);
-  border-radius: 999px;
-  color: var(--text-muted);
-  background: var(--bg-panel);
-  font-size: 12px;
-}
-
 .plugins-view__hero-actions {
   display: flex;
   align-items: center;
@@ -228,8 +215,7 @@
 
 .plugins-view__section-head h2,
 .plugins-view__team h2,
-.plugins-view__marketplace h3,
-.plugins-view__future-card h3 {
+.plugins-view__marketplace h3 {
   margin: 0;
   color: var(--text-strong);
 }
@@ -239,8 +225,7 @@
 }
 
 .plugins-view__section-head p,
-.plugins-view__team p,
-.plugins-view__future-card p {
+.plugins-view__team p {
   margin: 5px 0 0;
   color: var(--text-muted);
   font-size: 13px;
@@ -254,7 +239,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-.plugins-view__list,
 .plugins-view__marketplaces {
   display: flex;
   flex-direction: column;
@@ -380,7 +364,6 @@
   font-size: 12px;
 }
 
-.plugins-view__row,
 .plugins-view__marketplace,
 .plugins-view__available-card,
 .plugins-view__install-card,
@@ -389,18 +372,6 @@
   border: 1px solid var(--od-border);
   border-radius: var(--od-radius);
   background: var(--bg-panel);
-}
-
-.plugins-view__row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 13px;
-}
-
-.plugins-view__row-main {
-  min-width: 0;
 }
 
 .plugins-view__row-title {
@@ -417,17 +388,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.plugins-view__row-title > .trust-badge {
-  flex: 0 0 auto;
-}
-
-.plugins-view__row-main p {
-  margin: 5px 0 0;
-  color: var(--text-muted);
-  font-size: 12.5px;
-  line-height: 1.45;
 }
 
 .plugins-view__meta {
@@ -633,14 +593,6 @@
   padding: 14px;
 }
 
-.plugins-view__import {
-  padding: 14px;
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius-lg);
-  background: var(--bg-panel);
-  box-shadow: var(--od-shadow-sm);
-}
-
 .plugins-view__install-card label {
   color: var(--text-strong);
   font-size: 13px;
@@ -685,19 +637,6 @@
   background: var(--bg-subtle);
   color: var(--text);
   font-size: 11px;
-}
-
-.plugins-view__future-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.plugins-view__future-card {
-  padding: 13px;
-  border: 1px dashed var(--od-border);
-  border-radius: var(--od-radius);
-  background: var(--bg-panel);
 }
 
 .plugins-view__future-icon {
@@ -924,15 +863,10 @@
 @media (max-width: 900px) {
   .plugins-view__hero,
   .plugins-view__hero-actions,
-  .plugins-view__row,
   .plugins-view__marketplace,
   .plugins-view__available-controls,
   .plugins-view__source-actions {
     flex-direction: column;
-  }
-
-  .plugins-view__future-grid {
-    grid-template-columns: 1fr;
   }
 
   .plugins-view__row-actions,

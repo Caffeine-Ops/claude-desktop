@@ -4,7 +4,11 @@
  *
  * 选关键词/BM25（离线、无模型）：方案立身于「忠实搬运」，正文与原文词面高度重合，关键词
  * 召回足以拿下多数场景。已知局限：词汇不匹配（需求说「问诊」、文件写「预诊流程」）召回不
- * 到——那是 embedding 的活，列为后续升级（见 #2 spec Out of Scope）。
+ * 到——那是 embedding 的活。
+ *
+ * 2026-09-24：曾经真做过一条 embedding 腿（bge 模型 + vectors.bin + RRF 融合，见
+ * proposalRetrieve.ts 里 kbKeywordSearch 上方那段拆除记录），但它在正式版里从未生效过，
+ * 已整条删除。所以「BM25 是唯一的检索路径」现在是**事实**，不再是「降级状态」。
  */
 
 /** 一个待排序的文本块 + 它的来源（文件 title / 镜像路径）。 */
@@ -105,8 +109,10 @@ export interface TextChunk {
  *   `/\n\s*\n/` 匹配形式；exact round-trip 不可能成立。把原文切片里的段间分隔
  *   同样归一为 `\n\n`，则与 `text` 完全吻合。
  *
- * offset 让离线向量化与查询期 BM25 落到同一套块、用行号对齐 RRF
- * （见 proposalSemantic.core.ts）。
+ * ⚠️ offset（charStart/charEnd）目前【只有测试在消费】。它原本的生产用途是让离线向量化
+ * 与查询期 BM25 落到同一套块、用行号对齐 RRF 融合，那条链随 2026-09-24 向量化栈删除一起
+ * 没了。刻意保留而不是删掉：这是「把正文引用定位回原文」的现成地基（issue #1 落地校验 +
+ * 覆盖度红灯正需要它），且是零成本纯函数。但别被测试的 import 骗了——它不等于有生产消费者。
  */
 export function chunkTextWithOffsets(text: string): TextChunk[] {
   if (!text) return []
@@ -165,8 +171,9 @@ export function chunkTextWithOffsets(text: string): TextChunk[] {
 /**
  * 把一篇文本切成检索块：先按空行切段，连续短段合并到 ≥ {@link CHUNK_MIN}（但不超
  * {@link CHUNK_MAX}），单段超 CHUNK_MAX 的按定长窗口硬切。返回非空块数组。
- * 实现为 {@link chunkTextWithOffsets} 的 text 投影——两者使用同一套分块边界，
- * 保证 BM25 与向量检索跑同一套块（RRF 行号对齐前提）。
+ * 实现为 {@link chunkTextWithOffsets} 的 text 投影——两者共用同一套分块边界，只留一份
+ * 切块规则，永不漂移。（这个「两者必须同边界」的约束原是向量腿与 BM25 腿做 RRF 行号对齐
+ * 的前提，向量腿已于 2026-09-24 删除；共用实现本身仍是对的，保留。）
  */
 export function chunkText(text: string): string[] {
   return chunkTextWithOffsets(text).map((c) => c.text)
@@ -227,4 +234,22 @@ export function rankChunks(
     .filter((s) => s.score > minScore)
     .sort((a, b2) => b2.score - a.score)
     .slice(0, topK)
+}
+
+/**
+ * 召回片段 → 知识库命中（KbHit）的字段映射。engine 的自动召回与 kb_search 工具吃的是
+ * KbHit，BM25 这一路的产物是 RetrievedPassage，差一层 snippet 截断。
+ *
+ * 2026-09-24：本函数原名 passagesToHits，住在 proposalSemantic.core.ts——那个文件是
+ * 「向量腿 + BM25 腿 + RRF 融合」的纯核。向量化栈删除后只剩这一个映射函数，整个文件的
+ * 名字（Semantic）已名不副实，故把它并回 BM25 自己的纯核，文件随之删除。
+ */
+export function passagesToHits(passages: readonly RetrievedPassage[]): import('../../shared/kbIndex').KbHit[] {
+  return passages.map((p) => ({
+    title: p.title,
+    mirrorPath: p.mirrorPath,
+    text: p.text,
+    snippet: p.text.slice(0, 160),
+    score: p.score
+  }))
 }

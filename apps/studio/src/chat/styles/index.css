@@ -112,6 +112,15 @@
  * scoped、只扫本目录，已核实无撞 Tailwind utility 名的裸类。 */
 @source '../../canvas/components/design-system/**/*.{ts,tsx}';
 
+/* 宠物页（pet，2026-09-23）：PetSettings 里 12 处 legacy `.seg-btn.small` 换
+ * shadcn Button（那是全仓最后一批 seg-btn 消费者，换完 .seg-btn 整族随之退役）。
+ * 同款 scoped @source——只扫 pet 目录，绝不扫整个 src/canvas/**。已核实目录内
+ * 87 个类名无一撞 Tailwind utility 名（单词型的只有 active/ghost/small/hint/
+ * field 等，都不是 utility），加本条无污染风险。宠物画廊本体仍是 legacy 类：
+ * 那是卡片网格不是设置项列表，SettingCard/SettingRow 原语套不上去（同「执行
+ * 模式」页 2026-09-02 的判断），刻意不迁。 */
+@source '../../canvas/components/pet/**/*.{ts,tsx}';
+
 /* ─────────────────────────────────────────────────────────────────────
  * Theme — migrated verbatim from the former tailwind.config.js. Apple
  * DESIGN.md type/radius/shadow scale + the shadcn-style HSL token system.

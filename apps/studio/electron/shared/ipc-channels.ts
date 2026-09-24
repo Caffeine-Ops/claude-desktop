@@ -1112,12 +1112,6 @@ export const IPC_CHANNELS = {
    */
   WRITING_IMAGE_GENERATE: 'writing:image-generate',
   /**
-   * Renderer → main. 语义检索：模糊自然语言 → 混合(向量+BM25)命中片段+出处。供写方案
-   * 搜索面板主动用。embedding 在 utilityProcess、不冻 main；模型缺失/stale 降级 BM25。
-   * staleIndex=true 时结果是 BM25 降级（有内容但非语义），面板顶部显「需重建索引」条。
-   */
-  KB_SEMANTIC_SEARCH: 'kb:semantic-search',
-  /**
    * Renderer → main. 扫描系统授权目录（下载 + 桌面）里的文档文件，返回元数据清单
    * （名称/路径/扩展名/大小/mtime/来源），驱动知识库页「全部文件」的网格/列表视图。
    *
@@ -2897,23 +2891,6 @@ export interface ProposalPeekRetrievalResult {
   scannedFiles: number
 }
 
-/** Payload for KB_SEMANTIC_SEARCH：自然语言检索词 + 要搜的产品集（空集→空结果）。 */
-export interface KbSemanticSearchPayload {
-  query: string
-  products: ReadonlyArray<{ productLine: string; product: string }>
-}
-/**
- * Result of KB_SEMANTIC_SEARCH：混合(向量+BM25)命中片段列表 + stale 旗标 + 降级旗标。
- * staleIndex=true 表示向量索引过期、本次结果来自 BM25 降级，面板顶部提示「需重建索引」。
- * degraded=true 表示命中因【基础设施状态】只来自 BM25（worker 未就绪/stale/超时/error）——
- * 面板给弱提示「词面匹配」；空产品集短路是设计使然的 no-op，不置 true。
- */
-export interface KbSemanticSearchResult {
-  hits: import('./kbIndex').SemanticHit[]
-  staleIndex: boolean
-  degraded: boolean
-}
-
 /**
  * 预设扫描目录标识。路径不落盘、恒用 Electron 的 `app.getPath('downloads'|
  * 'desktop')` 动态解析（跟随系统本地化改名）；用户停用只记 key（见 KbConfig）。
@@ -3833,13 +3810,6 @@ export interface ChatApi {
   peekProposalRetrieval(
     payload: ProposalPeekRetrievalPayload
   ): Promise<ProposalPeekRetrievalResult>
-
-  /**
-   * 语义搜索面板：混合(向量+BM25)检索，返回 SemanticHit 列表 + staleIndex 旗标。
-   * staleIndex=true → 向量索引已过期、结果为 BM25 降级，面板顶部显「需重建」提示条。
-   * 绝不 reject（全防御式）——空 query 立即返回 { hits:[], staleIndex:false }。
-   */
-  kbSemanticSearch(payload: KbSemanticSearchPayload): Promise<KbSemanticSearchResult>
 
   // ── KB 托管仓库管理页（P2）。renderer 只传相对路径，绝对路径还原在 main 完成防越权。──
   kbDocsList(): Promise<import('./kbAdmin').KbDocsListResult>

@@ -180,7 +180,6 @@
 }
 .app .app-chrome-back,
 .app .settings-icon-btn,
-.app .avatar-btn,
 .app .project-instructions-toggle {
   width: 30px;
   height: 30px;
@@ -264,23 +263,6 @@
 }
 .app .chat-header {
   padding: 0 12px 0 14px;
-}
-.app .chat-header-tabs {
-  gap: 4px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-}
-.app .chat-header-tab {
-  min-height: 28px;
-  padding: 0 10px;
-  border-radius: 8px;
-  font-size: 12.5px;
-}
-.app .chat-header-tab.active {
-  background: var(--bg-subtle);
-  border-color: transparent;
-  box-shadow: none;
 }
 .app .chat-header-actions .icon-only {
   width: 28px;
@@ -436,10 +418,6 @@
 .app .chat-empty-title {
   font-size: 13.5px;
 }
-.app .chat-empty-hint {
-  font-size: 12.5px;
-  line-height: 1.45;
-}
 .app .chat-examples {
   max-width: none;
   gap: 8px;
@@ -554,10 +532,6 @@
 }
 /* web-only pill buttons keep a pill radius; the real icon buttons and the
  * send button are round discs (handled below). */
-.app .composer-import,
-.app .composer-research {
-  border-radius: 9999px;
-}
 .app .composer-row .icon-btn {
   width: 36px;
   height: 36px;
@@ -949,9 +923,7 @@
 .app .df-row-name-wrap {
   gap: 0;
 }
-.app .df-row-size,
 .app .df-row-sub,
-.app .df-row-meta,
 .app .df-cell-kind,
 .app .df-cell-time,
 .app .df-kind-label {

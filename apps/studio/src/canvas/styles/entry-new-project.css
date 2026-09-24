@@ -24,13 +24,6 @@
   background: transparent;
 }
 
-.entry-side {
-  border-right: 1px solid var(--od-border);
-  background: transparent;
-  display: flex;
-  flex-direction: column;
-}
-
 /* ============================================================
    NEW PROJECT PANEL — design standards
    This block applies to every tab inside `.newproj` (prototype,
@@ -225,12 +218,6 @@
 }
 .newproj-name { width: 100%; height: 30px; padding: 0 10px; }
 .newproj-section { display: flex; flex-direction: column; gap: 6px; }
-.platform-picker-hint {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 11px;
-  line-height: 1.35;
-}
 /* PlatformPicker reuses the DS picker visual language (`.ds-picker-*`)
    declared further down, so its bespoke `.platform-dropdown-*` rules were
    removed — the dropdown trigger and popover render through the shared
@@ -251,26 +238,6 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-}
-.newproj-model-groups {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.newproj-model-group {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.newproj-provider-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
 }
 .newproj-provider-badge {
   border-radius: 999px;
@@ -293,14 +260,10 @@
   background: var(--bg-subtle);
   color: var(--text-muted);
 }
-.newproj-model-grid,
 .newproj-option-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
-}
-.newproj-option-grid.aspect-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 .newproj-option-grid.compact {
   grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
@@ -324,24 +287,6 @@
   background: var(--bg-subtle);
   box-shadow: none;
 }
-.newproj-model-card {
-  min-height: 74px;
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-.newproj-model-name {
-  font-family: var(--font-mono);
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1.2;
-}
-.newproj-model-hint {
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.35;
-}
 .newproj-option-card {
   min-height: 62px;
   min-width: 0;
@@ -359,59 +304,10 @@
   color: var(--text-muted);
   font-size: 11px;
 }
-.aspect-grid .newproj-option-card {
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px 6px;
-}
-.aspect-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  align-items: center;
-  line-height: 1.15;
-  min-width: 0;
-  max-width: 100%;
-}
-.aspect-copy strong {
-  color: var(--text-muted);
-  font-size: 12.5px;
-  font-weight: 600;
-  letter-spacing: -0.005em;
-  max-width: 100%;
-  overflow-wrap: anywhere;
-}
-.aspect-copy small {
-  color: var(--text-muted);
-  font-size: 11.5px;
-}
-.aspect-glyph {
-  flex: none;
-  width: 34px;
-  height: 24px;
-  border-radius: 4px;
-  background: var(--bg-subtle);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--od-border) 80%, transparent);
-}
-.aspect-1-1 { width: 22px; height: 22px; }
-.aspect-16-9 { width: 32px; height: 18px; }
-.aspect-9-16 { width: 18px; height: 32px; }
-.aspect-4-3 { width: 28px; height: 21px; }
-.aspect-3-4 { width: 21px; height: 28px; }
 @media (max-width: 560px) {
-  .newproj-model-grid,
-  .newproj-option-grid,
-  .newproj-option-grid.aspect-grid {
+  .newproj-option-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-}
-.newproj-skills {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  max-height: 220px;
-  overflow-y: auto;
-  padding-right: 4px;
 }
 .skill-radio {
   display: flex;
@@ -432,10 +328,6 @@
 .skill-radio-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .skill-radio-name { font-weight: 600; font-size: 13px; }
 .skill-radio-desc { font-size: 11px; color: var(--text-muted); line-height: 1.4; }
-.newproj-empty {
-  font-size: 12px; color: var(--text-muted);
-  font-style: italic; padding: 8px 0;
-}
 .video-body,
 .audio-body {
   display: flex;
@@ -881,14 +773,6 @@
   white-space: nowrap;
   max-width: 140px;
 }
-.newproj-connector-account {
-  color: var(--text-muted);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 120px;
-}
 .newproj-connectors-empty {
   display: flex;
   align-items: flex-start;
@@ -1263,127 +1147,12 @@
 }
 .ds-picker-clear:hover { border-color: var(--border-strong) !important; }
 
-.entry-side-foot {
-  margin-top: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  padding: 16px 24px 20px;
-}
-.entry-side-foot-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-.entry-side-foot-row .foot-pill-follow {
-  flex: 0 1 auto;
-}
-/* Social cluster (Discord + X) — sits at the right end of the bottom row
-   via `margin-left: auto`, which opens flex space between the left
-   "your stuff" group (Language, Pet) and the right "follow us" group. */
-.entry-side-foot-social {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-}
-.entry-side-foot-row .foot-pill-pet-label,
-.entry-side-foot-row .foot-pill-follow-label {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* Right side */
 .entry-main {
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-}
-.entry-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 24px 28px 0;
-  border-bottom: 1px solid var(--od-border);
-  min-width: 0;
-}
-.entry-header-tabs-row {
-  display: flex;
-  align-items: center;
-  gap: 24px;
-}
-.entry-tabs {
-  align-self: stretch;
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-}
-.entry-tabs::-webkit-scrollbar { display: none; }
-.entry-tab {
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  padding: 6px 4px 8px;
-  font-size: 12px;
-  color: var(--text-muted);
-  font-weight: 400;
-  flex: 0 0 auto;
-  white-space: nowrap;
-  transition: none;
-}
-.entry-tab:focus,
-.entry-tab:active {
-  background: transparent;
-  border-color: transparent;
-  border-bottom-color: transparent;
-  outline: none;
-  color: var(--text-muted);
-}
-.entry-tab:focus-visible {
-  outline: 2px solid var(--selected);
-  outline-offset: 2px;
-  border-radius: 4px;
-  color: var(--text);
-}
-.entry-tab:hover:not(:disabled) {
-  background: transparent;
-  border-color: transparent;
-  border-bottom-color: transparent;
-  outline: none;
-  color: var(--text);
-}
-.entry-tab.active,
-.entry-tab.active:hover:not(:disabled),
-.entry-tab.active:focus,
-.entry-tab.active:focus-visible {
-  color: var(--text);
-  border-bottom-color: var(--text);
-}
-.entry-header-right {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex: 0 0 auto;
-}
-
-.entry-tab-content {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 22px 28px 32px;
-  background: var(--bg);
 }
 
 .tab-panel {
@@ -2147,11 +1916,6 @@ button.connector-action.is-loading {
    connectors panel and the masked grid wrap stretch to fill the remaining
    viewport height, and hide overflow so the absolutely-positioned gate
    card remains fixed in the first-screen center. */
-.entry-tab-content:has(> .tab-panel.connectors-panel > .connector-grid-wrap.is-masked) {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
 .tab-panel.connectors-panel:has(> .connector-grid-wrap.is-masked) {
   flex: 1 1 auto;
   min-height: 0;
@@ -2183,20 +1947,6 @@ button.connector-action.is-loading {
 }
 /* Toast anchor: positions the connector error toast at the center-top
    of the settings panel rather than at the bottom of the viewport. */
-.connectors-toast-anchor {
-  position: absolute;
-  top: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 10;
-  pointer-events: none;
-  width: max-content;
-}
-.connectors-toast-anchor .od-toast {
-  position: static;
-  transform: none;
-  pointer-events: auto;
-}
 .connectors-panel-embedded .tab-panel-toolbar {
   justify-content: flex-end;
   margin-top: -4px;

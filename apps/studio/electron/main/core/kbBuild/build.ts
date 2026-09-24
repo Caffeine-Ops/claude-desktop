@@ -5,13 +5,13 @@ import { scanKb } from './scan'
 import { convertFile } from './convert'
 import type { KbIndex, KbIndexFile } from '../../../shared/kbIndex'
 
-export interface BuildProgress { phase: 'convert' | 'vectors'; done: number; total: number }
-export interface BuildVectorsOpt { localModelPath?: string }
+// phase 只剩 'convert'（2026-09-24 删掉 'vectors'）：保留联合类型而不退化成字面量，
+// 因为下游 reduceKbBuildStatus 与 UI 进度条本就按 phase 分发，将来加阶段不必改形状。
+export interface BuildProgress { phase: 'convert'; done: number; total: number }
 export interface BuildOptions {
   kbRoot: string
   outDir: string
   now: number
-  vectors: BuildVectorsOpt | false
   onProgress?: (p: BuildProgress) => void
   log?: (line: string) => void
 }
@@ -22,9 +22,12 @@ function sha1OfFile(path: string): string {
 
 /**
  * 全库增量构建（原 scripts/build-kb-index.ts 主体）。增量三前提与镜像唯一键
- * 的注释原样保留在对应代码行。vectors:false 时跳过向量化——旧 vectors 的
- * fingerprint 与新 builtAtMs 不符，embedWorker 会报 stale 降级 BM25，不会读到
- * 幽灵行；模型就绪后下一轮构建自动补齐。
+ * 的注释原样保留在对应代码行。
+ *
+ * 2026-09-24：原先末尾还有一个向量化阶段（opts.vectors 非 false 时动态 import ./embed
+ * 跑 bge 模型写 vectors.bin）。整条向量化栈已删除——它在正式版里从未生效过（模型没进
+ * 安装包），检索一直是 BM25。连带删掉的还有那段「动态 import 规避 onnxruntime-node 在
+ * mac Intel 上模块加载即崩」的绕法：依赖本身已经不在了。
  */
 export async function buildKbIndex(opts: BuildOptions): Promise<KbIndex> {
   const { kbRoot, outDir, now } = opts
@@ -96,19 +99,5 @@ export async function buildKbIndex(opts: BuildOptions): Promise<KbIndex> {
   writeFileSync(tmp, JSON.stringify(index, null, 2), 'utf8')
   renameSync(tmp, indexPath)
   opts.log?.(`转换完成：${files.length} 文件，失败 ${failed}。index.json → ${indexPath}`)
-
-  if (opts.vectors !== false) {
-    opts.onProgress?.({ phase: 'vectors', done: 0, total: 1 })
-    // 懒加载：embed.ts 顶层 import @huggingface/transformers 会在模块图加载时
-    // 就 require onnxruntime-node 探测 native binding，而该包从未发布过
-    // darwin-x64（mac Intel）二进制（上游长期缺口，1.24.3～1.27.0 均缺，见
-    // errors/）——静态 import 会让所有 import buildKbIndex 的调用方（含
-    // vectors:false 的测试）在 CI mac-x64 runner 上模块加载即崩。改动态
-    // import 后只有真正走到向量化这一步才触发探测，vectors:false 的路径
-    // （测试全部如此）绝不加载 embed.ts。
-    const { buildVectors } = await import('./embed')
-    await buildVectors(files, outDir, now, opts.vectors.localModelPath)
-    opts.onProgress?.({ phase: 'vectors', done: 1, total: 1 })
-  }
   return index
 }

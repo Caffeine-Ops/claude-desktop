@@ -44,8 +44,13 @@
  *     搜索框 → shadcn Input；已退役 quick-switcher.css 的 library-filter-select
  *     与 library-toolbar-row 全段 73 行死代码 CSS——这是本轮唯一「共享类全消费者
  *     迁完、CSS 真能退役」的例子）。两 section 的其余 button 未迁，仍待收尾。
- *   ☐ language / about（SettingsDialog.tsx 内联，小）
- *   ☐ instructions / pet
+ *   ✓ instructions（2026-09-01 迁 shadcn Textarea + utility，见 SettingsDialog.tsx
+ *     该分支的注释）        ✓ about（2026-09-01/09-03/09-04 三轮：settings-about-*
+ *     全族退役 → SettingGroup/SettingCard/SettingRow）
+ *     注：原清单里的 `language` 已于 2026-09-02 并入 `appearance`（见
+ *     settingsHelpers.ts 的类型注释），不再是独立 section。
+ *   ☐ pet —— **唯一剩余未迁的 section**（PetSettings.tsx，1112 行，hint×16 /
+ *     seg-btn×12 / field×7 / ghost×5 + 一批 pet-* 专属类）
  *   ✓ HelpSection（2026-09-04 新增「使用帮助」分区，token 'help'，关于组首位：
  *     内容 src/chat/lib/helpContent.ts、组件 settings/HelpSection.tsx，天生
  *     chat 栈、不在待迁清单里。）
@@ -54,10 +59,16 @@
  *     跨 section/跨视图共享类，实测仍有大量其它消费者（hint 67、ghost 70、
  *     primary 31 处…）**，现在删 CSS 会破坏未迁组件。退役判据是「该类全 canvas
  *     零消费者」，共享类要等最后一个消费者也迁完才能删——markup 迁完 ≠ CSS 能退。
- *   全部打勾后：删 .sv2 兼容类、settings-v2.css、settings-modal.css 及
- *   settings-orbit.css 里 agent- 与 field- 两族选择器段；var(--green) 等状态
- *   色在 design-tokens 转正（见 SettingsDialog.tsx 顶部 TEST_STATUS_TONES
- *   注释）。（这里不能写「星号斜杠」连排——会提前闭合本块注释，07-04 CSS
+ *   ⚠️ 「全部打勾后就能删 settings-v2.css / settings-modal.css」这个原定收尾
+ *   **不成立**（2026-09-23 实测）：这两个文件里真正占篇幅的是 hint / ghost /
+ *   field / settings-section / primary 这几个**跨视图共享类**，迁完最后一个
+ *   section（pet）之后它们在 canvas 树里仍分别有 20 / 28 / 12 / 9 / 34 个
+ *   消费者——那些消费者根本不在设置页。退役这两个文件的真实前提是「整个
+ *   canvas 树迁完」，是另一个数量级的工程，别拿它当迁 pet 的理由。
+ *   迁完 pet 能实际退役的只有：`seg-btn` 一族（唯一消费者就是 PetSettings）
+ *   + 49 个 pet-* 专属类（pet-companion.css，同样只有 PetSettings 在用）。
+ *   var(--green) 等状态色在 design-tokens 转正的事仍待办（见 SettingsDialog.tsx
+ *   顶部 TEST_STATUS_TONES 注释）。（这里不能写「星号斜杠」连排——会提前闭合本块注释，07-04 CSS
  *   注释同款事故。）
  */
 

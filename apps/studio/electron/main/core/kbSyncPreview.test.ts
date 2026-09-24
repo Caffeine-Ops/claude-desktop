@@ -26,7 +26,7 @@ async function setup(fileName: string): Promise<{
     schedule: () => { n++ }
   }
   svc.migrateFromFolder(deps, src)
-  await buildKbIndex({ kbRoot: dirs.storeDir, outDir: dirs.outDir, now: 1000, vectors: false })
+  await buildKbIndex({ kbRoot: dirs.storeDir, outDir: dirs.outDir, now: 1000 })
   return { dirs, src, deps, scheduled: () => n }
 }
 

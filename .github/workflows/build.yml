@@ -25,8 +25,9 @@ jobs:
           # 资产名、版本钉已随组件发布搬到 publish-components.yml。
           #
           # Apple Silicon. macos-latest 是 arm64 runner，`bun install` 在这里
-          # 编译/拉取的是 arm64 native addon（sharp、onnxruntime-node），与本次
-          # 构建的架构一致。（better-sqlite3 已不在其列，daemon 改用 node:sqlite。）
+          # 编译/拉取的是 arm64 native addon（sharp——它只在构建期压图，不进包），
+          # 与本次构建的架构一致。（better-sqlite3 已不在其列，daemon 改用 node:sqlite；
+          # onnxruntime-node 也已不在其列，向量化栈 2026-09-24 删除。）
           - os: macos-latest
             platform: mac
             arch: arm64
@@ -99,14 +100,13 @@ jobs:
       # 版本断言，全部原样搬了过去，一条都没丢。运维流程见
       # docs/runtime-components-deploy.md。
 
-      # kb-model 下载暂时跳过（2026-07-06）：runner 上对 huggingface.co 的请求被
-      # 一个会返回非法 URL 的 resolve-cache 层污染（node/bun 直跑皆同样报
-      # ERR_INVALID_URL，问题在 CI 环境本身，非脚本 runtime 选择），导致
-      # "Prepare kb-model" 必现失败、挡住整条发布链。KB 语义检索代码对模型缺失
-      # 有正式设计的降级路径（kbSemanticSearch.ts 顶部注释：worker 收不到 ready
-      # 会永久走 BM25 关键词检索，不崩溃），故先跳过让构建放行，后续查清 CI 环境
-      # 的网络层问题后再恢复本步骤 + build:mac/win/linux 里的 prebundle:kb-model
-      # && verify:kb-model 调用。
+      # 这里曾有一个 "Prepare kb-model" 步骤（下载 bge 嵌入模型给知识库语义检索用）。
+      # 2026-07-06 因 runner 网络层问题跳过（对 huggingface.co 的请求被一个返回非法
+      # URL 的 resolve-cache 层污染，必现 ERR_INVALID_URL、挡住整条发布链），当时留了
+      # 「查清后恢复」的话。2026-09-24 结案：整条向量化栈删除，不再恢复——它从头到尾
+      # 没在正式版里生效过（模型也没进过安装包的 extraResources），所有用户的检索一直
+      # 走 BM25。要重做语义检索得走运行时按需下载（publish-components.yml 那套），
+      # 不再让打包/CI 依赖联网拉模型。
 
       # Only typecheck the package this workflow actually ships: the
       # Electron app. Its tsconfig project-references pull in every

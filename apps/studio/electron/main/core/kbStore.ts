@@ -3,14 +3,13 @@
  * electron-free（目录经 KbStoreDirs 注入，kbIndexStore 在 main 侧提供真实值）——
  * 与 kbSync 同一可测性哲学：bun test 用 mkdtemp 直测，不 mock fs。
  *
- * 一致性分工：本层负责「原件/镜像/assets/index 条目」四者的即时一致；
- * vectors.bin 的收敛不归本层管，但幽灵行的**封口**归本层管——因果链：
- * 写操作命中条目即 bump builtAtMs → vectors fingerprint（=String(builtAtMs)）立即失配
- * → embedWorker 经 index.json mtime 回收重 fork 后判 stale → 语义检索降级 BM25
- * （BM25 走现存镜像，已删文档镜像已不在，天然无幽灵行）→ 调用方随后
- * scheduleKbBuild()（kbBuildRunner），下一轮构建以新 builtAtMs 重嵌恢复语义腿。
- * 若只改 files 不 bump，旧 fingerprint 在「删除/移动 → 下轮构建完成」的窗口期
- * 依旧匹配，语义检索会命中已删文档的向量行。
+ * 一致性分工：本层负责「原件/镜像/assets/index 条目」四者的即时一致。
+ *
+ * 写操作命中条目即 bump builtAtMs。2026-09-24 之前这么做另有一个硬理由：builtAtMs 兼作
+ * vectors.bin 的 fingerprint，不 bump 的话「删除/移动 → 下轮构建完成」这段窗口期里旧
+ * fingerprint 仍匹配，语义检索会命中已删文档的幽灵向量行。向量化栈删除后这条因果链没了
+ * （检索现读镜像，已删文档的镜像已不在，天然无幽灵行），但 bump 本身保留——builtAtMs 是
+ * 索引内容的版本戳，远程同步的 manifest 对账与设置页「内容多新」都读它，内容变了它就该走。
  */
 import {
   copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync

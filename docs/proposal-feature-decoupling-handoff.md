@@ -160,15 +160,15 @@ features/proposal/  ← ipc.ts(registerProposalIpc)、kb/、export/、index.ts
 ## 7. 关键技术资产清单（省你重新调研）
 
 ### 前端写方案文件（`apps/studio/src/chat/`）
-- `components/workspace/`：`ProposalPaper.tsx`(1329) `ProposalDocPanel.tsx`(791) `SelectionAiBubble.tsx`(500) `ProposalStyleModal.tsx`(480) `ProposalImageReview.tsx` `proposalIcons.tsx` `ProposalImageToolbar.tsx` `KbSemanticSearchPanel.tsx` `ProposalPreview.tsx` `GenImageDirectiveCard.tsx` `ProposalTooltip.tsx`（注：`WorkspaceTreePanel.tsx` 是通用件、非写方案专属，勿搬）。
+- `components/workspace/`：`ProposalPaper.tsx`(1329) `ProposalDocPanel.tsx`(791) `SelectionAiBubble.tsx`(500) `ProposalStyleModal.tsx`(480) `ProposalImageReview.tsx` `proposalIcons.tsx` `ProposalImageToolbar.tsx` `ProposalPreview.tsx` `GenImageDirectiveCard.tsx` `ProposalTooltip.tsx`（注：`WorkspaceTreePanel.tsx` 是通用件、非写方案专属，勿搬）。
 - `lib/proposal*`：`sendProposalSectionRevision.ts`(311) `renderProposalPdfHtml.ts`(201) `proposalStageGate.ts`(175) `proposalGenImageFire.ts` `sendProposalStageMessage.ts` `proposalRevisionMessages.ts` `proposalSlash.ts` `proposalRevisionGuards.ts` `proposalVerification.ts` `proposalStepper.ts` `proposalStageConfirm.ts` `startOrReopenProposal.ts` `proposalOnboarding.ts` `proposalAssetUrl.ts` `kbAssetUrl.ts` `localAssetPath.ts`。
 - `stores/`：`proposal.ts`(658) `proposalStyle.ts`(55)；`composerMode.ts` 含 `'proposal'` 模式（通用文件、只改枚举）。
 - `runtime/FusionRuntimeProvider.tsx`（共用引擎，第②步重点）。
 
 ### 后端写方案文件（`apps/studio/electron/main/`）—— 已较整洁
-- 提示词/检索：`core/proposalPrompt.ts`(225) `proposalScopes.ts` `proposalRetrieve.ts` `proposalRetrieve.core.ts`(230) `proposalSemantic.core.ts`（`.core.ts` 被 main 和 worker 双向共用，抽包时必须一起走）。
-- KB 检索/向量：`core/kbSemanticSearch.ts`(170) `workers/embedWorker.ts`(143，独立 utilityProcess) `core/kbIndexStore.ts`(121)。
-- KB 构建：`core/kbBuild/{scan,convert,embed,build,assets}.ts` `kbBuildRunner.ts` `workers/kbBuildWorker.ts` `kbTooling.ts`。
+- 提示词/检索：`core/proposalPrompt.ts`(225) `proposalScopes.ts` `proposalRetrieve.ts`（含对外入口 `kbKeywordSearch`）`proposalRetrieve.core.ts` `core/kbIndexStore.ts`(121)。
+  - **2026-09-24 变更**：原先这里还有 `kbSemanticSearch.ts`(170) + `workers/embedWorker.ts`(143，独立 utilityProcess) + `proposalSemantic.core.ts` 三个文件，构成「向量腿 + BM25 腿 + RRF 融合」的混合检索。整条向量化栈已删除（它在正式版里从未生效过——模型没进过安装包），检索收敛成单一 BM25。对抽包是好消息：少了一个 worker 入口与一个 main/worker 双向共用的 `.core.ts`。
+- KB 构建：`core/kbBuild/{scan,convert,build,assets}.ts` `kbBuildRunner.ts` `workers/kbBuildWorker.ts` `kbTooling.ts`（`embed.ts` 已随向量化栈删除，构建不再有向量化阶段）。
 - KB 存储/同步/管理：`core/kbStore.ts` `kbStore.core.ts` `kbAdminService.ts`(197) `kbSync.ts`(303) `kbSyncDiff.ts` `kbSyncScheduler.ts` `kbLocalSync.core.ts`。
 - 导出：`core/proposalDocx.ts`(**1177**, `markdownToDocxBuffer`) `proposalExport.ts` `proposalPdf.ts` `proposalVerify.ts`/`.core.ts`。
 - 草稿/指标/配图：`core/proposalDraftStore.ts` `proposalMetricsStore.ts` `services/imageGenService.ts`(178) `proposalImageWriter.ts` `proposalAssetProtocol.ts` `kbAssetProtocol.ts`。
@@ -177,7 +177,7 @@ features/proposal/  ← ipc.ts(registerProposalIpc)、kb/、export/、index.ts
 
 ### IPC 通道（常量在 `shared/ipc-channels.ts`，handler 在 `main/ipc/register.ts` 的 `registerIpcHandlers()`，约 L289 起）
 - `proposal:*`：export、export-pdf、render、render-pdf、save/load/delete-draft、verify、metric-log、peek-retrieval；`proposal-image:*`：settings-get/set、generate、edit、upload。
-- `kb:*`：semantic-search、path-get/set、index-read、root-pick、remote-set、sync-now/status、sync-from-local、docs-list、tooling-check、import-pick/import、doc-delete/move/retry/open-source/preview、category-create/rename/delete、migrate-from-folder、build-status-get/status。
+- `kb:*`：path-get/set、index-read、root-pick、remote-set、sync-now/status、sync-from-local、docs-list、tooling-check、import-pick/import、doc-delete/move/retry/open-source/preview、category-create/rename/delete、migrate-from-folder、build-status-get/status。
 - **关键**：这些 handler **不依赖 engine 实例**（直接调 core 模块），故拆成 `registerProposalIpc()` 很干净。
 
 ---
