@@ -158,10 +158,23 @@
   line-height: 1.55;
 }
 
-/* Field rows + labels. */
-.sv2 .field,
-.sv2 .field-row,
-.sv2 .settings-field {
+/* Field rows + labels.
+ *
+ * 只对**横向**字段行（标签在左、控件在右）生效。原先这条还带着 `.sv2 .field`
+ * 和 `.sv2 .settings-field`，两个都得摘（2026-09-23 修）：
+ *
+ * - `.field` 的基类是 `display:flex; flex-direction:column; gap:4px`
+ *   （settings-orbit.css）——**纵向**。本条没覆盖 flex-direction，于是
+ *   column 方向下 `align-items:center` 把标签挤到水平居中、
+ *   `justify-content:space-between` 把输入框顶到容器底部。宠物页「自定义」
+ *   tab 三列（名字/表情/问候语）就是这么错位的：grid 等高拉伸后名字与问候语
+ *   两列的输入框贴底，而表情列因为多一行 hint 反而位置正常，看着三列没对齐。
+ *   实际消费者（PetSettings、ConnectorSection）的 markup 全是「标签行在上、
+ *   输入框在下」的纵向结构，没有一个是横向的——这条规则对 .field 从来就是错的。
+ * - `.settings-field` 全仓零消费者（2026-09-23 核实）。
+ *
+ * 加新选择器进来之前先确认它真是横向行，别再把纵向的 field 塞回来。 */
+.sv2 .field-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
