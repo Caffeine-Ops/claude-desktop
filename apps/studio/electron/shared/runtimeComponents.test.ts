@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   artifactUrl,
   componentStatusText,
+  componentVersionText,
   currentComponentPlatform,
   formatBytes,
   formatEta,
@@ -377,3 +378,40 @@ describe('componentStatusText', () => {
     expect(componentStatusText(status({ phase: 'checking', detail: '' }))).toBe('等待中…')
   })
 })
+
+describe('componentStatusText / componentVersionText —— 系统环境提供的组件', () => {
+  function status(over: Partial<ComponentStatus> = {}): ComponentStatus {
+    return { ...initialComponentStatus('python-runtime', false), ...over }
+  }
+
+  // 背景：python-runtime 的「能用」可以来自**系统检测**（componentInstaller 里
+  // 「检测到系统 Python x.y.z，无需下载」那条路径）。此时 phase='ready' 但
+  // installedVersion 为 null——因为没有我们的下载记账。这不是瞬态，是会长期
+  // 停在那里的合法状态。2026-09-24 真机走查时就是这么发现这两条的。
+
+  test('就绪且带说明时显示说明，而不是笼统的「已就绪」', () => {
+    // 「检测到系统 Python，无需下载」正是用户最需要知道的那句——他会疑惑
+    // 「为什么这个组件没下载也能用」，答案就在 detail 里，不能丢。
+    const s = status({ phase: 'ready', detail: '检测到系统 Python 3.12.3，无需下载' });
+    expect(componentStatusText(s)).toBe('检测到系统 Python 3.12.3，无需下载');
+  });
+
+  test('就绪且无说明时才回落到「已就绪」', () => {
+    expect(componentStatusText(status({ phase: 'ready', detail: '' }))).toBe('已就绪');
+  });
+
+  test('就绪但没有版本号：不能说「未安装」（它明明在用）', () => {
+    // 「已就绪」配「未安装」同框是自相矛盾的界面，用户会以为坏了。
+    expect(componentVersionText(status({ phase: 'ready', installedVersion: null }))).toBe('—');
+  });
+
+  test('确实没装时才说「未安装」', () => {
+    expect(componentVersionText(status({ phase: 'idle', installedVersion: null }))).toBe('未安装');
+  });
+
+  test('有版本号就显示版本号', () => {
+    expect(componentVersionText(status({ phase: 'ready', installedVersion: '3.12.13' }))).toBe(
+      '3.12.13'
+    );
+  });
+});

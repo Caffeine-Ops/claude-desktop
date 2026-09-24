@@ -298,8 +298,31 @@ export function formatBytes(n: number): string {
  */
 export function componentStatusText(c: ComponentStatus): string {
   if (c.phase === 'error') return c.error ?? '安装失败'
-  if (c.phase === 'ready') return '已就绪'
+  // ready 也可能带 detail，而且那句往往比「已就绪」重要得多：python-runtime 走
+  // 系统检测时 detail 是「检测到系统 Python 3.x.x，无需下载」——用户看到一个没
+  // 下载过的组件显示已就绪，第一反应就是「为什么」，答案正在这句里。
+  if (c.phase === 'ready') return c.detail || '已就绪'
   return c.detail || '等待中…'
+}
+
+/**
+ * 版本列的文案。
+ *
+ * `installedVersion` 读的是**我们自己的下载记账**，而「能不能用」
+ * （isComponentAvailable）判的是更宽的条件——python-runtime 可以直接用系统装的
+ * Python（componentInstaller 里「检测到系统 Python，无需下载」那条路径）。两者
+ * 合起来就有了一个合法且会长期停住的组合：**phase='ready' 但 installedVersion
+ * 为 null**。
+ *
+ * 那时绝不能说「未安装」——屏幕上「已就绪」和「未安装」挨着显示是自相矛盾的，
+ * 用户会以为坏了。用「—」表示「不是我们装的，没有版本记账」，真正的解释由
+ * componentStatusText 那句 detail 去承担。
+ *
+ * 2026-09-24 真机走查发现；单测覆盖了四种组合。
+ */
+export function componentVersionText(c: ComponentStatus): string {
+  if (c.installedVersion) return c.installedVersion
+  return c.phase === 'ready' ? '—' : '未安装'
 }
 
 /** 有任何组件处于非终态（checking/downloading/verifying/installing）。 */

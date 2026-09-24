@@ -45,6 +45,7 @@ import { AlertTriangle, CheckCircle2, Download, FolderOpen, Loader2 } from 'luci
 
 import {
   componentStatusText,
+  componentVersionText,
   describeComponent,
   formatBytes,
   formatEta,
@@ -168,7 +169,7 @@ export function RuntimeComponentsSection(): React.JSX.Element {
                       <ProgressLine c={c} />
                     </>
                   }
-                  value={c.installedVersion ?? '未安装'}
+                  value={componentVersionText(c)}
                   mono
                 >
                   <Button
