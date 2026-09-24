@@ -153,8 +153,6 @@ import {
   type ProposalMetricLogResult,
   type ProposalPeekRetrievalPayload,
   type ProposalPeekRetrievalResult,
-  type KbSemanticSearchPayload,
-  type KbSemanticSearchResult,
   type LocalDocsScanPayload,
   type LocalDocsScanResult,
   type LocalDocsDirsResult,
@@ -213,7 +211,6 @@ import { markdownToDocxBuffer } from '../core/proposalDocx'
 import { verifyCitations, collectUngroundedImagePaths } from '../core/proposalVerify'
 import { retrievePassages } from '../core/proposalRetrieve'
 import { buildProposalProductScopes } from '../core/proposalScopes'
-import { kbSemanticSearch, resetEmbedWorker } from '../core/kbSemanticSearch'
 import {
   saveProposalDraft,
   loadProposalDraft,
@@ -484,7 +481,6 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.KB_REMOTE_SET)
   ipcMain.removeHandler(IPC_CHANNELS.KB_SYNC_NOW)
   ipcMain.removeHandler(IPC_CHANNELS.KB_ROOT_PICK)
-  ipcMain.removeHandler(IPC_CHANNELS.KB_SEMANTIC_SEARCH)
   ipcMain.removeHandler(IPC_CHANNELS.KB_LOCAL_DOCS_SCAN)
   ipcMain.removeHandler(IPC_CHANNELS.KB_LOCAL_DOCS_DIRS_GET)
   ipcMain.removeHandler(IPC_CHANNELS.KB_LOCAL_DOCS_DIRS_SET)
@@ -2877,9 +2873,6 @@ export function registerIpcHandlers(): void {
       // 重选本地根 = 本地构建在即，磁盘很快会在同步引擎之外被改写；旧同步基准
       // 不再可信，作废让下一轮远程同步退回磁盘对账（见 invalidateKbSyncBaseline 注释）。
       invalidateKbSyncBaseline()
-      // 旧 worker 端着旧内存表，不会自愈——kill 触发 exit 三态复位，下次搜索 fork 新进程
-      // 用新 fingerprint 重校验（见 resetEmbedWorker 注释）。
-      resetEmbedWorker()
     }
   )
 
@@ -2895,9 +2888,6 @@ export function registerIpcHandlers(): void {
       // 是磁盘唯一写方，旧基准的「磁盘=上次同步」断言失效——作废它（见
       // invalidateKbSyncBaseline 注释），逼下一轮远程同步做一次磁盘对账。
       invalidateKbSyncBaseline()
-      // 旧 worker 端着旧内存表，不会自愈——kill 触发 exit 三态复位，下次搜索 fork 新进程
-      // 用新 fingerprint 重校验（见 resetEmbedWorker 注释）。
-      resetEmbedWorker()
     }
   })
 
@@ -3079,24 +3069,10 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  // 语义搜索面板（Task 8）：混合(向量+BM25)检索，复用已有的 kbSemanticSearch 包装。
-  // kbSemanticSearch 内部全防御——模型缺失/超时/stale 均降级 BM25，绝不 reject。
-  // 空 query 在 handler 层短路，避免向 kbSemanticSearch 传空串触发无意义 BM25 扫全库。
-  ipcMain.handle(
-    IPC_CHANNELS.KB_SEMANTIC_SEARCH,
-    async (_event, p: KbSemanticSearchPayload): Promise<KbSemanticSearchResult> => {
-      try {
-        const query = typeof p?.query === 'string' ? p.query.trim() : ''
-        const products = Array.isArray(p?.products) ? p.products : []
-        // 空 query 短路与异常兜底都不是「BM25 顶替语义」——hits 本身为空，degraded=false。
-        if (!query) return { hits: [], staleIndex: false, degraded: false }
-        const scopes = buildProposalProductScopes(products)
-        return kbSemanticSearch(query, scopes, 12)
-      } catch {
-        return { hits: [], staleIndex: false, degraded: false }
-      }
-    }
-  )
+  // 2026-09-24：这里原本有 KB_SEMANTIC_SEARCH handler（「语义搜索面板」Task 8 的后端）。
+  // 连同 preload 方法与两个 payload/result 类型一起删除——前端【从来没有】调用过它
+  // （面板本身没做，或做完又被删），是一条整条死掉的 IPC 链。engine 侧的自动召回与
+  // kb_search 工具走的是 main 进程内的 kbKeywordSearch 直调，不经 IPC。
 
   // 授权目录文档扫描（知识库页「全部文件」）。engine-free：用户目录是全局的。
   // scanLocalDocs 内部全防御（TCC 拒绝→deniedDirs、异常→ok:false），绝不 reject。

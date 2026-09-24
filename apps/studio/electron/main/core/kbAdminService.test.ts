@@ -12,7 +12,7 @@ async function fixture(): Promise<{ deps: svc.KbAdminDeps; scheduled: () => numb
   const inbox = join(base, 'inbox'); mkdirSync(inbox, { recursive: true })
   mkdirSync(join(dirs.storeDir, '智慧水务', '平台A'), { recursive: true })
   writeFileSync(join(dirs.storeDir, '智慧水务', '平台A', '方案.txt'), '正文', 'utf8')
-  await buildKbIndex({ kbRoot: dirs.storeDir, outDir: dirs.outDir, now: 1000, vectors: false })
+  await buildKbIndex({ kbRoot: dirs.storeDir, outDir: dirs.outDir, now: 1000 })
   let n = 0
   const deps: svc.KbAdminDeps = {
     dirs,

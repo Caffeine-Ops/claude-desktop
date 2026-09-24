@@ -3,7 +3,7 @@
  *   ① 校验红线：任何建目录/改名/移动/导入，先对每一路径段跑 validateSegmentName
  *      （kbStore 执行层信任入参、不内校验，这里是唯一防线；漏一处 = rename(线,'a/b')
  *       静默建嵌套目录、或 dotfile 目录进得了本机索引出不了同步）。
- *   ② 写后构建红线：任何真实写盘后 schedule()（增量构建），否则镜像/向量不收敛。
+ *   ② 写后构建红线：任何真实写盘后 schedule()（增量构建），否则镜像与 index 不收敛。
  * 依赖注入（dirs/index/schedule）→ bun 直测，不碰 electron。
  */
 import { basename, extname, sep } from 'node:path'

@@ -81,9 +81,8 @@ import {
   resolveDefaultWorkspace
 } from './workspaceRegistry'
 import { buildProposalAppend, type ProposalProductScope } from './proposalPrompt'
-import { renderRetrievedBlock } from './proposalRetrieve'
+import { renderRetrievedBlock, kbKeywordSearch } from './proposalRetrieve'
 import { buildProposalProductScopes } from './proposalScopes'
-import { kbSemanticSearch, warmEmbedWorker } from './kbSemanticSearch'
 import {
   kbOutDir,
   kbLocalDir,
@@ -1332,10 +1331,9 @@ export class ChatEngine extends EventEmitter {
           : []
       let retrievalBlock = ''
       if (wantsRetrieval) {
-        // 混合语义检索（embedding 在 utilityProcess，带超时不冻 send）。engine 自动召回
-        // 【忽略 staleIndex】——拿到什么（混合或 BM25 降级）就注什么，绝不因 stale 变空。
-        // kbSemanticSearch 自身吞异常降级，这里的 try 继续兜 buildProposalAppend。
-        const { hits } = await kbSemanticSearch(text, scopes)
+        // BM25 关键词召回（同步扫镜像文件、几毫秒；kbKeywordSearch 自身吞异常返 []，
+        // 这里的 try 继续兜 buildProposalAppend）。
+        const hits = kbKeywordSearch(text, scopes)
         const passages = hits.map((h) => ({
           text: h.text,
           title: h.title,
@@ -1842,9 +1840,9 @@ export class ChatEngine extends EventEmitter {
     // 全局字段，否则 warmup 跑别的会话的 openSession 会抢到错误意图（见 SessionRuntime
     // .proposalMode 注释）。
     const proposalActive = runtime.proposalMode
-    // 方案 spawn 时后台预载 embedding worker，让模型在用户首次 send 前就绪。
-    // warmEmbedWorker 幂等（已有 worker 直接返回），不会重复 fork。
-    if (proposalActive) warmEmbedWorker()
+    // 2026-09-24：这里原本有 warmEmbedWorker()——方案 spawn 时后台 fork 子进程预载 bge
+    // 嵌入模型，让它在用户首次 send 前就绪。向量化栈删除后检索是同步的 BM25 扫盘（几毫秒、
+    // 无模型可预热），预热概念随之消失。
     const kbMirrorDir = kbOutDir()
     // productScopes 只在方案模式下计算——非方案会话不调用 proposalProductScopes，避免
     // 普通会话的 spawn 热路径也白读一遍 KB 索引再丢弃。下面 systemPrompt append
@@ -1873,13 +1871,13 @@ export class ChatEngine extends EventEmitter {
           tools: [
             tool(
               'kb_search',
-              '在知识库里用自然语言模糊描述检索相关原文片段（语义+词面混合），返回片段与出处文件名。写方案缺资料时用。',
+              '在知识库里按关键词检索相关原文片段，返回片段与出处文件名。写方案缺资料时用。检索按词面匹配（BM25），描述里尽量用文档里会出现的原词。',
               { query: z.string() },
               async ({ query: q }) => {
                 // LIVE 读 proposalProducts：产品 chip 可能在 warm-spawn 后被用户修改，
                 // 捕获的是引用不是快照，确保检索范围始终反映当前选择。
                 const scopes = this.proposalProductScopes(runtime.proposalProducts)
-                const { hits } = await kbSemanticSearch(q, scopes, 8)
+                const hits = kbKeywordSearch(q, scopes, 8)
                 const text = hits.length
                   ? hits.map((h) => `《${h.title}》\n${h.text}`).join('\n\n- - -\n\n')
                   : '（知识库未命中相关内容）'

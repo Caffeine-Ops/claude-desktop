@@ -145,8 +145,6 @@ import {
   type ProposalMetricLogResult,
   type ProposalPeekRetrievalPayload,
   type ProposalPeekRetrievalResult,
-  type KbSemanticSearchPayload,
-  type KbSemanticSearchResult,
   type LocalDocsScanPayload,
   type LocalDocsScanResult,
   type LocalDocsDirsResult,
@@ -1088,13 +1086,6 @@ const chatApi: ChatApi = {
       payload
     ) as Promise<ProposalPeekRetrievalResult>
   },
-  kbSemanticSearch(payload: KbSemanticSearchPayload): Promise<KbSemanticSearchResult> {
-    return ipcRenderer.invoke(
-      IPC_CHANNELS.KB_SEMANTIC_SEARCH,
-      payload
-    ) as Promise<KbSemanticSearchResult>
-  },
-
   scanLocalDocs(payload?: LocalDocsScanPayload): Promise<LocalDocsScanResult> {
     return ipcRenderer.invoke(
       IPC_CHANNELS.KB_LOCAL_DOCS_SCAN,

@@ -2,7 +2,7 @@
 export interface KbBuildStatus {
   running: boolean
   queued: boolean
-  phase: { phase: 'convert' | 'vectors'; done: number; total: number } | null
+  phase: { phase: 'convert'; done: number; total: number } | null
   lastError: string | null
   lastFinishedAtMs: number | null
 }
@@ -10,7 +10,7 @@ export interface KbBuildStatus {
 export type KbBuildEvent =
   | { type: 'start' }
   | { type: 'queue' }
-  | { type: 'progress'; phase: 'convert' | 'vectors'; done: number; total: number }
+  | { type: 'progress'; phase: 'convert'; done: number; total: number }
   | { type: 'exit'; ok: boolean; error: string | null; atMs: number }
 
 export const initialKbBuildStatus: KbBuildStatus = {

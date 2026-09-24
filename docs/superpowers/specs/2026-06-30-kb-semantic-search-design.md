@@ -1,7 +1,26 @@
 # 方案写作·知识库语义检索（P1 文本）
 
+> ## ⚠️ 已作废（2026-09-24）——本文描述的功能已整条删除
+>
+> 这份设计**落地过**（embedWorker + bge 模型 + vectors.bin + RRF 融合），但**在正式版里
+> 从未生效过**：模型 23MB 始终没有进过安装包（打包配置里没有对应的 extraResources，
+> `prebundle:kb-model` / `verify:kb-model` 两个脚本全链零调用），CI 又于 2026-07-06 因
+> runner 网络问题拆掉了模型下载步骤。也就是说自交付起，所有用户的知识库检索一直走的都是
+> BM25 关键词那条「降级」路径，dev 机器上同样没有模型。
+>
+> 2026-09-24 整条向量化栈已删除（onnxruntime-node + @huggingface/transformers +
+> embedWorker + vectors.bin + 两个孤儿打包脚本 + afterPack 的按架构剔除逻辑），检索收敛为
+> 单一的 BM25 实现。对线上行为是零变化。
+>
+> **要重做语义检索，别照本文的路线**：本文假设模型随安装包分发，那个假设已被证明是这个
+> 功能失效的根因。新做法必须走运行时按需下载（`componentInstaller.ts` +
+> `publish-components.yml` 那套基建，CLI 二进制和 python-runtime 已经这么做了）。
+> 当前的检索入口是 `proposalRetrieve.ts` 的 `kbKeywordSearch`，那里有完整的拆除记录。
+>
+> 本文以下内容原样保留，仅作历史参考（分块策略、RRF 融合、scope 前置过滤等设计仍有价值）。
+
 日期：2026-06-30（v2，已过两轮独立工程评审并修订）
-状态：设计已认可 + 打包 spike 已通过，待用户复核 → writing-plans
+状态：~~设计已认可 + 打包 spike 已通过，待用户复核 → writing-plans~~ → **已交付，后于 2026-09-24 整条删除（见上）**
 前序：检索现状见 spec `2026-06-23-kb-driven-proposal-writer-design.md`、内容召回(BM25)与引用校验(trigram) 已交付（memory `proposal-quality-grounding-retrieval`）。
 
 ## 背景与目标

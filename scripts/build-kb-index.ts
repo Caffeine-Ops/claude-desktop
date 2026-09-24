@@ -3,7 +3,6 @@ import { createHash } from 'node:crypto'
 import { join, dirname } from 'node:path'
 import { scanKb } from './kb-index/scan.ts'
 import { convertFile } from './kb-index/convert.ts'
-import { buildVectors } from './kb-index/embed.ts'
 import type { KbIndex, KbIndexFile } from '../apps/studio/electron/shared/kbIndex.ts'
 
 function arg(name: string, fallback?: string): string {
@@ -85,8 +84,9 @@ async function main(): Promise<void> {
   mkdirSync(outDir, { recursive: true })
   writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf8')
   console.log(`\n转换完成：${files.length} 文件，失败 ${failed}。index.json → ${indexPath}`)
-  // 向量化（fingerprint 绑 builtAtMs，与 index 同源）。失败不吞——整库可重建。
-  await buildVectors(files, outDir, builtAtMs)
+  // 2026-09-24：这里原本还有一步 buildVectors(files, outDir, builtAtMs)——跑 bge 模型把
+  // 分块表向量化成 vectors.bin（fingerprint 绑 builtAtMs 与 index 同源）。整条向量化栈
+  // 已删除（正式版从来没拿到过模型，检索一直是 BM25），本脚本现在只产出镜像 + index.json。
 }
 
 main().catch((e) => { console.error(e); process.exit(1) })
