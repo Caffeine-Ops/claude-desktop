@@ -283,9 +283,10 @@ const SKIP_IMAGE_OPTIMIZE = process.env.SKIP_IMAGE_OPTIMIZE === '1'
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg'])
 const cacheDir = join(pkgRoot, '.image-cache')
 
-/** sharp 是 @huggingface/transformers 的传递依赖，不在 studio 的直接 deps 里，
- *  裸 `import 'sharp'` 在 bun 的扁平 store 布局下解析不到——沿用 findPkgDir
- *  那套按 store 目录名前缀扫描的办法拿到真实路径。 */
+/** sharp 在 studio 的 devDependencies 里（2026-09-24 从「@huggingface/transformers 的
+ *  传递依赖」扶正——那个包随向量化栈删掉了，不扶正这里就当场找不到 sharp）。裸
+ *  `import 'sharp'` 在 bun 的扁平 store 布局下解析不到，沿用 findPkgDir 那套按 store
+ *  目录名前缀扫描的办法拿到真实路径。 */
 async function loadSharp() {
   const dir = findPkgDir('sharp')
   if (!dir) return null
@@ -319,7 +320,7 @@ if (SKIP_IMAGE_OPTIMIZE) {
     // 在产物里看不出任何异常，正是这个仓库反复踩过的静默失败模式。真要绕开
     // 用 SKIP_IMAGE_OPTIMIZE=1 显式声明。
     console.error(
-      '[prebundle] 找不到 sharp（@huggingface/transformers 的传递依赖）——' +
+      '[prebundle] 找不到 sharp（studio 的 devDependencies）——' +
         '图片量化无法执行，安装包会比预期大约 35M。\n' +
         '  先跑 bun install；确实要跳过就显式声明 SKIP_IMAGE_OPTIMIZE=1。'
     )

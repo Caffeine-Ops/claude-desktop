@@ -19,15 +19,11 @@
       "entry": ["scripts/*.{mjs,ts}", "scripts/**/*.test.ts"],
       "project": ["scripts/**/*.{mjs,ts}"],
 
-      // scripts/kb-index/embed.ts 直接 import @huggingface/transformers，
-      // 但那个包装在 apps/studio——根脚本靠 bun workspace 的 hoisting 借到它。
-      // 已在根 devDependencies 里显式声明（哪天 studio 不装它了，根脚本会
-      // 当场炸而不是静默）；这里不需要再 ignore。
       "ignoreBinaries": ["markitdown", "soffice"]
     },
 
     "apps/studio": {
-      // electron 侧入口 electron-vite 插件识别不全：4 个 worker 是
+      // electron 侧入口 electron-vite 插件识别不全：3 个 worker 是
       // utilityProcess.fork 的独立 rollup input（见 electron.vite.config.ts
       // 里那几段长注释），不是被 import 进来的——漏登记会被误判成死文件。
       "entry": [
@@ -64,7 +60,12 @@
       // v4 的用法），@open-design/ui 是 source-only 包走 next.config.ts 的
       // transpilePackages。knip 只看 JS 依赖图，必然误报，不是它们真没用。
       // @types/adm-zip 是 adm-zip（在 dependencies 里活着）的类型包，同理。
+      // sharp 是构建期依赖，prebundle-daemon.mjs 用 findPkgDir('sharp') 按 bun store
+      // 的目录名前缀扫出真实路径再动态 import（扁平 store 布局下裸 import 解析不到），
+      // knip 只看静态依赖图必然报它未用。**别照 knip 把它删了**：删掉 prebundle 会硬
+      // 失败（它刻意不静默跳过），整条发版链断在压图那一步。
       "ignoreDependencies": [
+        "sharp",
         "tailwindcss",
         "tw-animate-css",
         "@claude-desktop/design-tokens",
