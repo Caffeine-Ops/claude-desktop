@@ -3,6 +3,7 @@ import { ThreadPrimitive, ComposerPrimitive, useComposerRuntime } from '@assista
 import { AnimatePresence, motion } from 'motion/react'
 import {
   Clapperboard,
+  FileDown,
   MessageSquareText,
   MoreHorizontal,
   Pencil,
@@ -30,6 +31,7 @@ import { Label } from '@/src/components/ui/label'
 import { useBackgroundZoneStore } from '@/src/stores/backgroundZone'
 import { useI18n, useT } from '../../../i18n'
 import { attachFilesToComposer } from '../../../composer/attachFiles'
+import { buildTranscriptMarkdown, transcriptFilename } from '../../../lib/exportTranscript'
 import { useChatStore } from '../../../stores/chat'
 import { useComposerModeStore } from '../../../stores/composerMode'
 import { useSessionTitleStore } from '../../../stores/sessionTitle'
@@ -1530,6 +1532,42 @@ function ChatHeader(): React.JSX.Element {
                 }}
               >
                 <Pencil strokeWidth={1.75} /> {t('renameChat')}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() => {
+                  // 导出对话为 Markdown。内容在渲染层拼（lib/exportTranscript.ts，
+                  // 纯函数带测试），main 只弹保存框写盘——理由见
+                  // ipc-channels 的 TRANSCRIPT_EXPORT_MD 注释。
+                  //
+                  // **现读 getState() 而不订阅 messages**：这个组件是 46px 顶栏，
+                  // 订阅整棵消息树会让它随每个流式 chunk 重渲染（旁边
+                  // exportReplay 取 slidesSessions 也是同款做法）。
+                  const messages = useChatStore.getState().messages
+                  // 标题用 restTitle 而不是 display：display 含 slash 命令前缀
+                  // （`/claude-desktop:news 帮我…`），顶栏是把它拆成独立的
+                  // 命令 chip + 标题两块渲染的。拿 display 会让导出文件的标题
+                  // 长出屏幕上根本没有的命令前缀——「导出的和看到的不一样」
+                  // 正是这功能最该避免的缺陷（2026-09-28 真机走查发现）。
+                  const markdown = buildTranscriptMarkdown(messages, {
+                    title: restTitle,
+                    exportedAt: new Date()
+                  })
+                  // 成功反馈 = Finder 定位导出文件；取消静默、失败记日志
+                  // （与本菜单「导出为演示」及 rail 行菜单一致）。
+                  void window.chatApi
+                    .exportTranscriptMd({
+                      markdown,
+                      defaultFilename: transcriptFilename(restTitle, new Date())
+                    })
+                    .then((r) => {
+                      if (r.path) void window.chatApi.revealPath({ absPath: r.path })
+                    })
+                    .catch((err: unknown) =>
+                      console.warn('[chat-header] exportTranscriptMd error:', err)
+                    )
+                }}
+              >
+                <FileDown strokeWidth={1.75} /> {t('exportTranscriptMenu')}
               </DropdownMenuItem>
               <DropdownMenuItem
                 onSelect={() => {

@@ -295,6 +295,20 @@ export const IPC_CHANNELS = {
    */
   SESSION_GET_JSONL_PATH: 'session:get-jsonl-path',
   /**
+   * Renderer → main. 会话顶栏 ··· 菜单「导出对话」——把当前会话导出成一份
+   * 人可读的 Markdown。**渲染层已把 Markdown 拼好**（`src/chat/lib/
+   * exportTranscript.ts`，纯函数带测试），main 这边只管弹原生保存框与写盘,
+   * 与 USAGE_EXPORT_CSV / PROPOSAL_EXPORT 同一套分工。
+   *
+   * 为什么内容在渲染层拼而不在 main 读 jsonl 重拼：屏幕上那棵消息树就是
+   * 用户以为自己在导出的东西（含前端做的标记剥离、协议消息人话化）。main
+   * 侧另写一份 jsonl 解析＝第二套渲染规则，迟早跟屏幕上的不一致——「导出
+   * 的和看到的不一样」是这类功能最难查的缺陷。
+   *
+   * `{ path: null }` = 用户在保存框点了取消（不是错误，调用方静默）。
+   */
+  TRANSCRIPT_EXPORT_MD: 'transcript:export-md',
+  /**
    * Renderer → main. 给会话指定工作目录（composer 的「选择工作目录」
    * chip）。main 校验绝对路径/存在/目录后：无 transcript 的新会话写入
    * 引擎 pendingWorkspace（首次 send 烘焙进子进程 cwd）；已有记录的会
@@ -2418,6 +2432,17 @@ export interface UsageExportCsvResult {
   path: string | null
 }
 
+/** 见 TRANSCRIPT_EXPORT_MD。`markdown` 由渲染层的 buildTranscriptMarkdown 拼好。 */
+export interface TranscriptExportMdPayload {
+  markdown: string
+  defaultFilename: string
+}
+
+/** `path: null` = 用户取消保存框。 */
+export interface TranscriptExportMdResult {
+  path: string | null
+}
+
 /* ───────────────────────── 场景目录（空态 ScenarioRail 远端配置） ─────────────────────── */
 
 /**
@@ -3391,6 +3416,14 @@ export interface ChatApi {
   getSessionJsonlPath(
     payload: SessionOpenJsonlPayload
   ): Promise<SessionGetJsonlPathResult>
+
+  /**
+   * 把渲染层拼好的对话 Markdown 交给 main 落盘（原生保存框）。见
+   * TRANSCRIPT_EXPORT_MD——内容由 `lib/exportTranscript.ts` 生成。
+   */
+  exportTranscriptMd(
+    payload: TranscriptExportMdPayload
+  ): Promise<TranscriptExportMdResult>
 
   /**
    * 给会话指定工作目录（composer chip）。新会话记预选；已有记录的会话

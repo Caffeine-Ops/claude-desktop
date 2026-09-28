@@ -117,6 +117,8 @@ import {
   type AuthState,
   type ScenarioCaseGalleryResult,
   type ScenarioCatalogResult,
+  type TranscriptExportMdPayload,
+  type TranscriptExportMdResult,
   type UsageQueryFilters,
   type UsageListQuery,
   type UsageExportCsvPayload,
@@ -574,6 +576,7 @@ export function registerIpcHandlers(): void {
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_RENAME)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_OPEN_JSONL)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_GET_JSONL_PATH)
+  ipcMain.removeHandler(IPC_CHANNELS.TRANSCRIPT_EXPORT_MD)
   ipcMain.removeHandler(IPC_CHANNELS.SESSION_WORKSPACE_SET)
   ipcMain.removeHandler(IPC_CHANNELS.APP_RELAUNCH)
   ipcMain.removeHandler(IPC_CHANNELS.TAB_NEW)
@@ -2060,6 +2063,33 @@ export function registerIpcHandlers(): void {
       const jsonlPath = await findSessionJsonlGlobal(sessionId)
       if (!jsonlPath) return { error: 'Session transcript not found.' }
       return { path: jsonlPath }
+    }
+  )
+
+  // 「导出对话」——渲染层已把 Markdown 拼好（lib/exportTranscript.ts），这里
+  // 只弹原生保存框 + 写盘。与 USAGE_EXPORT_CSV 同构，逐字同款的三个兜底：
+  // 空内容 / 取不到窗口 / 用户取消一律回 `{ path: null }`，调用方静默。
+  ipcMain.handle(
+    IPC_CHANNELS.TRANSCRIPT_EXPORT_MD,
+    async (
+      event,
+      payload: TranscriptExportMdPayload
+    ): Promise<TranscriptExportMdResult> => {
+      const markdown = typeof payload?.markdown === 'string' ? payload.markdown : ''
+      const defaultFilename =
+        typeof payload?.defaultFilename === 'string' && payload.defaultFilename
+          ? payload.defaultFilename
+          : '对话.md'
+      if (!markdown) return { path: null }
+      const win = BrowserWindow.fromWebContents(event.sender)
+      if (!win) return { path: null }
+      const r = await dialog.showSaveDialog(win, {
+        defaultPath: defaultFilename,
+        filters: [{ name: 'Markdown', extensions: ['md'] }]
+      })
+      if (r.canceled || !r.filePath) return { path: null }
+      await writeFile(r.filePath, markdown, 'utf8')
+      return { path: r.filePath }
     }
   )
 

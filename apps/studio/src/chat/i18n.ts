@@ -115,6 +115,9 @@ const STRINGS = {
     renameChatSave: '保存名称',
     chatHeaderMenu: '会话操作',
 
+    // 导出对话为 Markdown（见 lib/exportTranscript.ts）
+    exportTranscriptMenu: '导出对话…',
+
     // Replay（会话演示回放）
     replayExportMenu: '导出为演示',
     replayOpenFile: '打开演示文件…',
@@ -532,6 +535,9 @@ const STRINGS = {
     renameChatFailed: 'Rename failed',
     renameChatSave: 'Save name',
     chatHeaderMenu: 'Chat actions',
+
+    // Export transcript as Markdown (see lib/exportTranscript.ts)
+    exportTranscriptMenu: 'Export chat…',
 
     // Replay (session demo playback)
     replayExportMenu: 'Export as demo',
