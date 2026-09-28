@@ -322,3 +322,117 @@ describe('toolCallSummary — 真机走查补漏的工具', () => {
     expect(toolCallSummary('TaskCreate', { description: '写测试' })).toBe('派出子任务 写测试')
   })
 })
+
+/* ── 以下为 2026-09-28 代码审查后补的回归测试 ── */
+
+describe('buildTranscriptMarkdown — 用户正文的展示层变换（审查①）', () => {
+  it('文件提及压成文件名，不把用户的家目录绝对路径写进要分享的文档', () => {
+    const out = md([
+      {
+        role: 'user',
+        content: [{ type: 'text', text: '帮我改这个 @"/Users/kika/Desktop/季度汇报.pptx"' }]
+      }
+    ])
+    expect(out).toContain('季度汇报.pptx')
+    expect(out).not.toContain('/Users/kika')
+  })
+
+  it('开头的已知技能命令换成屏幕上那个友好名', () => {
+    const out = md([
+      {
+        role: 'user',
+        content: [{ type: 'text', text: '/cowork:ppt-creator 做一份武汉大学介绍' }]
+      }
+    ])
+    expect(out).toContain('［制作PPT］')
+    expect(out).toContain('做一份武汉大学介绍')
+    expect(out).not.toContain('/cowork:ppt-creator')
+  })
+
+  it('命中命令正则但没登记在注册表里的，保持原样（与 UserMessage 同规则）', () => {
+    // `/claude-desktop:ppt-creator` 形如命令却不在表里（真实键是 /cowork:ppt-creator）
+    const raw = '/claude-desktop:ppt-creator 内容'
+    const out = md([{ role: 'user', content: [{ type: 'text', text: raw }] }])
+    expect(out).toContain(raw)
+  })
+
+  it('助手正文不做这层变换——屏幕上 AI 回答就是原样渲染的', () => {
+    const out = md([
+      { role: 'assistant', content: [{ type: 'text', text: '路径是 @"/Users/kika/a.txt"' }] }
+    ])
+    expect(out).toContain('@"/Users/kika/a.txt"')
+  })
+})
+
+describe('demoteHeadings — 围栏闭合规则（审查②）', () => {
+  it('嵌套围栏：外层四个反引号包住内层三个，里面的 # 一个字都不能动', () => {
+    const src = ['````markdown', '```bash', '# 安装依赖', '```', '````'].join('\n')
+    const out = md([{ role: 'assistant', content: [{ type: 'text', text: src }] }])
+    expect(out).toContain('# 安装依赖')
+    expect(out).not.toContain('### 安装依赖')
+  })
+
+  it('带 info string 的行是开围栏不是闭围栏，不能把块提前关掉', () => {
+    const src = ['```', '# 注释', '```js', '# 还在块里', '```'].join('\n')
+    const out = md([{ role: 'assistant', content: [{ type: 'text', text: src }] }])
+    expect(out).toContain('# 注释')
+    expect(out).toContain('# 还在块里')
+    expect(out).not.toContain('### ')
+  })
+
+  it('闭合围栏比开启的长是允许的（CommonMark 只要求不短于）', () => {
+    const src = ['```', '# 注释', '`````'].join('\n')
+    const out = md([{ role: 'assistant', content: [{ type: 'text', text: src }] }])
+    expect(out).toContain('# 注释')
+  })
+
+  it('围栏正常闭合后，后面的标题照常降级', () => {
+    const src = ['```', 'code', '```', '', '# 真标题'].join('\n')
+    const out = md([{ role: 'assistant', content: [{ type: 'text', text: src }] }])
+    expect(out).toContain('### 真标题')
+  })
+})
+
+describe('toolCallSummary — 反引号转义（审查③）', () => {
+  it('值里含反引号时不能裂成乱码，要用更长的分隔符包住', () => {
+    const out = toolCallSummary('Bash', { command: 'echo `date`' })
+    expect(out).not.toBe('执行 `echo `date``')
+    expect(out).toContain('echo `date`')
+    // 代码跨度的分隔符必须比值里最长的连续反引号更长
+    expect(out.startsWith('执行 ``')).toBe(true)
+  })
+
+  it('不含反引号的值仍用最简单的单反引号', () => {
+    expect(toolCallSummary('Grep', { pattern: 'abc' })).toBe('搜索 `abc`')
+  })
+})
+
+describe('toolCallSummary — argsText 回退（审查④）', () => {
+  it('args 是空对象但 argsText 有内容时，要拿 argsText 而不是退化成「调用 Bash」', () => {
+    const out = md([
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            toolName: 'Bash',
+            args: {},
+            argsText: '{"command":"git status"}'
+          }
+        ]
+      }
+    ])
+    expect(out).toContain('执行 `git status`')
+    expect(out).not.toContain('调用 Bash')
+  })
+
+  it('args 空、argsText 也解析不出来时才退化成工具名', () => {
+    const out = md([
+      {
+        role: 'assistant',
+        content: [{ type: 'tool-call', toolName: 'Bash', args: {}, argsText: '{"comm' }]
+      }
+    ])
+    expect(out).toContain('调用 Bash')
+  })
+})

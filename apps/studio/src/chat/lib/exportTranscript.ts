@@ -13,6 +13,8 @@
  * 项目既有的 6 条导出通道同构（渲染层生成内容 + main 落盘）。
  */
 
+import { findSkillChipSpec, LEADING_SLASH_COMMAND_RE } from '../composer/skillChipRegistry'
+import { condenseFileMentions } from './mentionDisplay'
 import { stripMessageMarker } from './messageMarkers'
 
 /**
@@ -96,6 +98,21 @@ function baseName(raw: unknown): string | null {
 }
 
 /**
+ * 把值包进 Markdown 代码跨度。**分隔符长度必须超过值里最长的连续反引号**
+ * ——否则 `` `echo `date`` `` 会在第二个反引号处提前闭合，整段渲染成乱码
+ * （2026-09-28 代码审查发现）。CommonMark 的规矩：分隔符更长即可，值以
+ * 反引号开头/结尾时两端再各垫一个空格（渲染时会被吃掉）。
+ */
+function codeSpan(value: string): string {
+  let longest = 0
+  for (const run of value.match(/`+/g) ?? []) longest = Math.max(longest, run.length)
+  if (longest === 0) return `\`${value}\``
+  const fence = '`'.repeat(longest + 1)
+  const pad = value.startsWith('`') || value.endsWith('`') ? ' ' : ''
+  return `${fence}${pad}${value}${pad}${fence}`
+}
+
+/**
  * 工具调用 → 一行人话摘要。
  *
  * 为什么不复用 `components/chat/ToolFormatters`
@@ -111,9 +128,9 @@ function baseName(raw: unknown): string | null {
 export function toolCallSummary(toolName: string, args: unknown): string {
   const bag = (args ?? {}) as Record<string, unknown>
   const fallback = `调用 ${toolName}`
-  /** `读取 \`x.tsx\`` 这样的「动词 + 反引号值」；值缺失时退回兜底。 */
+  /** `读取 \`x.tsx\`` 这样的「动词 + 代码跨度」；值缺失时退回兜底。 */
   const withValue = (verb: string, value: string | null): string =>
-    value ? `${verb} \`${value}\`` : fallback
+    value ? `${verb} ${codeSpan(value)}` : fallback
 
   switch (toolName) {
     case 'Read':
@@ -171,8 +188,15 @@ function metaLine(part: TranscriptPart): string | null {
       const name = typeof part.toolName === 'string' ? part.toolName : ''
       if (!name) return null
       // args 未解析完（流式中断）时退回 argsText 里能捞到的东西：捞不到就只报工具名。
-      const args =
-        part.args && typeof part.args === 'object' ? part.args : parseArgsText(part.argsText)
+      // **空对象也要走回退**：`stores/chat.ts` 的 normalizeArgs 在累积的 args
+      // JSON 解析失败时落成 `{}`，只判 `typeof === 'object'` 会让这条回退永远
+      // 走不到，摘要白白退化成「调用 Bash」而完整参数就躺在 argsText 里
+      // （2026-09-28 代码审查发现，此前是死代码）。
+      const parsedArgs =
+        part.args && typeof part.args === 'object' && Object.keys(part.args).length > 0
+          ? part.args
+          : parseArgsText(part.argsText)
+      const args = parsedArgs ?? part.args
       return `🔧 ${toolCallSummary(name, args)}`
     }
     // 图片带不出去：Markdown 就是一个纯文本文件，装不了图（真要带图得导出成
@@ -206,9 +230,9 @@ function parseArgsText(raw: unknown): Record<string, unknown> | null {
  * 连续的元信息行会聚成**一个**引用块（`> 🔧 a` / `> 🔧 b` 相邻两行），而不是
  * 各占一段——AI 连着调五个工具是常态，每个占一段会把回答撕得七零八落。
  */
-function renderParts(content: TranscriptMessage['content']): string[] {
+function renderParts(content: TranscriptMessage['content'], isUser: boolean): string[] {
   if (typeof content === 'string') {
-    const text = cleanText(content)
+    const text = cleanText(content, isUser)
     return text ? [text] : []
   }
   const out: string[] = []
@@ -223,7 +247,7 @@ function renderParts(content: TranscriptMessage['content']): string[] {
     // 思考过程刻意丢弃：它是给本人看「AI 在想什么」的，导出给别人看时是噪音。
     if (part.type === 'reasoning') continue
     if (part.type === 'text') {
-      const text = cleanText(part.text)
+      const text = cleanText(part.text, isUser)
       if (!text) continue
       flushQuote()
       out.push(text)
@@ -241,8 +265,11 @@ function renderParts(content: TranscriptMessage['content']): string[] {
  */
 const HEADING_SHIFT = 2
 
-/** 围栏代码块的起止行（``` 或 ~~~，允许最多 3 个前导空格，按 CommonMark）。 */
-const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})/
+/**
+ * 围栏代码块的起止行（``` 或 ~~~，允许最多 3 个前导空格，按 CommonMark）。
+ * 第二组是围栏之后的剩余内容（info string），用来区分开围栏与闭围栏。
+ */
+const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})(.*)$/
 
 /** ATX 标题行。`#` 后**必须**有空格才算标题——`#话题`、`#include` 都不是。 */
 const ATX_HEADING = /^ {0,3}(#{1,6}) (.*)$/
@@ -265,16 +292,30 @@ const ATX_HEADING = /^ {0,3}(#{1,6}) (.*)$/
  */
 function demoteHeadings(text: string): string {
   const lines = text.split('\n')
-  /** 当前所在围栏的标记字符（` 或 ~），不在围栏里时为 null。 */
-  let fence: string | null = null
+  /** 当前所在围栏的标记字符与长度，不在围栏里时为 null。 */
+  let fence: { char: string; len: number } | null = null
 
   for (let i = 0; i < lines.length; i++) {
     const fenceHit = FENCE_LINE.exec(lines[i])
     if (fenceHit) {
-      const marker = fenceHit[1][0]
-      // 只有同种标记能关掉围栏（``` 开的块内出现 ~~~ 只是普通文本）。
-      if (fence === null) fence = marker
-      else if (marker === fence) fence = null
+      const run = fenceHit[1]!
+      const marker = run[0]!
+      const info = fenceHit[2] ?? ''
+      if (fence === null) {
+        fence = { char: marker, len: run.length }
+      } else if (
+        // 闭合的三个条件（CommonMark，2026-09-28 审查前只判了第一条）：
+        //  1. 同种标记——``` 开的块里出现 ~~~ 只是普通文本；
+        //  2. **不短于**开围栏——否则外层 ```` 包内层 ``` 时，内层的结尾
+        //     会把外层块提前关掉，块里的 `#` 注释随即被当成标题改写；
+        //  3. 闭围栏后不能有 info string——```js 是又一个开围栏（在块内
+        //     就只是普通文本行），不是闭合。
+        marker === fence.char &&
+        run.length >= fence.len &&
+        info.trim() === ''
+      ) {
+        fence = null
+      }
       continue
     }
     if (fence !== null) continue
@@ -287,17 +328,50 @@ function demoteHeadings(text: string): string {
 }
 
 /**
- * 正文文本清理。两件事：
+ * 用户消息的展示层变换——把 store 里的原始文本变成**屏幕上那副样子**。
+ *
+ * 为什么必须做（2026-09-28 代码审查发现）
+ * ------------------------------------
+ * store/wire 里存的是原始文本，气泡是靠 UserMessage 做展示变换才好看的。
+ * 裸导出等于把两样东西漏出去：
+ *
+ *  - `@"/Users/kika/Desktop/季度汇报.pptx"`——附件是以绝对路径 mention 的
+ *    形式拼进消息的（见 FusionRuntimeProvider 的 mentionSuffix），屏幕上
+ *    UserMessage 渲染成文件 chip 只显示文件名。**导出是要发给别人的文档，
+ *    裸路径等于把用户名和家目录结构一起送出去。**
+ *  - `/claude-desktop:ppt-creator`——已登记技能在屏幕上是「制作PPT」这样的
+ *    友好 chip，导出漏的是内部命名空间。
+ *
+ * 两处都复用界面同一份规则（`mentionDisplay` / `skillChipRegistry`，两个都
+ * 是零依赖纯模块），而不是另写一套——否则又是「导出的和看到的不一样」。
+ * 未登记的 `/cmd` 保持原样，与 UserMessage 一致（不是所有斜杠都是技能）。
+ */
+function userDisplayText(text: string): string {
+  const condensed = condenseFileMentions(text)
+  const slash = LEADING_SLASH_COMMAND_RE.exec(condensed)
+  const spec = slash ? findSkillChipSpec(slash[1]!) : null
+  if (!slash || !spec) return condensed
+  // chip 在纯文本里的对应物用全角方括号，与本模块的 ［图片］/［附件］同款
+  // （半角 `[x]` 紧跟 `(` 会被 Markdown 当成链接）。
+  return `［${spec.label}］${condensed.slice(slash[1]!.length)}`
+}
+
+/**
+ * 正文文本清理。三件事：
  *
  * 1. `stripMessageMarker`——图片编辑、表格选区这类消息在会话里是带
  *    `[[image-edit]]{…JSON…}` 协议前缀存着的，界面上由专门的气泡组件渲染成
  *    人话，**裸导出会把内部协议原样漏给收件人**。
- * 2. 标题降级，见 demoteHeadings。
+ * 2. 用户消息的展示层变换，见 userDisplayText。**只对 user 做**：屏幕上
+ *    AI 的回答就是原样渲染的，对它做同样变换反而会改出界面上没有的样子。
+ * 3. 标题降级，见 demoteHeadings。
  */
-function cleanText(raw: unknown): string | null {
+function cleanText(raw: unknown, isUser: boolean): string | null {
   if (!hasText(raw)) return null
   const stripped = stripMessageMarker(raw).trim()
-  return stripped ? demoteHeadings(stripped) : null
+  if (!stripped) return null
+  const shown = isUser ? userDisplayText(stripped) : stripped
+  return demoteHeadings(shown)
 }
 
 /**
@@ -327,7 +401,7 @@ export function buildTranscriptMarkdown(
   for (const msg of messages) {
     const speaker = SPEAKER[msg.role]
     if (!speaker) continue
-    const parts = renderParts(msg.content)
+    const parts = renderParts(msg.content, msg.role === 'user')
     if (parts.length === 0) continue
     blocks.push(`## ${speaker}`, ...parts)
   }
