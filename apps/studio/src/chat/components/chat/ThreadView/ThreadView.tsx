@@ -1241,6 +1241,8 @@ function ChatHeader(): React.JSX.Element {
   // 之前就已分配，光判 sessionId 挡不住空会话——而重命名/导出对没内容
   // 的会话既无意义又可能因 transcript 未落盘而静默失败。
   const hasMessages = useChatStore((s) => s.messages.length > 0)
+  // 导出内容跟随界面语言（2026-09-28 审查⑤）——纯函数不碰 i18n，由这里喂进去。
+  const lang = useI18n((s) => s.lang)
   // 标题可重命名 = 真会话 + 非回放 + 已有消息。标题按钮 disabled/title/
   // aria/铅笔与 ··· 菜单五处共用这一个判定，别再各写各的条件。
   // ⚠️ 写法必须是 `sessionId !== null &&`（不能 Boolean(sessionId)）——
@@ -1550,14 +1552,15 @@ function ChatHeader(): React.JSX.Element {
                   // 正是这功能最该避免的缺陷（2026-09-28 真机走查发现）。
                   const markdown = buildTranscriptMarkdown(messages, {
                     title: restTitle,
-                    exportedAt: new Date()
+                    exportedAt: new Date(),
+                    lang
                   })
                   // 成功反馈 = Finder 定位导出文件；取消静默、失败记日志
                   // （与本菜单「导出为演示」及 rail 行菜单一致）。
                   void window.chatApi
                     .exportTranscriptMd({
                       markdown,
-                      defaultFilename: transcriptFilename(restTitle, new Date())
+                      defaultFilename: transcriptFilename(restTitle, new Date(), lang)
                     })
                     .then((r) => {
                       if (r.path) void window.chatApi.revealPath({ absPath: r.path })

@@ -14,6 +14,7 @@
  */
 
 import { findSkillChipSpec, LEADING_SLASH_COMMAND_RE } from '../composer/skillChipRegistry'
+import type { Lang } from '../i18n'
 import { condenseFileMentions } from './mentionDisplay'
 import { stripMessageMarker } from './messageMarkers'
 
@@ -40,17 +41,99 @@ export type BuildTranscriptOptions = {
   readonly title: string
   /** 导出时刻，只取日期部分。显式传入而不在函数内取 now()，否则不可测。 */
   readonly exportedAt: Date
+  /** 界面语言，默认中文。见 LABELS 的注释。 */
+  readonly lang?: Lang
 }
 
-const FALLBACK_TITLE = '未命名对话'
-
 /**
- * 说话人抬头。只认 user / assistant 两种：system 提示词用户从没看过，
- * 导出里出现只会让人困惑（还可能把内部提示词泄露给收件人）。
+ * 导出文案的两套标签。
+ *
+ * 为什么把 lang 当参数传，而不是在模块里 `useI18n`
+ * ------------------------------------------------
+ * 本模块要保持零依赖才能被 `bun test` 直接测（import store 就得起 zustand）。
+ * 照 `ToolFormatters` 的先例：那套 formatter 也是把 `lang` 放进 FormatterCtx
+ * 由调用方喂进来。表本身是模块自带的常量，不算外部依赖。
+ *
+ * 为什么必须做（2026-09-28 代码审查发现）：应用有完整的中英双语表、语言可
+ * 实时切换，本功能自己也加了英文菜单项，但导出的文件内容一直是写死中文——
+ * 英文用户会导出一份 `## 我` / `> 导出于 …`。属设计疏漏，不是 bug。
+ *
+ * 英文占位符用半角方括号（`[Image]`）：全角是为中文排版选的，而半角 `[x]`
+ * 只有紧跟 `(` 或 `[` 时才会被 Markdown 当成链接，这里不会。
  */
-const SPEAKER: Readonly<Record<string, string>> = {
-  user: '我',
-  assistant: 'Claude'
+type ExportLabels = {
+  readonly fallbackTitle: string
+  readonly exportedAt: string
+  readonly speaker: Readonly<Record<string, string>>
+  readonly image: string
+  readonly attachment: string
+  readonly attachmentNamed: (name: string) => string
+  readonly verbs: Readonly<Record<string, string>>
+  readonly called: (tool: string) => string
+  readonly todoWrite: string
+  readonly askUser: string
+  readonly subtask: string
+}
+
+/** 动词键——两套表共用，改键名时两边一起动，漏一个 typecheck 会抓。 */
+const LABELS: Readonly<Record<Lang, ExportLabels>> = {
+  zh: {
+    fallbackTitle: '未命名对话',
+    exportedAt: '导出于',
+    // 只认 user / assistant 两种：system 提示词用户从没看过，导出里出现
+    // 只会让人困惑（还可能把内部提示词泄露给收件人）。
+    speaker: { user: '我', assistant: 'Claude' },
+    image: '［图片］',
+    attachment: '［附件］',
+    attachmentNamed: (n) => `［附件：${n}］`,
+    verbs: {
+      read: '读取',
+      write: '写入',
+      edit: '编辑',
+      run: '执行',
+      grep: '搜索',
+      glob: '查找文件',
+      webSearch: '联网搜索',
+      webFetch: '抓取网页',
+      toolSearch: '加载工具',
+      skill: '调用技能'
+    },
+    called: (t) => `调用 ${t}`,
+    todoWrite: '更新任务清单',
+    askUser: '向我提问',
+    subtask: '派出子任务'
+  },
+  en: {
+    fallbackTitle: 'Untitled chat',
+    exportedAt: 'Exported',
+    speaker: { user: 'Me', assistant: 'Claude' },
+    image: '[Image]',
+    attachment: '[Attachment]',
+    attachmentNamed: (n) => `[Attachment: ${n}]`,
+    verbs: {
+      read: 'Read',
+      write: 'Wrote',
+      edit: 'Edited',
+      run: 'Ran',
+      grep: 'Searched',
+      glob: 'Found files',
+      webSearch: 'Web search',
+      webFetch: 'Fetched',
+      toolSearch: 'Loaded tools',
+      skill: 'Skill'
+    },
+    called: (t) => `Called ${t}`,
+    todoWrite: 'Updated todo list',
+    askUser: 'Asked me',
+    subtask: 'Subtask'
+  }
+}
+
+/** 调用方没传语言时的默认——中文，与既有调用方的行为一致。 */
+const DEFAULT_LANG: Lang = 'zh'
+
+function labelsFor(lang: Lang | undefined): ExportLabels {
+  return LABELS[lang ?? DEFAULT_LANG] ?? LABELS[DEFAULT_LANG]
 }
 
 /**
@@ -125,54 +208,56 @@ function codeSpan(value: string): string {
  * 表里没有的工具（每个 MCP 工具、冷门内置工具）兜底成「调用 {工具名}」，
  * 绝不抛错：一条摘要渲染失败不该让整个导出失败。
  */
-export function toolCallSummary(toolName: string, args: unknown): string {
+export function toolCallSummary(toolName: string, args: unknown, lang?: Lang): string {
   const bag = (args ?? {}) as Record<string, unknown>
-  const fallback = `调用 ${toolName}`
+  const L = labelsFor(lang)
+  const V = L.verbs
+  const fallback = L.called(toolName)
   /** `读取 \`x.tsx\`` 这样的「动词 + 代码跨度」；值缺失时退回兜底。 */
   const withValue = (verb: string, value: string | null): string =>
     value ? `${verb} ${codeSpan(value)}` : fallback
 
   switch (toolName) {
     case 'Read':
-      return withValue('读取', baseName(bag.file_path))
+      return withValue(V.read, baseName(bag.file_path))
     case 'Write':
-      return withValue('写入', baseName(bag.file_path))
+      return withValue(V.write, baseName(bag.file_path))
     case 'Edit':
     case 'MultiEdit':
-      return withValue('编辑', baseName(bag.file_path))
+      return withValue(V.edit, baseName(bag.file_path))
     case 'NotebookEdit':
-      return withValue('编辑', baseName(bag.notebook_path))
+      return withValue(V.edit, baseName(bag.notebook_path))
     case 'Bash': {
       // description 是给人看的一句话（「查看工作区状态」），比原始命令可读得多，
       // 所以优先；它本身已是人话，不套反引号。没有才退回命令本身（那是代码，套）。
       const desc = inlineValue(bag.description)
-      if (desc) return `执行 ${desc}`
-      return withValue('执行', inlineValue(bag.command))
+      if (desc) return `${V.run} ${desc}`
+      return withValue(V.run, inlineValue(bag.command))
     }
     case 'Grep':
-      return withValue('搜索', inlineValue(bag.pattern))
+      return withValue(V.grep, inlineValue(bag.pattern))
     case 'Glob':
-      return withValue('查找文件', inlineValue(bag.pattern))
+      return withValue(V.glob, inlineValue(bag.pattern))
     case 'WebSearch':
-      return withValue('联网搜索', inlineValue(bag.query))
+      return withValue(V.webSearch, inlineValue(bag.query))
     case 'WebFetch':
-      return withValue('抓取网页', inlineValue(bag.url))
+      return withValue(V.webFetch, inlineValue(bag.url))
     case 'ToolSearch':
-      return withValue('加载工具', inlineValue(bag.query))
+      return withValue(V.toolSearch, inlineValue(bag.query))
     case 'Skill':
-      return withValue('调用技能', inlineValue(bag.skill))
+      return withValue(V.skill, inlineValue(bag.skill))
     case 'Task':
     case 'TaskCreate':
     case 'TaskUpdate':
     case 'TaskStop': {
       // description 同 Bash：已经是人话，不套反引号。
       const desc = inlineValue(bag.description)
-      return desc ? `派出子任务 ${desc}` : '派出子任务'
+      return desc ? `${L.subtask} ${desc}` : L.subtask
     }
     case 'TodoWrite':
-      return '更新任务清单'
+      return L.todoWrite
     case 'AskUserQuestion':
-      return '向我提问'
+      return L.askUser
     default:
       return fallback
   }
@@ -182,7 +267,7 @@ export function toolCallSummary(toolName: string, args: unknown): string {
  * 「元信息行」——工具调用、图片、附件。它们不是对话正文，渲染成 Markdown
  * 引用块（`> `），在视觉上与正文分开。返回 null ＝这个块不进导出。
  */
-function metaLine(part: TranscriptPart): string | null {
+function metaLine(part: TranscriptPart, lang: Lang): string | null {
   switch (part.type) {
     case 'tool-call': {
       const name = typeof part.toolName === 'string' ? part.toolName : ''
@@ -197,15 +282,16 @@ function metaLine(part: TranscriptPart): string | null {
           ? part.args
           : parseArgsText(part.argsText)
       const args = parsedArgs ?? part.args
-      return `🔧 ${toolCallSummary(name, args)}`
+      return `🔧 ${toolCallSummary(name, args, lang)}`
     }
     // 图片带不出去：Markdown 就是一个纯文本文件，装不了图（真要带图得导出成
     // 「文件夹 = md + 图片」，是另一个功能）。留占位符至少让读的人知道这里有张图。
     case 'image':
-      return '［图片］'
+      return labelsFor(lang).image
     case 'file': {
       const name = inlineValue(part.filename) ?? inlineValue(part.name)
-      return name ? `［附件：${name}］` : '［附件］'
+      const L = labelsFor(lang)
+      return name ? L.attachmentNamed(name) : L.attachment
     }
     default:
       return null
@@ -230,7 +316,11 @@ function parseArgsText(raw: unknown): Record<string, unknown> | null {
  * 连续的元信息行会聚成**一个**引用块（`> 🔧 a` / `> 🔧 b` 相邻两行），而不是
  * 各占一段——AI 连着调五个工具是常态，每个占一段会把回答撕得七零八落。
  */
-function renderParts(content: TranscriptMessage['content'], isUser: boolean): string[] {
+function renderParts(
+  content: TranscriptMessage['content'],
+  isUser: boolean,
+  lang: Lang
+): string[] {
   if (typeof content === 'string') {
     const text = cleanText(content, isUser)
     return text ? [text] : []
@@ -253,7 +343,7 @@ function renderParts(content: TranscriptMessage['content'], isUser: boolean): st
       out.push(text)
       continue
     }
-    const line = metaLine(part)
+    const line = metaLine(part, lang)
     if (line) quote.push(line)
   }
   flushQuote()
@@ -395,13 +485,17 @@ export function buildTranscriptMarkdown(
   messages: readonly TranscriptMessage[],
   opts: BuildTranscriptOptions
 ): string {
-  const title = opts.title.trim() || FALLBACK_TITLE
-  const blocks: string[] = [`# ${title}`, `> 导出于 ${formatDay(opts.exportedAt)} · Claude Desktop`]
+  const L = labelsFor(opts.lang)
+  const title = opts.title.trim() || L.fallbackTitle
+  const blocks: string[] = [
+    `# ${title}`,
+    `> ${L.exportedAt} ${formatDay(opts.exportedAt)} · Claude Desktop`
+  ]
 
   for (const msg of messages) {
-    const speaker = SPEAKER[msg.role]
+    const speaker = L.speaker[msg.role]
     if (!speaker) continue
-    const parts = renderParts(msg.content, msg.role === 'user')
+    const parts = renderParts(msg.content, msg.role === 'user', opts.lang ?? DEFAULT_LANG)
     if (parts.length === 0) continue
     blocks.push(`## ${speaker}`, ...parts)
   }
@@ -427,12 +521,13 @@ const FILENAME_STEM_MAX = 46
  * 带上日期是因为会话标题经常撞车（「帮我改一下」这种），同名文件在下载目录里
  * 会互相覆盖。
  */
-export function transcriptFilename(title: string, at: Date): string {
+export function transcriptFilename(title: string, at: Date, lang?: Lang): string {
   const flat = title.replace(/\s+/g, ' ').trim()
   const safe = flat.replace(ILLEGAL_IN_FILENAME, '-')
   // 清洗后只剩分隔符（标题形如 `///`）也算没有标题——否则文件名会长成 `---2026-09-28.md`。
   const meaningful = safe.replace(/[-\s]/g, '') ? safe : ''
   // Windows 不接受以点或空格结尾的文件名（资源管理器会静默改名）。
-  const stem = (meaningful.slice(0, FILENAME_STEM_MAX) || FALLBACK_TITLE).replace(/[.\s]+$/, '')
-  return `${stem || FALLBACK_TITLE}-${formatDay(at)}.md`
+  const fallback = labelsFor(lang).fallbackTitle
+  const stem = (meaningful.slice(0, FILENAME_STEM_MAX) || fallback).replace(/[.\s]+$/, '')
+  return `${stem || fallback}-${formatDay(at)}.md`
 }

@@ -436,3 +436,89 @@ describe('toolCallSummary — argsText 回退（审查④）', () => {
     expect(out).toContain('调用 Bash')
   })
 })
+
+/* ── 审查⑤：导出内容跟随界面语言（2026-09-28） ── */
+
+describe('buildTranscriptMarkdown — 英文界面', () => {
+  const en = (messages: readonly TranscriptMessage[], title = 'Title'): string =>
+    buildTranscriptMarkdown(messages, { title, exportedAt: AT, lang: 'en' })
+
+  it('署名行与说话人抬头走英文', () => {
+    const out = en([
+      { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'hello' }] }
+    ])
+    expect(out).toContain('> Exported 2026-09-28 · Claude Desktop')
+    expect(out).toContain('## Me')
+    expect(out).toContain('## Claude')
+    expect(out).not.toContain('## 我')
+    expect(out).not.toContain('导出于')
+  })
+
+  it('兜底标题走英文', () => {
+    expect(en([{ role: 'user', content: [{ type: 'text', text: 'x' }] }], '  ').split('\n')[0]).toBe(
+      '# Untitled chat'
+    )
+  })
+
+  it('图片与附件占位走英文', () => {
+    const out = en([
+      {
+        role: 'user',
+        content: [
+          { type: 'image', image: 'x' },
+          { type: 'file', filename: 'a.pdf' }
+        ]
+      }
+    ])
+    expect(out).toContain('[Image]')
+    expect(out).toContain('[Attachment: a.pdf]')
+  })
+
+  it('工具摘要走英文', () => {
+    const out = en([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool-call', toolName: 'Read', args: { file_path: '/a/b.ts' } },
+          { type: 'tool-call', toolName: 'TodoWrite', args: {} },
+          { type: 'tool-call', toolName: 'mcp__x__y', args: {} }
+        ]
+      }
+    ])
+    expect(out).toContain('Read `b.ts`')
+    expect(out).toContain('Updated todo list')
+    expect(out).toContain('Called mcp__x__y')
+  })
+
+  it('不传 lang 时保持中文（既有调用方不受影响）', () => {
+    const out = md([{ role: 'user', content: [{ type: 'text', text: 'x' }] }])
+    expect(out).toContain('## 我')
+    expect(out).toContain('导出于')
+  })
+})
+
+describe('transcriptFilename — 英文界面', () => {
+  it('兜底文件名走英文', () => {
+    expect(transcriptFilename('   ', AT, 'en')).toBe('Untitled chat-2026-09-28.md')
+  })
+
+  it('不传语言时仍是中文兜底', () => {
+    expect(transcriptFilename('   ', AT)).toBe('未命名对话-2026-09-28.md')
+  })
+})
+
+describe('toolCallSummary — 英文界面', () => {
+  it('动词与兜底都走英文', () => {
+    expect(toolCallSummary('Bash', { command: 'ls' }, 'en')).toBe('Ran `ls`')
+    expect(toolCallSummary('Bash', { command: 'ls', description: 'list files' }, 'en')).toBe(
+      'Ran list files'
+    )
+    expect(toolCallSummary('WebSearch', { query: 'q' }, 'en')).toBe('Web search `q`')
+    expect(toolCallSummary('Read', undefined, 'en')).toBe('Called Read')
+  })
+
+  it('不传语言时仍是中文', () => {
+    expect(toolCallSummary('Bash', { command: 'ls' })).toBe('执行 `ls`')
+  })
+})
