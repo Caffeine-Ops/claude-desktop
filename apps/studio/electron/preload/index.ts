@@ -110,6 +110,8 @@ import {
   type ScenarioCatalogResult,
   type UsageQueryFilters,
   type UsageListQuery,
+  type TranscriptExportMdPayload,
+  type TranscriptExportMdResult,
   type UsageExportCsvPayload,
   type UsageExportCsvResult,
   type UsageFilterOptionsResult,
@@ -532,6 +534,15 @@ const chatApi: ChatApi = {
       IPC_CHANNELS.SESSION_GET_JSONL_PATH,
       payload
     ) as Promise<SessionGetJsonlPathResult>
+  },
+
+  exportTranscriptMd(
+    payload: TranscriptExportMdPayload
+  ): Promise<TranscriptExportMdResult> {
+    return ipcRenderer.invoke(
+      IPC_CHANNELS.TRANSCRIPT_EXPORT_MD,
+      payload
+    ) as Promise<TranscriptExportMdResult>
   },
 
   setSessionWorkspace(
