@@ -2427,10 +2427,30 @@ export interface UsageExportCsvPayload {
   defaultFilename: string
 }
 
-/** `path: null` = 用户取消保存框。 */
-export interface UsageExportCsvResult {
-  path: string | null
-}
+/**
+ * 「弹保存框 + 落盘」这一族导出通道的统一返回形状（2026-09-28 代码审查⑥）。
+ *
+ * 为什么必须区分三态
+ * ------------------
+ * 此前这族通道一律返回 `{ path: string | null }`，于是**用户取消**和**写盘
+ * 失败**在返回值上长得一模一样（都是 `path: null`），而失败还会以 reject 的
+ * 形式冒到 renderer，那边只 `console.warn`。结果是：保存框关掉了、文件没出现、
+ * 界面一声不吭——用户有充分理由以为导出成功了。没有磁盘权限、磁盘满、目标
+ * 目录在选完之后被删，都会走进这条静默路径。
+ *
+ * 形状照抄本文件里已有的 {@link ReplayExportResult}——那条通道早就做对了
+ * （它连「跳过的素材」都回传），这里只是把其余几条拉齐，不是另立新约定。
+ *
+ *  - `{ ok: true, path: string }` 成功，path 是落盘的绝对路径
+ *  - `{ ok: true, path: null }`   用户在保存框点了取消（**不是错误**，调用方静默）
+ *  - `{ ok: false, error }`       出错了，error 是能直接展示给用户的中文说明
+ */
+export type FileExportResult =
+  | { ok: true; path: string }
+  | { ok: true; path: null }
+  | { ok: false; error: string }
+
+export type UsageExportCsvResult = FileExportResult
 
 /** 见 TRANSCRIPT_EXPORT_MD。`markdown` 由渲染层的 buildTranscriptMarkdown 拼好。 */
 export interface TranscriptExportMdPayload {
@@ -2438,10 +2458,7 @@ export interface TranscriptExportMdPayload {
   defaultFilename: string
 }
 
-/** `path: null` = 用户取消保存框。 */
-export interface TranscriptExportMdResult {
-  path: string | null
-}
+export type TranscriptExportMdResult = FileExportResult
 
 /* ───────────────────────── 场景目录（空态 ScenarioRail 远端配置） ─────────────────────── */
 
@@ -2735,9 +2752,7 @@ export interface WritingExportPdfPayload {
   defaultBaseName: string
 }
 /** Result of WRITING_EXPORT_DOCX / WRITING_EXPORT_PDF 共用：`path: null` = 用户取消保存框，不是错误。 */
-export interface WritingExportResult {
-  path: string | null
-}
+export type WritingExportResult = FileExportResult
 
 /** Payload for WRITING_CHECK_IMAGES。字段语义与 {@link WritingExportDocxPayload} 的同名字段一致。 */
 export interface WritingCheckImagesPayload {
@@ -2788,9 +2803,7 @@ export interface ProposalExportPayload {
 }
 
 /** Result of PROPOSAL_EXPORT. `path` is null when the user cancelled. */
-export interface ProposalExportResult {
-  path: string | null
-}
+export type ProposalExportResult = FileExportResult
 
 /**
  * Payload for PROPOSAL_EXPORT_PDF（P2-2）。`html` 是 renderer 用 docx-preview 渲好的【自包含】
@@ -2803,9 +2816,7 @@ export interface ProposalExportPdfPayload {
 }
 
 /** Result of PROPOSAL_EXPORT_PDF. `path` is null when the user cancelled the save dialog. */
-export interface ProposalExportPdfResult {
-  path: string | null
-}
+export type ProposalExportPdfResult = FileExportResult
 
 /**
  * Payload for PROPOSAL_RENDER_PDF。`html` 与 PROPOSAL_EXPORT_PDF 完全同构（renderer 用

@@ -129,6 +129,7 @@ import {
   type UsageSnapshotResult,
   type UsageListResult
 } from '../../shared/ipc-channels'
+import { writeExportFile } from '../core/exportWrite'
 import { getAppSettings, updateAppSettings } from '../core/appSettings'
 import {
   PROPOSAL_IMAGE_API_KEY_MASK,
@@ -238,7 +239,7 @@ import {
 } from '../services/backgroundThemes'
 import { IMAGE_MIME_BY_EXT, mimeForImagePath } from '../../shared/imageMime'
 import { EMBEDDABLE_IMAGE_EXTS, type ProposalMetricRecord } from '../../shared/proposal'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { detectSystemClaude, resolveBundledCliPath } from '../core/cliDetect'
 import { checkForUpdates, getUpdaterState, installUpdate } from '../services/appUpdater'
 import {
@@ -2080,16 +2081,15 @@ export function registerIpcHandlers(): void {
         typeof payload?.defaultFilename === 'string' && payload.defaultFilename
           ? payload.defaultFilename
           : '对话.md'
-      if (!markdown) return { path: null }
+      if (!markdown) return { ok: true, path: null }
       const win = BrowserWindow.fromWebContents(event.sender)
-      if (!win) return { path: null }
+      if (!win) return { ok: true, path: null }
       const r = await dialog.showSaveDialog(win, {
         defaultPath: defaultFilename,
         filters: [{ name: 'Markdown', extensions: ['md'] }]
       })
-      if (r.canceled || !r.filePath) return { path: null }
-      await writeFile(r.filePath, markdown, 'utf8')
-      return { path: r.filePath }
+      if (r.canceled || !r.filePath) return { ok: true, path: null }
+      return writeExportFile(win, r.filePath, markdown)
     }
   )
 
@@ -2674,16 +2674,15 @@ export function registerIpcHandlers(): void {
         typeof payload?.defaultFilename === 'string' && payload.defaultFilename
           ? payload.defaultFilename
           : 'usage.csv'
-      if (!csv) return { path: null }
+      if (!csv) return { ok: true, path: null }
       const win = BrowserWindow.fromWebContents(event.sender)
-      if (!win) return { path: null }
+      if (!win) return { ok: true, path: null }
       const r = await dialog.showSaveDialog(win, {
         defaultPath: defaultFilename,
         filters: [{ name: 'CSV', extensions: ['csv'] }]
       })
-      if (r.canceled || !r.filePath) return { path: null }
-      await writeFile(r.filePath, csv, 'utf8')
-      return { path: r.filePath }
+      if (r.canceled || !r.filePath) return { ok: true, path: null }
+      return writeExportFile(win, r.filePath, csv)
     }
   )
 
@@ -2961,12 +2960,12 @@ export function registerIpcHandlers(): void {
       // 派生（单一真相源，见 proposalExport.ts），加新格式时无需同步改这里。
       const format = payload?.format
       if (!isProposalExportFormat(format)) {
-        return { path: null }
+        return { ok: true, path: null }
       }
       // Runtime guard: BrowserWindow may be null if the window was closed
       // between IPC message send and handler execution.
       const win = BrowserWindow.fromWebContents(event.sender)
-      if (!win) return { path: null }
+      if (!win) return { ok: true, path: null }
       // style 是纯数据（字体/字号/缩进…），仅 docx 用得到；undefined 时 markdownToDocxBuffer
       // 回退默认模板（经典正式）。
       return exportProposal(win, markdown, format, payload?.style, payload?.mermaidImages)
@@ -2979,9 +2978,9 @@ export function registerIpcHandlers(): void {
     IPC_CHANNELS.PROPOSAL_EXPORT_PDF,
     async (event, payload: ProposalExportPdfPayload): Promise<ProposalExportPdfResult> => {
       const html = typeof payload?.html === 'string' ? payload.html : ''
-      if (!html) return { path: null }
+      if (!html) return { ok: true, path: null }
       const win = BrowserWindow.fromWebContents(event.sender)
-      if (!win) return { path: null }
+      if (!win) return { ok: true, path: null }
       const defaultPath = typeof payload?.defaultPath === 'string' ? payload.defaultPath : undefined
       return exportProposalPdf(win, html, defaultPath)
     }
@@ -3604,7 +3603,7 @@ export function registerIpcHandlers(): void {
     IPC_CHANNELS.WRITING_EXPORT_DOCX,
     async (event, payload: WritingExportDocxPayload): Promise<WritingExportResult> => {
       const win = BrowserWindow.fromWebContents(event.sender)
-      if (!win) return { path: null }
+      if (!win) return { ok: true, path: null }
       return exportWritingDocx(
         win,
         payload.markdown,
@@ -3620,7 +3619,7 @@ export function registerIpcHandlers(): void {
     IPC_CHANNELS.WRITING_EXPORT_PDF,
     async (event, payload: WritingExportPdfPayload): Promise<WritingExportResult> => {
       const win = BrowserWindow.fromWebContents(event.sender)
-      if (!win) return { path: null }
+      if (!win) return { ok: true, path: null }
       return saveWritingPdf(win, payload.bytes, payload.defaultBaseName)
     }
   )

@@ -640,7 +640,12 @@ export function WritingDocPanel(): React.JSX.Element | null {
         mermaidImages
       })
       setExportMsg(
-        r.path ? { tone: 'ok', text: `已导出：${r.path}` } : { tone: 'muted', text: '已取消导出' }
+        // 三态：失败不能再伪装成「已取消」——那正是 2026-09-28 审查⑥ 的病根。
+        !r.ok
+          ? { tone: 'err', text: `导出失败：${r.error}` }
+          : r.path
+            ? { tone: 'ok', text: `已导出：${r.path}` }
+            : { tone: 'muted', text: '已取消导出' }
       )
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err)
@@ -686,7 +691,12 @@ export function WritingDocPanel(): React.JSX.Element | null {
       const { bytes } = await window.chatApi.renderProposalPdf({ html })
       const r = await window.chatApi.writingExportPdf({ bytes, defaultBaseName: baseName })
       setExportMsg(
-        r.path ? { tone: 'ok', text: `已导出：${r.path}` } : { tone: 'muted', text: '已取消导出' }
+        // 三态：失败不能再伪装成「已取消」——那正是 2026-09-28 审查⑥ 的病根。
+        !r.ok
+          ? { tone: 'err', text: `导出失败：${r.error}` }
+          : r.path
+            ? { tone: 'ok', text: `已导出：${r.path}` }
+            : { tone: 'muted', text: '已取消导出' }
       )
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err)

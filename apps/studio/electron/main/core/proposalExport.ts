@@ -1,5 +1,7 @@
 import { dialog, BrowserWindow } from 'electron'
 import { writeFileSync } from 'node:fs'
+
+import type { FileExportResult } from '../../shared/ipc-channels'
 import type { ProposalExportFormat, MermaidImage } from '../../shared/ipc-channels'
 import type { ProposalStyleConfig } from '../../shared/proposalStyle'
 import { markdownToDocxBuffer } from './proposalDocx'
@@ -64,43 +66,59 @@ export async function exportProposal(
   style?: ProposalStyleConfig,
   // 预渲 mermaid 图（code→PNG）：仅 docx 用，透传给 markdownToDocxBuffer 直接嵌入。
   mermaidImages?: Record<string, MermaidImage>
-): Promise<{ path: string | null }> {
+): Promise<FileExportResult> {
   const meta = FORMAT_META[format]
   const r = await dialog.showSaveDialog(win, {
     filters: [meta.filter],
     defaultPath: meta.defaultPath
   })
 
-  if (r.canceled || !r.filePath) return { path: null }
+  if (r.canceled || !r.filePath) return { ok: true, path: null }
 
-  switch (format) {
-    case 'md':
-      // 剥除段末「（据《X》）」来源标注：交付的 .md 是干净成品，与 docx/PDF 一致（来源只在
-      // 编辑态保留并上色，见 AssistantMarkdown.highlightCitations）。docx 分支在 markdownToDocxBuffer
-      // 内部已剥除，故这里只需管直接写盘的 .md 这一路。同理剥 genimage 指令块——未处理的占位
-      // 指令不是交付内容，md 路径不经 markdownToDocxBuffer，得在这里单独剥一次。
-      writeFileSync(
-        r.filePath,
-        normalizeImageMarkdown(stripCitations(stripGenImageDirectives(markdown))),
-        'utf8'
-      )
-      break
-    case 'docx': {
-      // markdown → 真 .docx（逐 mdast 节点构造，见 proposalDocx.ts），按选中模板排版。
-      // 接地闸门：先算未接地图全集，传给嵌图器把 ungrounded 图降级为占位——交付的 Word 里
-      // 绝不出现「不属本节所引文件」的挪用/无关图（评审 AL3）。索引不可用 → 空集、不挡。
-      const ungrounded = collectUngroundedImagePaths(markdown)
-      const buf = await markdownToDocxBuffer(markdown, style, ungrounded, mermaidImages)
-      writeFileSync(r.filePath, buf)
-      break
+  // 写盘失败（没权限/磁盘满/目录被删）收成可展示的错误，不再裸抛给 renderer
+  // 被 console.warn 吞掉（2026-09-28 审查⑥）。
+  try {
+    switch (format) {
+      case 'md':
+        // 剥除段末「（据《X》）」来源标注：交付的 .md 是干净成品，与 docx/PDF 一致（来源只在
+        // 编辑态保留并上色，见 AssistantMarkdown.highlightCitations）。docx 分支在 markdownToDocxBuffer
+        // 内部已剥除，故这里只需管直接写盘的 .md 这一路。同理剥 genimage 指令块——未处理的占位
+        // 指令不是交付内容，md 路径不经 markdownToDocxBuffer，得在这里单独剥一次。
+        writeFileSync(
+          r.filePath,
+          normalizeImageMarkdown(stripCitations(stripGenImageDirectives(markdown))),
+          'utf8'
+        )
+        break
+      case 'docx': {
+        // markdown → 真 .docx（逐 mdast 节点构造，见 proposalDocx.ts），按选中模板排版。
+        // 接地闸门：先算未接地图全集，传给嵌图器把 ungrounded 图降级为占位——交付的 Word 里
+        // 绝不出现「不属本节所引文件」的挪用/无关图（评审 AL3）。索引不可用 → 空集、不挡。
+        const ungrounded = collectUngroundedImagePaths(markdown)
+        const buf = await markdownToDocxBuffer(markdown, style, ungrounded, mermaidImages)
+        writeFileSync(r.filePath, buf)
+        break
+      }
+      default: {
+        // TypeScript 穷尽性守卫：若给 ProposalExportFormat 加新格式却漏改此 switch 分支，
+        // 编译期当场报错 `never` 类型检查，避免运行期才发现的漏处理。
+        const _exhaustive: never = format
+        throw new Error(`Unsupported export format: ${String(_exhaustive)}`)
+      }
     }
-    default: {
-      // TypeScript 穷尽性守卫：若给 ProposalExportFormat 加新格式却漏改此 switch 分支，
-      // 编译期当场报错 `never` 类型检查，避免运行期才发现的漏处理。
-      const _exhaustive: never = format
-      throw new Error(`Unsupported export format: ${String(_exhaustive)}`)
-    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    // 同 exportWrite.writeExportFile：写盘失败必须可见，不能只回传给一个
+    // 可能没有消息位的调用方（2026-09-28 审查⑥）。
+    dialog.showMessageBox(win, {
+      type: 'error',
+      title: '导出失败',
+      message: '文件没能写入磁盘',
+      detail: `${r.filePath}\n\n${msg}`,
+      buttons: ['好']
+    })
+    return { ok: false, error: `写入文件失败：${msg}` }
   }
 
-  return { path: r.filePath }
+  return { ok: true, path: r.filePath }
 }
