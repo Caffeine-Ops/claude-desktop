@@ -130,6 +130,7 @@ export function UpdateAppSection({
   // 安装中（新版号 + spinner）。
   const isFound = phase === 'available' || phase === 'downloading';
   const isReady = phase === 'ready';
+  const releaseNotes = state?.releaseNotes ?? null;
   // installing = 已发起重启安装，进程正在退出（Windows 走 NSIS 静默安装，
   // 见 main 侧 appUpdater.installUpdate）。这个态在设置页里活不过几百毫秒
   // ——窗口马上就没了——但它必须存在：否则 phase 离开 'ready' 的那一拍
@@ -291,6 +292,22 @@ export function UpdateAppSection({
               <CheckCircle2 aria-hidden="true" className="size-4 text-[var(--brand)]" />
               {t('updateApp.ready', { version: nextVersion })}
             </p>
+          ) : null}
+
+          {/* 本次更新说明（2026-09-30）：发现新版/下载中/已就绪三态显示，其余
+              态没有「本次」可言。正文是 **远端内容**，所以按纯文本渲染——
+              whitespace-pre-wrap 保住归一化时留下的换行与列表，既不需要
+              Markdown 渲染器也没有注入面（归一化见 shared/releaseNotes.ts）。
+              限高 + 滚动：release 正文长度不可控，不能让它把整张卡撑开。 */}
+          {releaseNotes && (isFound || isReady) ? (
+            <div className="flex flex-col gap-1.5 border-t border-border/60 pt-3">
+              <p className="text-xs font-medium text-muted-foreground">
+                {t('updateApp.notesTitle')}
+              </p>
+              <div className="max-h-44 overflow-y-auto whitespace-pre-wrap rounded-md bg-secondary/60 px-3 py-2 text-[13px] leading-relaxed text-foreground">
+                {releaseNotes}
+              </div>
+            </div>
           ) : null}
 
           {/* 安装中：说清楚接下来会发生什么。Windows 静默安装没有任何安装器

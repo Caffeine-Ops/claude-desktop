@@ -430,6 +430,7 @@ export interface Dict {
   'updateApp.currentVersion': string;
   'updateApp.foundVersion': string;
   'updateApp.readyTitle': string;
+  'updateApp.notesTitle': string;
   'updateApp.autoHint': string;
   'updateApp.autoHint3h': string;
   'updateApp.check': string;

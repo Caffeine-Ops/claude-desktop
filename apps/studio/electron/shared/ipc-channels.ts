@@ -2133,6 +2133,16 @@ export interface UpdaterState {
    * check button.
    */
   supported: boolean
+  /**
+   * 本次更新的说明正文（已归一成纯文本，见 shared/releaseNotes.ts），
+   * 没有可显示内容时为 null——设置页据此整块不渲染。
+   *
+   * 数据来自 electron-updater 的 `UpdateInfo.releaseNotes`；自建 generic
+   * 源拿不到它（electron-builder 默认不把说明写进 latest-mac.yml），此时
+   * main 侧会退回 GitHub Releases API 按 tag 补拉一次。两条路都没拿到就
+   * 维持 null，更新流程本身不受影响。
+   */
+  releaseNotes: string | null
 }
 
 /* ───────────────────────── Auth（登录/账号）───────────────────────── */
