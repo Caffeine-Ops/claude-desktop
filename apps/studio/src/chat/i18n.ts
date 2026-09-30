@@ -890,6 +890,21 @@ export function useT(): (key: StringKey) => string {
 }
 
 /**
+ * 非 hook 版的一次性取词：给**不在组件里**的调用方用（事件处理器、菜单
+ * 动作分发、store 里的副作用）。
+ *
+ * 和 useT 的分工别搞混：组件一律用 useT——它订阅 language store，用户切
+ * 语言时组件会重渲染。tStatic 只读当下这一刻的值、不订阅任何东西，在
+ * 组件里用会导致切语言后文案不更新。
+ *
+ * 2026-09-30 加：⇧⌘E 导出对话的处理函数活在 IPC 监听器里（chat/App.tsx），
+ * 它要拿「新对话」这个兜底标题，但那不是一个组件的渲染路径。
+ */
+export function tStatic(key: StringKey): string {
+  return STRINGS[useI18n.getState().lang][key]
+}
+
+/**
  * Sibling of `useT` for strings that need `{var}` interpolation (e.g.
  * `versionLabel: 'Claude Desktop · v{version}'`). Intentionally minimal —
  * no plural / select / ICU syntax, because the app's needs don't

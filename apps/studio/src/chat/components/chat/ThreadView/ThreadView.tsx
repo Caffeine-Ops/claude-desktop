@@ -31,7 +31,7 @@ import { Label } from '@/src/components/ui/label'
 import { useBackgroundZoneStore } from '@/src/stores/backgroundZone'
 import { useI18n, useT } from '../../../i18n'
 import { attachFilesToComposer } from '../../../composer/attachFiles'
-import { buildTranscriptMarkdown, transcriptFilename } from '../../../lib/exportTranscript'
+import { exportCurrentTranscript } from '../../../lib/exportCurrentTranscript'
 import { useChatStore } from '../../../stores/chat'
 import { useComposerModeStore } from '../../../stores/composerMode'
 import { useSessionTitleStore } from '../../../stores/sessionTitle'
@@ -65,8 +65,7 @@ import {
   selectRightPanelKind,
   useRightPanelStore
 } from '../../../stores/filePreview'
-import { stripMessageMarker } from '../../../lib/messageMarkers'
-import { condenseFileMentions } from '../../../lib/mentionDisplay'
+import { chatHeaderTitle } from '../../../lib/chatTitle'
 import { OutputsButton } from './OutputsPanel'
 
 /**
@@ -1253,26 +1252,14 @@ function ChatHeader(): React.JSX.Element {
   // 命令拆分之前——否则表格「框选问 AI」这类消息的 firstPrompt（marker
   // JSON + 提示语 + TSV）会原样顶栏展示，撑成一整行（2026-07-13 事故，
   // 详见 RailSessionList.displayTitle 同款修复的注释）。
-  const strippedTitle = title ? stripMessageMarker(title) : title
-  // 标题里的 `@"path"` mention 压成 basename——首条消息带内联文件时，
-  // 原始标题是一整条绝对路径（「帮我修改@/Users/…/deck.pptx：…」），
-  // 头部一行放不下也没人想读；与气泡 chip 同一份识别规则（mentionDisplay）。
-  const condensedTitle = strippedTitle ? condenseFileMentions(strippedTitle) : strippedTitle
-  const display =
-    condensedTitle && condensedTitle.trim()
-      ? condensedTitle
-      : t('chatHeaderUntitled')
-
-  // 斜杠命令标题拆分：'/claude-desktop:ppt-creator 武汉大学介绍' →
-  // chip '/ppt-creator'（冒号后短名；完整命令进 hover title）+ 正文标题。
-  // 纯命令无参数、或非 '/' 开头的标题不拆——chip 只在「命令 + 参数」
-  // 形态下才有语义（参数才是会话主题，命令是它的来源标记）。
-  const cmdMatch = /^\/(\S+)\s+(\S[\s\S]*)$/.exec(display)
-  const cmdFull = cmdMatch ? '/' + cmdMatch[1] : null
-  const cmdShort = cmdMatch
-    ? '/' + (cmdMatch[1].split(':').pop() ?? cmdMatch[1])
-    : null
-  const restTitle = cmdMatch ? cmdMatch[2] : display
+  // 标题派生链（剥协议标记 → 压 @mention 绝对路径 → 空标题兜底 → 拆斜杠
+  // 命令前缀）整条搬进了 lib/chatTitle.ts（2026-09-30）：⇧⌘E 导出要用
+  // **完全相同**的 restTitle，两边各算一遍正是「导出的和看到的不一样」
+  // 那个缺陷的成因。每一步的顺序与理由见该文件头注释，它带测试。
+  const { display, hasTitle, cmdFull, cmdShort, restTitle } = chatHeaderTitle(
+    title,
+    t('chatHeaderUntitled')
+  )
   // 已知技能命令（ppt-creator/spreadsheets/…）→ 复用消息气泡同一份注册表，
   // 拿彩色图标 + 友好文案（「处理表格」），换掉裸 mono chip 的字面命令名。
   // 命名空间/裸名两种形态都试一遍（注册表本身双注册，见 skillChipRegistry）。
@@ -1309,11 +1296,11 @@ function ChatHeader(): React.JSX.Element {
   // 让用户对着「未命名」三个字改。
   const startEdit = useCallback((): void => {
     if (!sessionId) return
-    const prefill = condensedTitle && condensedTitle.trim() ? restTitle : ''
+    const prefill = hasTitle ? restTitle : ''
     setDraft(prefill)
     initialDraftRef.current = prefill
     setRenameOpen(true)
-  }, [sessionId, condensedTitle, restTitle])
+  }, [sessionId, hasTitle, restTitle])
 
   // 弹窗开后聚焦全选输入框（等 radix 菜单关闭抢完焦点，与内容挂载对齐；
   // 同 RailSessionList 的 renameTarget 弹窗）。
@@ -1537,44 +1524,10 @@ function ChatHeader(): React.JSX.Element {
               </DropdownMenuItem>
               <DropdownMenuItem
                 onSelect={() => {
-                  // 导出对话为 Markdown。内容在渲染层拼（lib/exportTranscript.ts，
-                  // 纯函数带测试），main 只弹保存框写盘——理由见
-                  // ipc-channels 的 TRANSCRIPT_EXPORT_MD 注释。
-                  //
-                  // **现读 getState() 而不订阅 messages**：这个组件是 46px 顶栏，
-                  // 订阅整棵消息树会让它随每个流式 chunk 重渲染（旁边
-                  // exportReplay 取 slidesSessions 也是同款做法）。
-                  const messages = useChatStore.getState().messages
-                  // 标题用 restTitle 而不是 display：display 含 slash 命令前缀
-                  // （`/claude-desktop:news 帮我…`），顶栏是把它拆成独立的
-                  // 命令 chip + 标题两块渲染的。拿 display 会让导出文件的标题
-                  // 长出屏幕上根本没有的命令前缀——「导出的和看到的不一样」
-                  // 正是这功能最该避免的缺陷（2026-09-28 真机走查发现）。
-                  const markdown = buildTranscriptMarkdown(messages, {
-                    title: restTitle,
-                    exportedAt: new Date(),
-                    lang
-                  })
-                  // 成功反馈 = Finder 定位导出文件；取消静默、失败记日志
-                  // （与本菜单「导出为演示」及 rail 行菜单一致）。
-                  void window.chatApi
-                    .exportTranscriptMd({
-                      markdown,
-                      defaultFilename: transcriptFilename(restTitle, new Date(), lang)
-                    })
-                    .then((r) => {
-                      // 三态（2026-09-28 审查⑥）：成功 → Finder 定位；用户取消 →
-                      // 静默；**失败 → main 已弹原生错误框**，这里只补日志。本菜单
-                      // 没有消息位，这也是错误框必须由 main 弹的原因。
-                      if (!r.ok) {
-                        console.warn('[chat-header] exportTranscriptMd failed:', r.error)
-                        return
-                      }
-                      if (r.path) void window.chatApi.revealPath({ absPath: r.path })
-                    })
-                    .catch((err: unknown) =>
-                      console.warn('[chat-header] exportTranscriptMd error:', err)
-                    )
+                  // 导出对话为 Markdown。整段逻辑（标题派生、getState 现读
+                  // messages、成功/取消/失败三态）住在 lib/exportCurrentTranscript.ts
+                  // ——菜单栏的 ⇧⌘E 走同一个函数，两个入口一个写手。
+                  exportCurrentTranscript()
                 }}
               >
                 <FileDown strokeWidth={1.75} /> {t('exportTranscriptMenu')}

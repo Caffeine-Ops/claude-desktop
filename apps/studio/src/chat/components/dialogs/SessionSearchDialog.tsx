@@ -10,11 +10,18 @@ import { stripMessageMarker } from '../../lib/messageMarkers'
 /**
  * SessionSearchDialog — Spotlight-style unified chat search (⌘K).
  *
- * Opened three ways, all funnelling into useDialogStore('search'):
- *   - shell rail's 「搜索对话」 row → triggerMenuAction('open-search') →
- *     App.tsx's onShellMenuAction branch
- *   - ⌘K in THIS renderer (listener below; the shell has its own for the
- *     rare case where focus sits on the rail webContents)
+ * Opened two ways, both funnelling into useDialogStore('search') via the
+ * **root-layer** dispatcher (src/components/ShellMenuBridge.tsx):
+ *   - rail 的「搜索对话」钮 → triggerMenuAction('open-search')
+ *   - 菜单栏 File →「搜索对话 ⌘K」→ dispatchMenuActionToActiveTab
+ *
+ * ⚠️ **本组件不再自己监听 ⌘K**（2026-09-30 收口）。原先这里有一个
+ * document keydown，两个问题：
+ *   1. 菜单 accelerator 在**原生层**拦截，优先级高于渲染层 keydown——⌘K
+ *      挂进菜单后这个监听根本收不到事件，留着就是死代码。
+ *   2. 它靠 `data-surface !== 'chat'` 早退，于是画布面按 ⌘K 凭空没反应。
+ *      改由根层接管后，ShellMenuBridge 先 goChat() 再开弹窗，两面一致。
+ * 要加回本地快捷键前先想清楚这两条；单一写手是这次收口的目的。
  *
  * Search model — one input, BOTH fields, no scope switch (user decision
  * over the prototype's segmented control):
@@ -63,23 +70,8 @@ export function SessionSearchDialog(): React.JSX.Element {
   // Monotonic guard: only the LATEST in-flight content search may land.
   const searchSeqRef = useRef(0)
 
-  // ⌘K toggle — component stays mounted (renders null-ish when closed),
-  // so this one listener covers the whole renderer.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      // chat 树现在常驻（SurfaceHost keep-alive），本监听在工作画布可见时
-      // 也活着——只在聊天面前台时响应，否则画布上按 ⌘K 会凭空弹出会话
-      // 搜索。data-surface 由 SurfaceHost 随可见面翻转，是现成的判据。
-      if (document.documentElement.dataset.surface !== 'chat') return
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault()
-        if (open) closeDialog()
-        else useDialogStore.getState().openDialog('search')
-      }
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [open, closeDialog])
+  // ⌘K 的监听已于 2026-09-30 移除（改由菜单 accelerator + 根层
+  // ShellMenuBridge 驱动，理由见本文件头注释的「不再自己监听 ⌘K」）。
 
   // Open: reset state, pull fresh titles, focus the input. listSessions is
   // a cheap stateless scan and the list may have changed since the dialog

@@ -2061,6 +2061,18 @@ export interface BackgroundThemeMeta {
  * Actions the shell's tab-strip settings menu can trigger on the active
  * chat tab. `toggle-lang` flips zh↔en; the others open the corresponding
  * overlay/dialog. Kept as a small closed union so both ends stay in sync.
+ *
+ * 2026-09-30 起本 union 同时是**菜单栏加速键的动作集**：menuCommands.ts
+ * 那张表给其中一部分配了快捷键（⌘N/⌘K/⇧⌘E/⌘\/⌘1/⌘2），主进程菜单项
+ * 和加速键都从那张表生成。加动作的完整链路见 menuCommands.ts 头注释。
+ *
+ * **分发端有两个，按动作归属的组件树分**（preload 的 onShellMenuAction
+ * 每调一次注册一个独立监听器，天然支持多订阅者）：
+ *   - 根层 src/components/ShellMenuBridge.tsx —— new-chat / toggle-sidebar /
+ *     go-chat / go-canvas / open-search（这些的执行代码住在 src/stores 与
+ *     根 layout，不在 chat 树里）
+ *   - chat 树 src/chat/App.tsx —— open-settings / open-logs / toggle-lang /
+ *     export-transcript
  */
 export type ShellMenuAction =
   | 'open-settings'
@@ -2069,7 +2081,21 @@ export type ShellMenuAction =
   // 打开会话搜索弹窗。入口在 shell rail（设置下方的「搜索对话」行 + ⌘K），
   // 但弹窗 UI 渲染在 active chat tab 里 —— shell 可见区只有 220px 的 rail，
   // 一个 580px 的 Spotlight 弹窗只能住在 chat renderer（它覆盖整个内容区）。
+  //
+  // 2026-09-30 改由**根层**接管（原在 chat/App.tsx）：⌘K 此前只在聊天面
+  // 生效，画布面按了凭空无反应。根层能先 goChat() 再开弹窗，跨面就通了。
   | 'open-search'
+  // ↓ 以下四个 + export-transcript 是 2026-09-30 补菜单加速键时新增的。
+  /** 新对话 ⌘N —— 等价于 rail 主按钮：切到「新会话」再进聊天路由。 */
+  | 'new-chat'
+  /** 导出当前对话为 Markdown ⇧⌘E —— 与 ThreadView 顶栏菜单同一条路径。 */
+  | 'export-transcript'
+  /** 折叠/展开侧边栏 ⌘\ —— 等价于常驻顶栏那颗开关钮。 */
+  | 'toggle-sidebar'
+  /** 切到聊天面 ⌘1。 */
+  | 'go-chat'
+  /** 切到工作画布 ⌘2（还原上次画布视图，与 rail 的画布入口同逻辑）。 */
+  | 'go-canvas'
 
 /** Payload for SHELL_MENU_ACTION / TAB_TRIGGER_MENU_ACTION. */
 export type ShellMenuActionPayload = { action: ShellMenuAction }

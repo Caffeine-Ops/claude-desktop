@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { Suspense, type ReactNode } from 'react'
 import { AuthGate } from '@/src/components/AuthGate'
 import { RailShell } from '@/src/components/RailShell'
+import { ShellMenuBridge } from '@/src/components/ShellMenuBridge'
 import { SurfaceHost } from '@/src/components/SurfaceHost'
 import { UpgradeScreen } from '@/src/components/UpgradeScreen'
 import { ComponentGate } from '@/src/components/ComponentGate'
@@ -162,6 +163,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
            * 后面所有子树的 no-drag 洞都依赖排在本条之后）。语义与纪律见
            * globals.css 的 .window-drag-strip 注释。 */}
           <div aria-hidden className="window-drag-strip" />
+          {/* 菜单栏动作的根层分发端（不渲染任何东西）：接 ⌘N 新对话、⌘K
+           * 搜索、⌘\ 切侧栏、⌘1/⌘2 切面——这几个动作的执行代码住在 src/stores
+           * 与根层组件里，chat 树够不着。chat 树那半（设置/日志/语言/导出）
+           * 仍由 chat/App.tsx 自己接。见 ShellMenuBridge 头注释。 */}
+          <ShellMenuBridge />
           {/* rail 外壳：展开态放回 w-61 常驻列，收起态宽度收成 0（内容面
            * flex-1 补满）+ hover 左边缘浮出。见 RailShell 头注释。 */}
           <RailShell />
