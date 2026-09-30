@@ -92,6 +92,7 @@ import {
   Link,
   MessageSquare,
   Package,
+  PackageCheck,
   Palette,
   PawPrint,
   Pencil,
@@ -363,6 +364,17 @@ const NAV_GROUPS: NavGroup[] = [
         fallback: '使用帮助',
         icon: CircleHelp,
         keywords: buildHelpKeywords(HELP_GROUPS),
+      },
+      {
+        // 运行时组件（2026-09-24）放在帮助与关于之间：它是诊断/维护同族，
+        // 而用户想起它的场合（「AI 引擎坏了」「要重下」）与「关于→版本」相邻。
+        id: 'runtimeComponents',
+        labelKey: 'settingsV2.runtimeComponents',
+        fallback: '运行时组件',
+        icon: PackageCheck,
+        keywords:
+          '组件 运行时 引擎 AI引擎 CLI Python 下载 重新下载 重下 安装 版本 目录 路径 ' +
+          'runtime component engine download reinstall version path',
       },
       {
         id: 'about',

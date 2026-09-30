@@ -70,6 +70,12 @@ export type SettingsSection =
   // src/chat/lib/helpContent.ts，组件 settings/HelpSection.tsx。设计文档
   // docs/superpowers/specs/2026-09-04-help-section-design.md。
   | 'help'
+  // 运行时组件（2026-09-24）：AI 引擎 / Python 环境的安装状态、版本、重新下载、
+  // 安装路径。面板组件 settings/RuntimeComponentsSection.tsx，数据来自
+  // useRuntimeComponentsStore（main 推送的镜像）+ RUNTIME_COMPONENTS_GET_PATHS。
+  // 补的是 2026-07-29「组件改按需下载」之后一直缺的出口——ComponentGate 只是
+  // 首启的门，装完就永不出现，此前装了什么、坏了怎么修都无处可查。
+  | 'runtimeComponents'
   | 'about';
 
 export interface SettingsDialogProps {
@@ -822,6 +828,10 @@ export function useSectionHeaders(): Record<SettingsSection, { title: string; su
     help: {
       title: tt('settingsV2.help', '使用帮助'),
       subtitle: tt('settingsV2.helpHint', '常见操作怎么做，点开就能看'),
+    },
+    runtimeComponents: {
+      title: tt('settingsV2.runtimeComponents', '运行时组件'),
+      subtitle: tt('settingsV2.runtimeComponentsHint', 'AI 引擎与 Python 环境的安装状态'),
     },
     // 更新并入关于（2026-09-02）：about 面板里那个「检查更新」按钮本来就是
     // 跳去 appUpdate 的——版本号和「检查更新」本就是一件事被拆成了两个入口。

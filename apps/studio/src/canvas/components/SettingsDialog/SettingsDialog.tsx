@@ -77,6 +77,7 @@ import { PetSettings } from '../pet/PetSettings';
 import { McpClientSection } from '../settings/McpClientSection';
 import { SkillsSection } from '../settings/SkillsSection';
 import { HelpSection } from '../settings/HelpSection';
+import { RuntimeComponentsSection } from '../settings/RuntimeComponentsSection';
 import { DesignSystemsSection } from '../design-system/DesignSystemsSection';
 import {
   WorkspaceAutomationsSection,
@@ -2658,6 +2659,14 @@ export function SettingsDialog({
                这里只做接线。setActiveSection 在 embedded 模式下经 onSectionChange 回报
                给 V2 壳；onClose 给「跳侧栏面」用（先关设置再开面）。 */
             <HelpSection onSelectSection={setActiveSection} onClose={onClose} />
+          ) : null}
+
+          {activeSection === 'runtimeComponents' ? (
+            /* 运行时组件（2026-09-24）：无 props——状态订阅 useRuntimeComponentsStore
+               （main 推送的镜像，模块加载时已 hydrate），路径单独走
+               RUNTIME_COMPONENTS_GET_PATHS。不吃 cfg/setCfg：组件状态不是
+               AppConfig 草稿的一部分，同 AccountSection 的判断。 */
+            <RuntimeComponentsSection />
           ) : null}
 
           {activeSection === 'about' ? (
