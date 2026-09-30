@@ -204,14 +204,19 @@ export function ProposalDocPanel(): React.JSX.Element | null {
       const r = await window.chatApi.exportProposal({ markdown, format, style, mermaidImages })
       // 先定导出结果反馈——埋点绝不能影响它（见下）。
       setExportMsg(
-        r.path ? { tone: 'ok', text: `已导出：${r.path}` } : { tone: 'muted', text: '已取消导出' }
+        // 三态：失败不能再伪装成「已取消」——那正是 2026-09-28 审查⑥ 的病根。
+        !r.ok
+          ? { tone: 'err', text: `导出失败：${r.error}` }
+          : r.path
+            ? { tone: 'ok', text: `已导出：${r.path}` }
+            : { tone: 'muted', text: '已取消导出' }
       )
       // M-0 埋点：仅在真导出（r.path 非 null，非取消）时落一条本地记录。从 getState() 取最新
       // sections（含 baseline/verification）与 sessionId，不依赖闭包旧值。
       // 【旁路化】自带 try/catch + 可选链：埋点是统计信号，它的任何失败（preload 未热更致方法
       // 缺失、buildProposalMetric 异常、IPC reject）都只丢埋点，绝不能冒泡污染【已落盘】的导出
       // 成功反馈——否则用户会看到「导出失败」但文件其实已生成（这正是本次踩的坑）。
-      if (r.path) {
+      if (r.ok && r.path) {
         try {
           const { sections: latest, sessionId } = useProposalStore.getState()
           void window.chatApi.logProposalMetric?.(
@@ -245,7 +250,12 @@ export function ProposalDocPanel(): React.JSX.Element | null {
       const html = await renderProposalPdfHtml(markdown, style, mermaidImages)
       const r = await window.chatApi.exportProposalPdf({ html, defaultPath: '方案草稿.pdf' })
       setExportMsg(
-        r.path ? { tone: 'ok', text: `已导出：${r.path}` } : { tone: 'muted', text: '已取消导出' }
+        // 三态：失败不能再伪装成「已取消」——那正是 2026-09-28 审查⑥ 的病根。
+        !r.ok
+          ? { tone: 'err', text: `导出失败：${r.error}` }
+          : r.path
+            ? { tone: 'ok', text: `已导出：${r.path}` }
+            : { tone: 'muted', text: '已取消导出' }
       )
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err)

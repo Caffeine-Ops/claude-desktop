@@ -1563,6 +1563,13 @@ function ChatHeader(): React.JSX.Element {
                       defaultFilename: transcriptFilename(restTitle, new Date(), lang)
                     })
                     .then((r) => {
+                      // 三态（2026-09-28 审查⑥）：成功 → Finder 定位；用户取消 →
+                      // 静默；**失败 → main 已弹原生错误框**，这里只补日志。本菜单
+                      // 没有消息位，这也是错误框必须由 main 弹的原因。
+                      if (!r.ok) {
+                        console.warn('[chat-header] exportTranscriptMd failed:', r.error)
+                        return
+                      }
                       if (r.path) void window.chatApi.revealPath({ absPath: r.path })
                     })
                     .catch((err: unknown) =>

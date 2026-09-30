@@ -1,4 +1,5 @@
 import { BrowserWindow, dialog } from 'electron'
+import type { FileExportResult } from '../../shared/ipc-channels'
 import { writeFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -67,16 +68,29 @@ export async function exportProposalPdf(
   win: BrowserWindow,
   html: string,
   defaultPath = '方案草稿.pdf'
-): Promise<{ path: string | null }> {
+): Promise<FileExportResult> {
   const r = await dialog.showSaveDialog(win, {
     filters: [{ name: 'PDF', extensions: ['pdf'] }],
     defaultPath
   })
-  if (r.canceled || !r.filePath) return { path: null }
+  if (r.canceled || !r.filePath) return { ok: true, path: null }
 
   const pdf = await htmlToPdfBytes(html)
-  writeFileSync(r.filePath, pdf)
-  return { path: r.filePath }
+  try {
+    writeFileSync(r.filePath, pdf)
+  } catch (err) {
+    // 同 core/exportWrite.ts：写盘失败必须可见（2026-09-28 审查⑥）。
+    const msg = err instanceof Error ? err.message : String(err)
+    dialog.showMessageBox(win, {
+      type: 'error',
+      title: '导出失败',
+      message: '文件没能写入磁盘',
+      detail: `${r.filePath}\n\n${msg}`,
+      buttons: ['好']
+    })
+    return { ok: false, error: `写入文件失败：${msg}` }
+  }
+  return { ok: true, path: r.filePath }
 }
 
 /**

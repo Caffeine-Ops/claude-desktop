@@ -95,5 +95,8 @@ export async function exportUsageCsv(filters: UsageQueryFilters): Promise<Export
   const csv = '﻿' + lines.join('\r\n')
   const defaultFilename = `usage_${filters.startDate}_to_${filters.endDate}.csv`
   const result = await api.exportUsageCsv({ csv, defaultFilename })
+  // 写盘失败（没权限/磁盘满）此前和「用户取消」一样都是 path: null，调用方
+  // 无从区分（2026-09-28 审查⑥）。main 侧已弹原生错误框，这里把语义传上去。
+  if (!result.ok) return { ok: false, error: result.error }
   return { ok: true, path: result.path }
 }

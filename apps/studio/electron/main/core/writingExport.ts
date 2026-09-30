@@ -1,4 +1,5 @@
-import { writeFile } from 'node:fs/promises'
+import type { FileExportResult } from '../../shared/ipc-channels'
+import { writeExportFile } from './exportWrite'
 import { dialog, type BrowserWindow } from 'electron'
 
 import { markdownToDocxBuffer } from './proposalDocx'
@@ -33,12 +34,12 @@ export async function exportWritingDocx(
   defaultBaseName: string,
   assetBaseDir?: string,
   mermaidImages?: Record<string, MermaidImage>
-): Promise<{ path: string | null }> {
+): Promise<FileExportResult> {
   const r = await dialog.showSaveDialog(win, {
     filters: [{ name: 'Word', extensions: ['docx'] }],
     defaultPath: `${sanitizeBaseName(defaultBaseName)}.docx`
   })
-  if (r.canceled || !r.filePath) return { path: null }
+  if (r.canceled || !r.filePath) return { ok: true, path: null }
   // 末位 false = 关掉「章节装饰」（标题自动编号 + 每章另起一页）：那是方案文档的体裁约定，
   // 写作体裁套上去会双重编号、把短文案拆成一堆半空页。见 markdownToDocxBuffer 同名参数注释。
   const buf = await markdownToDocxBuffer(
@@ -49,8 +50,7 @@ export async function exportWritingDocx(
     assetBaseDir,
     false
   )
-  await writeFile(r.filePath, buf)
-  return { path: r.filePath }
+  return writeExportFile(win, r.filePath, buf)
 }
 
 /**
@@ -62,12 +62,11 @@ export async function saveWritingPdf(
   win: BrowserWindow,
   bytes: Uint8Array,
   defaultBaseName: string
-): Promise<{ path: string | null }> {
+): Promise<FileExportResult> {
   const r = await dialog.showSaveDialog(win, {
     filters: [{ name: 'PDF', extensions: ['pdf'] }],
     defaultPath: `${sanitizeBaseName(defaultBaseName)}.pdf`
   })
-  if (r.canceled || !r.filePath) return { path: null }
-  await writeFile(r.filePath, bytes)
-  return { path: r.filePath }
+  if (r.canceled || !r.filePath) return { ok: true, path: null }
+  return writeExportFile(win, r.filePath, bytes)
 }
