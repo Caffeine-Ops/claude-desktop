@@ -47,6 +47,8 @@ import {
   Loader2,
   MoreHorizontal,
   Pencil,
+  Pin,
+  PinOff,
   Trash2
 } from 'lucide-react'
 import { useVirtualizer } from '@tanstack/react-virtual'
@@ -61,7 +63,9 @@ import { useChatStore, useRunningSessionIdsKey } from '@/src/chat/stores/chat'
 import { usePendingPermissionKindsBySession } from '@/src/chat/stores/permissions'
 import { useRailSessionsStore } from '@/src/chat/stores/railSessions'
 import { useUnreadIdsKey, useUnreadStore } from '@/src/chat/stores/unread'
-import { groupLabel, relativeTime } from '@/src/components/railTime'
+import { relativeTime } from '@/src/components/railTime'
+import { buildItems, type RailItem } from '@/src/components/railGrouping'
+import { usePinnedSessionsStore } from '@/src/stores/pinnedSessions'
 import { ScrollArea } from '@/src/components/ui/scroll-area'
 import { Button } from '@/src/components/ui/button'
 import { Input } from '@/src/components/ui/input'
@@ -165,25 +169,10 @@ function displayTitle(raw: string): string {
 /* groupLabel / relativeTime 抽到 railTime.ts 与 RailProjectList 共用
  *（两个 rail 列表的时间节奏必须同源）。 */
 
-/** 列表渲染项：分组标签与会话行拍平成一维数组喂给虚拟滚动
- * （useVirtualizer 按 index 取项、按 kind 分别渲染）。 */
-type RailItem =
-  | { kind: 'label'; key: string; text: string }
-  | { kind: 'row'; key: string; thread: ThreadSummary }
-
-function buildItems(threads: readonly ThreadSummary[]): RailItem[] {
-  const items: RailItem[] = []
-  let lastGroup: string | null = null
-  for (const t of threads) {
-    const g = groupLabel(t.updatedAt)
-    if (g !== lastGroup) {
-      lastGroup = g
-      items.push({ kind: 'label', key: `g:${g}`, text: g })
-    }
-    items.push({ kind: 'row', key: t.id, thread: t })
-  }
-  return items
-}
+/* 列表渲染项的拍平（RailItem / buildItems）已搬到 railGrouping.ts：
+ * 它是纯函数，而置顶把它从「按日期切一刀」变成了有分区语义的逻辑，
+ * 必须靠断言守住（同一行重复出现、组被掏空后留空标题都是肉眼扫不出
+ * 的错）。搬过去后进了 bun test。 */
 
 /**
  * DropdownMenuItem / ContextMenuItem 的公共形状——两个菜单壳里塞的是
@@ -207,6 +196,8 @@ type MenuSeparatorComponent = ComponentType<object>
 function SessionMenuItems({
   Item,
   Separator,
+  pinned,
+  onTogglePin,
   onRename,
   onExportReplay,
   onViewJsonl,
@@ -215,6 +206,9 @@ function SessionMenuItems({
 }: {
   Item: MenuItemComponent
   Separator: MenuSeparatorComponent
+  /** 本行当前是否已置顶——决定文案与图标翻面。 */
+  pinned: boolean
+  onTogglePin: () => void
   onRename: () => void
   onExportReplay: () => void
   onViewJsonl: () => void
@@ -226,6 +220,20 @@ function SessionMenuItems({
     // 已是 ui/dropdown-menu、ui/context-menu 基件默认（2026-07-08 晋升，
     // 见 dropdown-menu.tsx 头注释）。图标 1.75 笔画与账户菜单同款。
     <>
+      {/* 置顶排在最前：它是这个菜单里最常用的一项，且与下面四项
+        * 「改内容 / 导出 / 查文件」不同类——它只改列表的摆放。 */}
+      <Item onSelect={onTogglePin}>
+        {pinned ? (
+          <>
+            <PinOff strokeWidth={1.75} /> 取消置顶
+          </>
+        ) : (
+          <>
+            <Pin strokeWidth={1.75} /> 置顶
+          </>
+        )}
+      </Item>
+      <Separator />
       <Item onSelect={onRename}>
         <Pencil strokeWidth={1.75} /> 重命名
       </Item>
@@ -437,6 +445,11 @@ export function RailSessionList() {
       const rest = threads.filter((t) => t.id !== target.id)
       // 乐观移除驱动折叠退场动画；IPC 失败时 reload 把行拉回来。
       useRailSessionsStore.getState().applyRemove(target.id)
+      // 顺手清掉置顶键——会话没了，标记留着就是死键。composerMode 的
+      // slidesSessions 承认自己留了死键（「无害但脏」），这次不留。
+      // 只在**应用内删除**这一条路径清，不做全量对账：一次扫盘偶发少
+      // 返回几条就把用户的置顶抹掉，比留几个死键坏得多。
+      usePinnedSessionsStore.getState().unpin(target.id)
       if (activeId === target.id) {
         // 选中态移交相邻行（原型 handleActiveHandoff）：优先同位置的下一
         // 行，删的是末行则前一行，删空则回「新对话」。只移交 runtime
@@ -543,9 +556,16 @@ export function RailSessionList() {
       })
   }, [])
 
-  // items 随 threads 变化才重建（useMemo）：虚拟化后组件会在每个滚动帧
-  // 重渲（getVirtualItems 变化驱动），不能每帧重跑 O(n) 的 buildItems。
-  const items = useMemo(() => buildItems(threads), [threads])
+  /* ── 置顶（2026-09-30）──
+   * 订阅整个 pinned 对象而不是逐行查 isPinned()：列表要按它重新分区，
+   * 任何一条置顶变化都得让 items 重建。store 的 set 每次给新对象引用，
+   * useMemo 的依赖比对因此是可靠的（toggle/unpin 都走展开拷贝）。 */
+  const pinned = usePinnedSessionsStore((s) => s.pinned)
+  const togglePin = usePinnedSessionsStore((s) => s.toggle)
+
+  // items 随 threads / 置顶集合变化才重建（useMemo）：虚拟化后组件会在
+  // 每个滚动帧重渲（getVirtualItems 变化驱动），不能每帧重跑 O(n)。
+  const items = useMemo(() => buildItems(threads, pinned), [threads, pinned])
 
   /* ── 虚拟滚动（2026-07-16，@tanstack/react-virtual）──
    *
@@ -679,7 +699,9 @@ export function RailSessionList() {
                       awaitingKind={awaitingKinds[item.thread.id]}
                       unread={unreadIds.has(item.thread.id)}
                       justRenamed={item.thread.id === justRenamedId}
+                      pinned={pinned[item.thread.id] === true}
                       onSwitch={switchTo}
+                      onTogglePin={togglePin}
                       onStartRename={openRename}
                       onExportReplay={performExportReplay}
                       onViewJsonl={performViewJsonl}
@@ -879,7 +901,9 @@ const SessionRow = memo(function SessionRow({
   awaitingKind,
   unread,
   justRenamed,
+  pinned,
   onSwitch,
+  onTogglePin,
   onStartRename,
   onExportReplay,
   onViewJsonl,
@@ -892,7 +916,10 @@ const SessionRow = memo(function SessionRow({
   awaitingKind?: 'approval' | 'question'
   unread: boolean
   justRenamed: boolean
+  /** 本行是否已置顶（父级按行传，行不订阅 store——memo 才挡得住重渲）。 */
+  pinned: boolean
   onSwitch: (id: string) => void
+  onTogglePin: (id: string) => void
   onStartRename: (thread: ThreadSummary) => void
   onExportReplay: (thread: ThreadSummary) => void
   onViewJsonl: (thread: ThreadSummary) => void
@@ -905,6 +932,10 @@ const SessionRow = memo(function SessionRow({
   // handler。deps 只有 thread + 对应回调（都稳定），故这些绑定引用也稳定，
   // 不会因父级高频重渲而变。
   const handleSwitch = useCallback(() => onSwitch(thread.id), [onSwitch, thread.id])
+  const handleTogglePin = useCallback(
+    () => onTogglePin(thread.id),
+    [onTogglePin, thread.id]
+  )
   const handleStartRename = useCallback(
     () => onStartRename(thread),
     [onStartRename, thread]
@@ -1072,6 +1103,8 @@ const SessionRow = memo(function SessionRow({
                 <SessionMenuItems
                   Item={DropdownMenuItem}
                   Separator={DropdownMenuSeparator}
+                  pinned={pinned}
+                  onTogglePin={handleTogglePin}
                   onRename={handleStartRename}
                   onExportReplay={handleExportReplay}
                   onViewJsonl={handleViewJsonl}
@@ -1086,6 +1119,8 @@ const SessionRow = memo(function SessionRow({
           <SessionMenuItems
             Item={ContextMenuItem}
             Separator={ContextMenuSeparator}
+            pinned={pinned}
+            onTogglePin={handleTogglePin}
             onRename={handleStartRename}
             onExportReplay={handleExportReplay}
             onViewJsonl={handleViewJsonl}
