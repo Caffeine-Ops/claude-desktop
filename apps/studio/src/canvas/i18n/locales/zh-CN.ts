@@ -402,6 +402,7 @@ export const zhCN: Dict = {
   'updateApp.currentVersion': '当前版本',
   'updateApp.foundVersion': '发现新版本',
   'updateApp.readyTitle': '新版本已就绪',
+  'updateApp.notesTitle': '本次更新',
   'updateApp.autoHint': '有新版本时会自动在后台下载，下载完成后提示你重启安装。',
   'updateApp.autoHint3h': '应用每 3 小时自动检查一次新版本，发现后会在左下角提示你。',
   'updateApp.check': '检查更新',

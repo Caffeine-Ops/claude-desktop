@@ -404,6 +404,7 @@ export const en: Dict = {
   'updateApp.currentVersion': 'Current version',
   'updateApp.foundVersion': 'Update available',
   'updateApp.readyTitle': 'Update ready',
+  'updateApp.notesTitle': "What's new",
   'updateApp.autoHint': 'New versions download in the background; you will be prompted to restart and install once ready.',
   'updateApp.autoHint3h': 'The app checks for updates every 3 hours and notifies you in the bottom-left corner.',
   'updateApp.check': 'Check for updates',

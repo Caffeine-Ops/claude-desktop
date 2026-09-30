@@ -4,6 +4,7 @@ import { app, dialog } from 'electron'
 // `import { autoUpdater } from 'electron-updater'` 在 "type": "module" 的
 // out-electron 产物里运行时会炸。必须 default import 再解构。
 import electronUpdaterPkg from 'electron-updater'
+import { normalizeReleaseNotes } from '../../shared/releaseNotes'
 import type { UpdaterState } from '../../shared/ipc-channels'
 import { broadcastUpdaterState, setQuitting } from '../tabRegistry'
 
@@ -75,6 +76,9 @@ const CHECK_INTERVAL_MS = 10 * 60 * 1000
  */
 const INSTALL_ACK_DELAY_MS = 380
 
+/** 补拉 release 正文的超时。它是锦上添花，不值得让请求挂太久。 */
+const RELEASE_NOTES_TIMEOUT_MS = 8000
+
 /**
  * 自建更新源的目录 URL（generic provider 的 base）——指向 VPS 上放
  * latest-mac.yml / latest.yml + 安装包的那个目录，务必以 `/` 结尾，例如
@@ -113,7 +117,8 @@ let state: UpdaterState = {
   errorMessage: null,
   // dev / unpackaged 下 electron-updater 没有 app-update.yml 可读，
   // checkForUpdates 直接抛错——整个服务降级为「不支持」只读态。
-  supported: app.isPackaged
+  supported: app.isPackaged,
+  releaseNotes: null
 }
 
 let initialized = false
@@ -187,6 +192,45 @@ async function checkAllFeeds(): Promise<void> {
   } finally {
     checkCycleActive = false
     fallbackInFlight = false
+  }
+}
+
+/**
+ * GitHub Releases API 回落：按 tag 补拉一次 release 正文（2026-09-30）。
+ *
+ * 为什么需要它：FEEDS 里自建 generic 源优先，而 electron-builder **默认不把
+ * 更新说明写进 latest-mac.yml**，所以走自建源时 `info.releaseNotes` 是空的。
+ * GitHub provider 那条路本来就带说明，不会走到这里。
+ *
+ * 拿到的 `body` 是 **Markdown 原文**（与 provider 给的 HTML 不同，归一化函数
+ * 两种都吃）。tag 形如 `v0.0.57`，与发版流程一致；若仓库改用别的 tag 形状，
+ * 这里跟着 FEEDS 的 owner/repo 一起改。
+ *
+ * **即发即弃、静默失败**：仓库私有、限流、断网都可能失败。更新说明拿不到是
+ * 小事，为它打断更新流程是大事——所以这里只在成功时补一次广播，失败仅记日志。
+ */
+async function backfillReleaseNotes(version: string): Promise<void> {
+  if (state.releaseNotes) return
+  const gh = FEEDS.find((f) => f.config.provider === 'github')
+  if (!gh || gh.config.provider !== 'github') return
+  const { owner, repo } = gh.config
+  const url = `https://api.github.com/repos/${owner}/${repo}/releases/tags/v${version}`
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'claude-desktop-updater' },
+      signal: AbortSignal.timeout(RELEASE_NOTES_TIMEOUT_MS)
+    })
+    if (!res.ok) {
+      console.warn(`[updater] release notes backfill: HTTP ${res.status} for ${url}`)
+      return
+    }
+    const body = (await res.json()) as { body?: unknown }
+    const notes = normalizeReleaseNotes(body?.body)
+    // 期间可能已经切到别的版本，或 provider 那边已经填上了——别覆盖。
+    if (!notes || state.releaseNotes || state.availableVersion !== version) return
+    setState({ releaseNotes: notes })
+  } catch (err) {
+    console.warn('[updater] release notes backfill failed:', err)
   }
 }
 
@@ -376,10 +420,24 @@ export function initAppUpdater(): void {
     setState({ phase: 'checking', errorMessage: null, downloadPercent: null })
   })
   autoUpdater.on('update-available', (info) => {
-    setState({ phase: 'available', availableVersion: info.version, errorMessage: null })
+    setState({
+      phase: 'available',
+      availableVersion: info.version,
+      errorMessage: null,
+      releaseNotes: normalizeReleaseNotes(info.releaseNotes)
+    })
+    // 自建 generic 源不带说明（electron-builder 默认不把它写进 latest-mac.yml），
+    // 此时补拉一次 GitHub Release 正文。即发即弃：拿到就广播，拿不到就算了。
+    void backfillReleaseNotes(info.version)
   })
   autoUpdater.on('update-not-available', () => {
-    setState({ phase: 'none', availableVersion: null, downloadPercent: null, errorMessage: null })
+    setState({
+      phase: 'none',
+      availableVersion: null,
+      downloadPercent: null,
+      errorMessage: null,
+      releaseNotes: null
+    })
   })
   autoUpdater.on('download-progress', (progress) => {
     setState({ phase: 'downloading', downloadPercent: Math.round(progress.percent) })
@@ -389,8 +447,11 @@ export function initAppUpdater(): void {
       phase: 'ready',
       availableVersion: info.version,
       downloadPercent: 100,
-      errorMessage: null
+      errorMessage: null,
+      // 已有内容就别被这次的空值覆盖——下载完成事件未必再带一次说明。
+      releaseNotes: normalizeReleaseNotes(info.releaseNotes) ?? state.releaseNotes
     })
+    void backfillReleaseNotes(info.version)
   })
   autoUpdater.on('error', (err) => {
     // fallback 途中（还有下一个源要试）：吞掉这个源的失败，别闪 error 态，
