@@ -141,14 +141,73 @@ function tidy(text: string): string {
  */
 const AUTO_CHANGELOG_LINE = /^\**\s*full changelog\s*\**\s*[:：]\s*\S*https?:\/\/\S+\s*$/i
 
+/* ── GitHub「What's Changed」清单的清理（2026-09-30） ─────────────────
+ *
+ * CI 改用 generate-notes API 之后，release body 就是 GitHub 的标准格式：
+ *
+ *     ## What's Changed
+ *     * feat(studio): 聊天页右栏「会话图库」面板 by @kikaaaaaa-lab in https://…/pull/55
+ *     * chore(studio): bump 0.0.54 to 0.0.55 by @kikaaaaaa-lab in https://…/pull/61
+ *
+ * 那是**开发者视角**的：作者、PR 链接、conventional commit 前缀，对终端用户
+ * 全是噪音（链接在纯文本里还点不了）。GitHub release 页面保留这份完整版，
+ * 应用内「本次更新」显示清理后的版本——两边各得其所。
+ *
+ * 清理放在客户端而不是 CI，是因为 **CI 只在 v* tag 触发**：写在那边的缺陷
+ * 会一路潜伏到真发版那天才炸，而这里是纯函数、单测全覆盖。
+ */
+
+/** `标题 by @某人 in <PR 链接>` 的尾巴。锚定行尾，标题里出现 by 不受影响。 */
+const PR_CREDIT_SUFFIX = /\s+by\s+@[\w-]+\s+in\s+\S+\s*$/i
+
+/**
+ * conventional commit 前缀：`feat:` / `fix(studio):` / `fix/refactor(studio):`。
+ * 类型名限定在常见的那几个词——否则「支持这些格式：Word」这种正常句子会被
+ * 当成前缀切掉（中文冒号本就不匹配，这里再加一道类型名白名单）。
+ */
+const CONVENTIONAL_PREFIX =
+  /^(?:feat|fix|refactor|chore|docs|style|test|perf|build|ci|revert)(?:\/(?:feat|fix|refactor|chore|docs|style|test|perf|build|ci|revert))*(?:\([^)]*\))?!?:\s*/i
+
+/**
+ * 用户无感的条目——**按原始行（含前缀）判断**，不是按清理后的文字，否则
+ * 「新增 CI 状态面板」这种正常功能会被误杀。
+ *
+ *  - 版本号 bump：`chore: bump 0.0.54 to 0.0.55`
+ *  - CI / 构建流程：`fix(ci):` / `chore(build):` —— 用户装到的包里看不见这些
+ */
+const USER_IRRELEVANT = [
+  /^(?:chore|build|ci)(?:\([^)]*\))?!?:\s*bump\b/i,
+  /^(?:feat|fix|refactor|chore|docs|style|test|perf|build|revert)?(?:\/\w+)*\((?:ci|build|deps)\)!?:/i,
+  /^ci(?:\/\w+)*(?:\([^)]*\))?!?:/i
+]
+
+/** GitHub 固定抬头，中文语境下没意义（卡片自己已有「本次更新」标题）。 */
+const CHANGED_HEADING = /^#{0,6}\s*what'?s\s+changed\s*$/i
+
+/**
+ * 一行 PR 条目 → 用户能读的一行；返回 null = 这条不该给用户看。
+ * 不是 `*`/`-` 列表项的行原样返回（人手写的正文段落不受影响）。
+ */
+function cleanChangelogLine(line: string): string | null {
+  const bullet = /^[*-]\s+/.exec(line)
+  if (!bullet) return CHANGED_HEADING.test(line) ? null : line
+  const body = line.slice(bullet[0].length)
+  // 过滤判断要在剥前缀**之前**做——前缀正是判据。
+  if (USER_IRRELEVANT.some((re) => re.test(body))) return null
+  const text = body.replace(PR_CREDIT_SUFFIX, '').replace(CONVENTIONAL_PREFIX, '').trim()
+  return text ? `- ${text}` : null
+}
+
 /** 单段（字符串形态）归一化：HTML 剥标签、解实体、收空白、摘掉自动生成行。 */
 function normalizeOne(raw: string): string | null {
   const decoded = looksLikeHtml(raw) ? decodeEntities(htmlToText(raw)) : decodeEntities(raw)
-  const withoutAuto = tidy(decoded)
+  const cleaned = tidy(decoded)
     .split('\n')
     .filter((line) => !AUTO_CHANGELOG_LINE.test(line))
+    .map(cleanChangelogLine)
+    .filter((line): line is string => line !== null)
     .join('\n')
-  const text = tidy(withoutAuto)
+  const text = tidy(cleaned)
   if (!text || text === EMPTY_PLACEHOLDER) return null
   return text
 }

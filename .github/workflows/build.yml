@@ -581,17 +581,65 @@ jobs:
               sys.exit(1)
           PY
 
+      # Release notes 必须自己生成（2026-09-30 修）。
+      #
+      # 病根：下面那步的 `generate_release_notes: true` 是让 GitHub 按**目标
+      # 仓库**的历史生成的，而我们把 release 发去 claude-desktop-releases——
+      # 那个仓库只是个产物容器，里面没有任何 commit 和 PR。于是生成出来永远
+      # 只有一行 `**Full Changelog**: <链接>`，v0.0.50~v0.0.55 全是这样，等于
+      # 「有新版本」却从不说改了什么。
+      #
+      # 修法：显式调 generate-notes API 针对**源仓库**（本仓库）生成，再把
+      # body 交给下面那步。源仓库里 tag 与 PR 都齐全，产出就是正常的
+      # 「What's Changed」清单。
+      #
+      # previous_tag_name 留空 = 让 GitHub 自己找上一个 tag（首个 tag 时也
+      # 不会失败）。整步 `continue-on-error`：更新说明拿不到不值得让一次发版
+      # 失败——真拿不到就退回原来的行为（body 空，客户端不显示说明）。
+      - name: Generate release notes from this repo
+        id: notes
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # 注意赋值写法：**不能**写成 `body=$(cmd || echo '')`——gh 失败时会
+          # 把错误 JSON 打到 stdout，那种写法会把 `{"message":"Not Found",…}`
+          # 原样捕获进 body，最后写进 release notes（2026-09-30 本地实测）。
+          # 必须让命令失败后**重新赋值**，才真的落成空串。
+          if ! body=$(gh api -X POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="$TAG" --jq '.body' 2>/dev/null); then
+            body=''
+          fi
+          # jq 对缺失字段给的是字面量 "null"，同样不能当正文发出去。
+          if [ "$body" = "null" ]; then
+            body=''
+          fi
+          if [ -z "$body" ]; then
+            echo "::warning::generate-notes returned empty; falling back to no release notes"
+          fi
+          {
+            echo 'body<<RELEASE_NOTES_EOF'
+            printf '%s\n' "$body"
+            echo 'RELEASE_NOTES_EOF'
+          } >> "$GITHUB_OUTPUT"
+
       # ONE action-gh-release call for everything — the whole point of this
       # job existing (see header comment). fail_on_unmatched_files: true
       # because every file here MUST exist (unlike the old per-leg upload
       # where a leg only ever saw its own platform's files).
+      #
+      # `generate_release_notes` 改成 false + 显式 body：理由见上一步。留 true
+      # 会让 GitHub 在我们的 body 之外再追加一次它那份（空的）自动生成内容。
       - name: Publish to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           repository: Caffeine-Ops/claude-desktop-releases
           token: ${{ secrets.RELEASE_REPO_TOKEN }}
           files: release-out/*
-          generate_release_notes: true
+          body: ${{ steps.notes.outputs.body }}
+          generate_release_notes: false
           draft: false
           prerelease: false
           fail_on_unmatched_files: true
