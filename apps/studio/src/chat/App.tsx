@@ -11,6 +11,7 @@ import { useLogsStore } from './stores/logs'
 import { useWorkspaceStore } from './stores/workspace'
 import { useI18n } from './i18n'
 import { useDialogStore } from './stores/dialogs'
+import { exportCurrentTranscript } from './lib/exportCurrentTranscript'
 import { openSettingsOverlay } from '@/src/stores/surfaceOverlay'
 import { KbManagerView } from './components/kb/KbManagerView'
 import { ChatLoadingSkeleton } from '@/src/components/ChatLoadingSkeleton'
@@ -99,11 +100,16 @@ function App(): React.JSX.Element {
       } else if (action === 'toggle-lang') {
         const cur = useI18n.getState().lang
         useI18n.getState().setLang(cur === 'zh' ? 'en' : 'zh')
-      } else if (action === 'open-search') {
-        // Shell rail's 「搜索对话」 row (or its ⌘K). The dialog lives in
-        // this renderer because the rail's 220px can't host a 580px panel.
-        useDialogStore.getState().openDialog('search')
+      } else if (action === 'export-transcript') {
+        // ⇧⌘E。与 ThreadView 顶栏 ··· 菜单的「导出对话…」共用同一个函数
+        // ——标题派生、三态反馈的纪律都在它里面。没有会话/没有消息时它
+        // 自己静默退出（菜单项恒亮不灰化，见 shared/menuCommands.ts）。
+        exportCurrentTranscript()
       }
+      // 'open-search' 与另外四个动作（new-chat / toggle-sidebar / go-chat /
+      // go-canvas）归**根层**的 ShellMenuBridge 接——它们要碰 src/stores 与
+      // 根 layout，chat 树够不着。⌘K 2026-09-30 从这里搬走就是为了跨面：
+      // 弹窗虽住在本树，但画布面时本树不可见，必须先由根层切面再开。
     })
   }, [])
 

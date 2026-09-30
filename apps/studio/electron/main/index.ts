@@ -42,6 +42,7 @@ import { pushSplashStage } from './splash'
 import { createTray, destroyTray } from './tray'
 import {
   createShellWindow,
+  dispatchMenuActionToActiveTab,
   getActiveTabWebContents,
   getQuitting,
   getShellWindow,
@@ -52,6 +53,11 @@ import {
   setQuitting,
   broadcastKbBuildStatus
 } from './tabRegistry'
+import {
+  menuCommandsIn,
+  type MenuCommand,
+  type MenuCommandGroup
+} from '../shared/menuCommands'
 import {
   startOpenDesignServices,
   stopOpenDesignServices,
@@ -178,11 +184,42 @@ app.setPath('userData', userDataDir)
 app.setName('Cowork')
 
 /**
+ * 把一条 MenuCommand 变成 Electron 菜单项：点击 = 把动作丢进现成的
+ * SHELL_MENU_ACTION 总线，由渲染层两个分发端之一接住。
+ *
+ * **菜单项恒亮、不做动态灰化**（2026-09-30 首版取舍）：比如没有会话时
+ * ⇧⌘E 会静默 no-op。要按 mac 惯例灰掉，得新开一条「渲染层 → main 推
+ * 状态 + 重建菜单」的 IPC，成本远超本轮范围；渲染层分发端自己判空。
+ */
+function commandMenuItem(cmd: MenuCommand): MenuItemConstructorOptions {
+  return {
+    label: cmd.label,
+    accelerator: cmd.accelerator,
+    click: () => {
+      dispatchMenuActionToActiveTab(cmd.action)
+    }
+  }
+}
+
+/** 展开一组命令成菜单项，按需在项前插分隔线。 */
+function commandMenuItems(group: MenuCommandGroup): MenuItemConstructorOptions[] {
+  return menuCommandsIn(group).flatMap((cmd) =>
+    cmd.separatorBefore
+      ? [{ type: 'separator' } as MenuItemConstructorOptions, commandMenuItem(cmd)]
+      : [commandMenuItem(cmd)]
+  )
+}
+
+/**
  * Build the application menu. The tab-bar entry point is "File →
  * New Tab" (⌘T), matching how every browser handles it. Everything
  * else is pulled from Electron's built-in roles so keyboard
  * shortcuts (copy/paste/devtools/…) keep working without us
  * re-implementing them.
+ *
+ * 2026-09-30：产品动作（新对话/搜索/导出/切侧栏/切面）不再手写在这里，
+ * 而是遍历 shared/menuCommands.ts 那张表生成——快捷键冲突与跨平台前缀
+ * 由那张表的测试钉死，见其头注释。
  */
 function buildMenu(): Menu {
   const isMac = process.platform === 'darwin'
@@ -203,6 +240,10 @@ function buildMenu(): Menu {
     submenu: [
       // 「New Tab / ⌘T」已随 legacy 多 tab 架构下线（Phase 4）：单视图形态
       // 全 app 只有一个全屏 studio tab，多开没有意义。
+      //
+      // 新对话 ⌘N / 搜索对话 ⌘K / 导出对话… ⇧⌘E —— 从 menuCommands 表生成。
+      ...commandMenuItems('file'),
+      { type: 'separator' as const },
       ...(isMac ? [] : [checkForUpdatesItem, { type: 'separator' } as MenuItemConstructorOptions]),
       isMac ? { role: 'close' } : { role: 'quit' }
     ]
@@ -217,6 +258,10 @@ function buildMenu(): Menu {
   const viewMenu: MenuItemConstructorOptions = {
     label: '&View',
     submenu: [
+      // 切换侧边栏 ⌘\ / 聊天 ⌘1 / 工作画布 ⌘2 —— 从 menuCommands 表生成。
+      // 放在最前：它们是用户每天要用的视图切换，reload/DevTools 是排障项。
+      ...commandMenuItems('view'),
+      { type: 'separator' as const },
       { role: 'reload' },
       { role: 'forceReload' },
       {
