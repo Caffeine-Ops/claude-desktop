@@ -49,8 +49,16 @@
  *     全族退役 → SettingGroup/SettingCard/SettingRow）
  *     注：原清单里的 `language` 已于 2026-09-02 并入 `appearance`（见
  *     settingsHelpers.ts 的类型注释），不再是独立 section。
- *   ☐ pet —— **唯一剩余未迁的 section**（PetSettings.tsx，1112 行，hint×16 /
- *     seg-btn×12 / field×7 / ghost×5 + 一批 pet-* 专属类）
+ *   ◐ pet（2026-10-08 迁了一半，**刻意的**）：共享类与裸元素已清——6 个可见的
+ *     裸 input → shadcn Input（它们一个类名都没有，外观全靠 canvas 的裸元素
+ *     reset 撑着，是本文件唯一真正会被「填空」的地方），hint×16 / field×7 /
+ *     field-label×7 / settings-section×1 → utility。seg-btn×12 更早已迁。
+ *     **保留 46 个 pet-* 专属类不迁**：它们只有 PetSettings 一个消费者，不存在
+ *     跨面泄漏风险，而迁了也删不掉 pet-companion.css（见下）——纯粹是打钩收益。
+ *     5 个 button 同样保留：没有一个是真「裸」的（3 个是 .subtab-pill tablist
+ *     的子按钮，外观来自父类后代选择器，且 DesignsTab / RoutinesSection 也在
+ *     用同一套；另 2 个是 pet-atlas-row / pet-swatch）。给它们加 data-slot 会
+ *     豁免掉 canvas reset、把浏览器原生按钮样式放回来，方向是反的。
  *   ✓ HelpSection（2026-09-04 新增「使用帮助」分区，token 'help'，关于组首位：
  *     内容 src/chat/lib/helpContent.ts、组件 settings/HelpSection.tsx，天生
  *     chat 栈、不在待迁清单里。）
@@ -65,8 +73,12 @@
  *   section（pet）之后它们在 canvas 树里仍分别有 20 / 28 / 12 / 9 / 34 个
  *   消费者——那些消费者根本不在设置页。退役这两个文件的真实前提是「整个
  *   canvas 树迁完」，是另一个数量级的工程，别拿它当迁 pet 的理由。
- *   迁完 pet 能实际退役的只有：`seg-btn` 一族（唯一消费者就是 PetSettings）
- *   + 49 个 pet-* 专属类（pet-companion.css，同样只有 PetSettings 在用）。
+ *   迁完 pet 能实际退役的只有：`seg-btn` 一族（唯一消费者就是 PetSettings，
+ *   已于 2026-09 退役）+ pet-* 专属类。**后者的数量按 2026-10-08 实测订正为
+ *   46 个，不是 49**：pet-companion.css 里共 68 个 pet-* 类，其中 18 个属于
+ *   PetOverlay（浮窗宠物本体）与 PetSpriteFace，另有 4 个靠模板字符串拼接。
+ *   也就是说**即便连专属类一起迁，这个 34KB 的文件也只能瘦身、不能删除**——
+ *   浮窗宠物还在用它。这是本轮决定「保留 pet-* 不迁」的直接依据。
  *   var(--green) 等状态色在 design-tokens 转正的事仍待办（见 SettingsDialog.tsx
  *   顶部 TEST_STATUS_TONES 注释）。（这里不能写「星号斜杠」连排——会提前闭合本块注释，07-04 CSS
  *   注释同款事故。）
