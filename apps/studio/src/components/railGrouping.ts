@@ -23,6 +23,8 @@ const PINNED_LABEL = '置顶'
 /**
  * @param threads 已按 updatedAt 倒序的会话列表（调用方保证顺序）
  * @param pinned  置顶集合，`Record<sessionId, true>`（见 stores/pinnedSessions）
+ * @param nowMs   「现在」，默认当前时刻。生产调用方一律不传——它只为让测试
+ *                能钉死日历边界而存在（见 railTime.ts 的 groupLabel 注释）。
  *
  * 置顶的会话**从原日期组里移走**收进最前面的置顶组，不在两处重复出现；
  * 组内仍按 updatedAt 倒序——沿用输入顺序即可，不需要再排一次。
@@ -33,7 +35,8 @@ const PINNED_LABEL = '置顶'
  */
 export function buildItems(
   threads: readonly ThreadSummary[],
-  pinned: Readonly<Record<string, true>>
+  pinned: Readonly<Record<string, true>>,
+  nowMs: number = Date.now()
 ): RailItem[] {
   const pinnedThreads: ThreadSummary[] = []
   const rest: ThreadSummary[] = []
@@ -52,7 +55,7 @@ export function buildItems(
   // 原因：标签是遇到第一行该组的行才插的，没有行就没有标签。
   let lastGroup: string | null = null
   for (const t of rest) {
-    const g = groupLabel(t.updatedAt)
+    const g = groupLabel(t.updatedAt, nowMs)
     if (g !== lastGroup) {
       lastGroup = g
       items.push({ kind: 'label', key: `g:${g}`, text: g })
