@@ -42,8 +42,14 @@ function fixtures(at: number): ThreadSummary[] {
   const d = new Date(at)
   const noonDaysAgo = (days: number): number =>
     new Date(d.getFullYear(), d.getMonth(), d.getDate() - days, 12, 0, 0).getTime()
+  const midnightToday = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
   return [
-    thread('today', at - 60_000),
+    // 「今天」这条要的是「刚刚活动过」，所以用 at - 1 分钟而不是正午锚点
+    // （正午在 at 早于中午时会落到未来，当 updatedAt 讲不通）。但裸的
+    // at - 1 分钟在 at 恰为午夜整点时会退到昨天 23:59——**本行是四条夹具里
+    // 唯一能越过日历边界的**，所以向今天 00:00 夹紧。代码评审发现，实测
+    // at = 00:00:00 时 groupLabel 确实返回「昨天」。
+    thread('today', Math.max(at - 60_000, midnightToday)),
     thread('yesterday', noonDaysAgo(1)),
     thread('week', noonDaysAgo(3)),
     thread('older', noonDaysAgo(30))
@@ -157,31 +163,48 @@ describe('buildItems — key 唯一性（虚拟滚动按 key 取项）', () => {
  * 只要分组逻辑或夹具构造再次把「现在几点」偷偷变成输入，这条就会红。
  */
 describe('分组不随「跑测试时是几点」漂移（防 flaky 回归）', () => {
-  const HOURS = [0, 1, 4, 5, 11, 12, 20, 23] as const
+  /**
+   * `[小时, 分钟]`。**午夜整点 `[0, 0]` 是必须留着的那一格**：它是全天唯一
+   * 会让「刚刚活动」那条夹具退到前一天的时刻（代码评审发现，见 fixtures
+   * 里的注释）。只扫「每点 30 分」会漏掉它——而漏掉的恰好是边界本身。
+   */
+  const MOMENTS = [
+    [0, 0],
+    [0, 30],
+    [1, 30],
+    [4, 30],
+    [5, 30],
+    [11, 59],
+    [12, 0],
+    [20, 30],
+    [23, 59]
+  ] as const
 
   it('一天里的任意时刻，四个日期组的骨架都一样', () => {
-    for (const hour of HOURS) {
-      const at = new Date(2026, 2, 15, hour, 30, 0).getTime()
+    for (const [hour, minute] of MOMENTS) {
+      const at = new Date(2026, 2, 15, hour, minute, 0).getTime()
       const items = buildItems(fixtures(at), {}, at)
-      expect({ hour, labels: labels(items) }).toEqual({
+      expect({ hour, minute, labels: labels(items) }).toEqual({
         hour,
+        minute,
         labels: ['今天', '昨天', '本周', '更早']
       })
     }
   })
 
   it('置顶把某组掏空后的骨架，同样不随时刻漂移', () => {
-    for (const hour of HOURS) {
-      const at = new Date(2026, 2, 15, hour, 30, 0).getTime()
+    for (const [hour, minute] of MOMENTS) {
+      const at = new Date(2026, 2, 15, hour, minute, 0).getTime()
       const items = buildItems(fixtures(at), { today: true }, at)
-      expect({ hour, labels: labels(items) }).toEqual({
+      expect({ hour, minute, labels: labels(items) }).toEqual({
         hour,
+        minute,
         labels: ['置顶', '昨天', '本周', '更早']
       })
     }
   })
 
-  it('跨月边界（3 月 1 日）也成立——「30 天前」要退到上个月', () => {
+  it('跨月边界也成立：从 3 月 1 日往前 30 天要退到 1 月 30 日（2026 年 2 月只有 28 天，跨的是两个月）', () => {
     const at = new Date(2026, 2, 1, 0, 30, 0).getTime()
     const items = buildItems(fixtures(at), {}, at)
     expect(labels(items)).toEqual(['今天', '昨天', '本周', '更早'])
