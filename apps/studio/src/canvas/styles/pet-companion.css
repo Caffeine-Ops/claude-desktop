@@ -866,9 +866,6 @@ body.desktop-pet-shell .pet-task-item {
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 8px;
 }
-.pet-image-frames .field input {
-  width: 100%;
-}
 
 /* Make the custom-pet preview / settings sprite respect the rounded
    accent halo used for emoji glyphs even when an image is rendered. */

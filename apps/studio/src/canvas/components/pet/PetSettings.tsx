@@ -5,6 +5,7 @@ import { trackSettingsPetsClick } from '../../analytics/events';
 import { useT } from '../../i18n';
 import { Icon } from '../shared/Icon';
 import { Button } from '@/src/components/ui/button';
+import { Input } from '@/src/components/ui/input';
 import { cn } from '@/src/lib/utils';
 import type { AppConfig, CodexPetSummary, PetConfig, PetCustom } from '../../types';
 import { DEFAULT_PET } from '../../state/config';
@@ -631,7 +632,7 @@ export function PetSettings({ cfg, setCfg }: Props) {
             </Button>
           </div>
         </div>
-        <p className="hint pet-tabs-hint">
+        <p className="pet-tabs-hint text-xs leading-[1.55] text-muted-foreground">
           {activeTab === 'builtIn'
             ? t('pet.tabBuiltInHint')
             : activeTab === 'custom'
@@ -643,7 +644,7 @@ export function PetSettings({ cfg, setCfg }: Props) {
       {activeTab === 'builtIn' ? (
         <div className="pet-built-in">
           {bundledPets.length === 0 ? (
-            <p className="hint pet-codex-empty">
+            <p className="pet-codex-empty text-xs leading-[1.55] text-muted-foreground">
               {codexPetsLoading
                 ? t('pet.codexLoading')
                 : t('pet.builtInEmpty')}
@@ -662,7 +663,7 @@ export function PetSettings({ cfg, setCfg }: Props) {
             </div>
           )}
           {uploadError ? (
-            <p className="hint pet-image-error">{uploadError}</p>
+            <p className="pet-image-error text-xs leading-[1.55]">{uploadError}</p>
           ) : null}
         </div>
       ) : null}
@@ -672,7 +673,7 @@ export function PetSettings({ cfg, setCfg }: Props) {
         <div className="pet-custom-head">
           <div>
             <h4>{t('pet.customTitle')}</h4>
-            <p className="hint">{t('pet.customHint')}</p>
+            <p className="text-xs leading-[1.55] text-muted-foreground">{t('pet.customHint')}</p>
           </div>
           <Button
             type="button"
@@ -773,22 +774,22 @@ export function PetSettings({ cfg, setCfg }: Props) {
               </Button>
             ) : null}
           </div>
-          <p className="hint">
+          <p className="text-xs leading-[1.55] text-muted-foreground">
             {pet.custom.imageUrl
               ? t('pet.imageHintActive')
               : t('pet.imageHintIdle')}
           </p>
           {uploadError ? (
-            <p className="hint pet-image-error">{uploadError}</p>
+            <p className="pet-image-error text-xs leading-[1.55]">{uploadError}</p>
           ) : null}
           {pet.custom.imageUrl && pet.custom.atlas ? (
-            <p className="hint pet-image-atlas-hint">{t('pet.atlasActiveHint')}</p>
+            <p className="pet-image-atlas-hint text-xs leading-[1.55] text-muted-foreground">{t('pet.atlasActiveHint')}</p>
           ) : null}
           {pet.custom.imageUrl && !pet.custom.atlas ? (
             <div className="pet-image-frames">
-              <label className="field">
+              <label className="flex flex-col gap-1">
                 <span className="field-label">{t('pet.fieldFrames')}</span>
-                <input
+                <Input
                   type="number"
                   min={FRAMES_MIN}
                   max={FRAMES_MAX}
@@ -800,11 +801,11 @@ export function PetSettings({ cfg, setCfg }: Props) {
                     patchCustom({ frames: n });
                   }}
                 />
-                <p className="hint">{t('pet.fieldFramesHint')}</p>
+                <p className="text-xs leading-[1.55] text-muted-foreground">{t('pet.fieldFramesHint')}</p>
               </label>
-              <label className="field">
+              <label className="flex flex-col gap-1">
                 <span className="field-label">{t('pet.fieldFps')}</span>
-                <input
+                <Input
                   type="number"
                   min={FPS_MIN}
                   max={FPS_MAX}
@@ -816,7 +817,7 @@ export function PetSettings({ cfg, setCfg }: Props) {
                     patchCustom({ fps: n });
                   }}
                 />
-                <p className="hint">{t('pet.fieldFpsHint')}</p>
+                <p className="text-xs leading-[1.55] text-muted-foreground">{t('pet.fieldFpsHint')}</p>
               </label>
             </div>
           ) : null}
@@ -827,7 +828,7 @@ export function PetSettings({ cfg, setCfg }: Props) {
             <div className="pet-atlas-head">
               <div>
                 <strong>{t('pet.atlasPickerTitle')}</strong>
-                <p className="hint">{t('pet.atlasPickerHint')}</p>
+                <p className="text-xs leading-[1.55] text-muted-foreground">{t('pet.atlasPickerHint')}</p>
               </div>
               <Button
                 type="button"
@@ -900,9 +901,9 @@ export function PetSettings({ cfg, setCfg }: Props) {
         ) : null}
 
         <div className="pet-custom-fields">
-          <label className="field">
+          <label className="flex flex-col gap-1">
             <span className="field-label">{t('pet.fieldName')}</span>
-            <input
+            <Input
               type="text"
               maxLength={32}
               value={pet.custom.name}
@@ -912,9 +913,9 @@ export function PetSettings({ cfg, setCfg }: Props) {
               }
             />
           </label>
-          <label className="field" htmlFor={customGlyphId}>
+          <label className="flex flex-col gap-1" htmlFor={customGlyphId}>
             <span className="field-label">{t('pet.fieldGlyph')}</span>
-            <input
+            <Input
               id={customGlyphId}
               type="text"
               maxLength={4}
@@ -924,11 +925,11 @@ export function PetSettings({ cfg, setCfg }: Props) {
                 update({ custom: { ...pet.custom, glyph: e.target.value } })
               }
             />
-            <p className="hint">{t('pet.fieldGlyphHint')}</p>
+            <p className="text-xs leading-[1.55] text-muted-foreground">{t('pet.fieldGlyphHint')}</p>
           </label>
-          <label className="field">
+          <label className="flex flex-col gap-1">
             <span className="field-label">{t('pet.fieldGreeting')}</span>
-            <input
+            <Input
               type="text"
               maxLength={120}
               value={pet.custom.greeting}
@@ -938,7 +939,7 @@ export function PetSettings({ cfg, setCfg }: Props) {
               }
             />
           </label>
-          <div className="field">
+          <div className="flex flex-col gap-1">
             <span className="field-label">{t('pet.fieldAccent')}</span>
             <div className="pet-swatches" role="radiogroup" aria-label={t('pet.fieldAccent')}>
               {ACCENT_SWATCHES.map((color) => {
@@ -979,7 +980,7 @@ export function PetSettings({ cfg, setCfg }: Props) {
             <div className="pet-codex-head">
               <div>
                 <h4>{t('pet.codexTitle')}</h4>
-                <p className="hint">
+                <p className="text-xs leading-[1.55] text-muted-foreground">
                   {codexPetsRoot
                     ? t('pet.codexSubtitleWithDir', { dir: codexPetsRoot })
                     : t('pet.codexSubtitle')}
@@ -1022,7 +1023,7 @@ export function PetSettings({ cfg, setCfg }: Props) {
             </div>
             {communitySyncStatus ? (
               <p
-                className={`hint pet-codex-sync-status${communitySyncStatus.kind === 'error' ? ' error' : ''}`}
+                className={`pet-codex-sync-status text-xs leading-[1.55]${communitySyncStatus.kind === 'error' ? ' error' : ''}`}
                 role="status"
               >
                 {communitySyncStatus.kind === 'done'
@@ -1036,7 +1037,7 @@ export function PetSettings({ cfg, setCfg }: Props) {
               </p>
             ) : null}
             {communityPets.length === 0 ? (
-              <p className="hint pet-codex-empty">
+              <p className="pet-codex-empty text-xs leading-[1.55] text-muted-foreground">
                 {codexPetsLoading ? t('pet.codexLoading') : t('pet.codexEmpty')}
               </p>
             ) : (
@@ -1054,12 +1055,12 @@ export function PetSettings({ cfg, setCfg }: Props) {
             <div className="pet-hatch-head">
               <div>
                 <h4>{t('pet.hatchTitle')}</h4>
-                <p className="hint">{t('pet.hatchHint')}</p>
+                <p className="text-xs leading-[1.55] text-muted-foreground">{t('pet.hatchHint')}</p>
               </div>
             </div>
-            <label className="field">
+            <label className="flex flex-col gap-1">
               <span className="field-label">{t('pet.hatchConcept')}</span>
-              <input
+              <Input
                 type="text"
                 maxLength={140}
                 value={hatchConcept}
@@ -1079,7 +1080,7 @@ export function PetSettings({ cfg, setCfg }: Props) {
                 <span>{hatchCopied ? t('pet.hatchCopied') : t('pet.hatchCopy')}</span>
               </Button>
             </div>
-            <p className="hint pet-hatch-foot">{t('pet.hatchFoot')}</p>
+            <p className="pet-hatch-foot text-xs leading-[1.55] text-muted-foreground">{t('pet.hatchFoot')}</p>
           </div>
         </div>
       ) : null}
