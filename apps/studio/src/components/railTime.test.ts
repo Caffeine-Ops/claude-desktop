@@ -79,11 +79,46 @@ describe('relativeTime', () => {
     expect(relativeTime(noonDaysAgo(30), NOW)).toBe('2月13日')
   })
 
-  it('与 groupLabel 同口径：同一个时刻不会一个说「昨天」另一个说「N 小时前」', () => {
-    // 两个函数各写了一份「昨天」判断，口径必须一致，否则行尾文案会和
-    // 它所在的分组自相矛盾（用户看到「本周」组里有一行写着「昨天」）。
-    const justBeforeMidnight = new Date(2026, 2, 14, 23, 59, 0).getTime()
-    expect(groupLabel(justBeforeMidnight, NOW)).toBe('昨天')
-    expect(relativeTime(justBeforeMidnight, NOW)).toBe('昨天')
+  /**
+   * 与 groupLabel 的口径差异——**已知、刻意，不是 bug**。
+   *
+   * 这条原本写成「两个函数对同一时刻必须说同一个词」，是错的：
+   * relativeTime 的 `diffMin < 60` 分支排在所有日历判断**之前**，所以
+   * 午夜刚过时两者必然分叉。而且原来只探一个正午的点，那个点上永远
+   * 分叉不了——**一条结构上不可能失败的测试，比没有测试更坏**，它提供
+   * 的是虚假的安全感。代码评审点出来后改成下面这样：钉在真正会分叉的
+   * 时刻上，把实际契约写清楚。
+   *
+   * 为什么不改代码去消除分叉：分组回答的是「哪一天」，行尾回答的是
+   * 「多久以前」，本来就是两个问题。一条 31 分钟前的会话显示「31 分钟前」
+   * 比显示「昨天」有用得多，哪怕它确实归在「昨天」组下。
+   */
+  it('午夜刚过时与 groupLabel 刻意分叉：分组说「昨天」，行尾说「31 分钟前」', () => {
+    const justAfterMidnight = new Date(2026, 2, 15, 0, 30, 0).getTime()
+    const lastNight = new Date(2026, 2, 14, 23, 59, 0).getTime()
+    expect(groupLabel(lastNight, justAfterMidnight)).toBe('昨天')
+    expect(relativeTime(lastNight, justAfterMidnight)).toBe('31 分钟前')
+  })
+
+  it('离午夜够远时两者才一致（这正是原测试唯一探过的那种点）', () => {
+    const lastNight = new Date(2026, 2, 14, 23, 59, 0).getTime()
+    expect(groupLabel(lastNight, NOW)).toBe('昨天')
+    expect(relativeTime(lastNight, NOW)).toBe('昨天')
+  })
+
+  /**
+   * 6~7 天前的条目会显示成**今天这个星期几**——代码评审发现，实测
+   * now = 周日 3/15 12:00、条目 = 上周日 3/8 13:00（相差 167 小时，不足
+   * 7 天）时行尾是「周日」，和今天同名，读起来像今天的会话。
+   *
+   * 本条是**特征化测试**（characterization test）：它锁住的是现状，不是
+   * 「应该如此」。没有在这个 PR 里改掉，是因为本 PR 的范围是「让时间逻辑
+   * 可测」，改文案属于改行为，按仓库纪律要分开一次做。真要修，把星期几
+   * 分支收到 6 天以内即可（第 7 天落回「M月D日」）。
+   */
+  it('【特征化·已知毛刺】6~7 天前显示成今天同名的星期几', () => {
+    const lastSunday = new Date(2026, 2, 8, 13, 0, 0).getTime()
+    expect(groupLabel(lastSunday, NOW)).toBe('本周')
+    expect(relativeTime(lastSunday, NOW)).toBe('周日') // NOW 本身就是周日
   })
 })

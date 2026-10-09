@@ -42,6 +42,12 @@ export function relativeTime(ms: number, nowMs: number = Date.now()): string {
   const yesterday = new Date(now)
   yesterday.setDate(now.getDate() - 1)
   if (d.toDateString() === yesterday.toDateString()) return '昨天'
+  // ⚠️ 已知毛刺（2026-10-09 代码评审发现，刻意暂不修）：这里的窗口是
+  // 滚动 7 天，而星期名只有 7 个——于是 6~7 天前的条目会显示成**今天
+  // 这个星期几**。实测 now = 周日 12:00、条目 = 上周日 13:00（相差 167
+  // 小时）时行尾是「周日」，读起来像今天的会话。要修就把这个分支收到
+  // 6 天以内（第 7 天落回「M月D日」），但那是改用户可见文案，按仓库
+  // 纪律要与重构分开一次做。railTime.test.ts 有一条特征化测试锁住现状。
   if (now.getTime() - ms < 7 * 24 * 60 * 60 * 1000) return WEEKDAYS[d.getDay()]
   return `${d.getMonth() + 1}月${d.getDate()}日`
 }
