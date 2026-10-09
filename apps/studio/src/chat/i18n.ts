@@ -150,6 +150,20 @@ const STRINGS = {
     searchWhoAi: 'AI：',
     searchHitCountPrefix: '共 ',
     searchHitCountSuffix: ' 条消息命中',
+
+    // 对话内查找 ⌘F（2026-10-09）。与上面那组 search* 是两个功能：⌘K 跨
+    // 会话找「哪个对话」，⌘F 在眼前这轮对话里找「哪句话」。
+    findPlaceholder: '在本对话中查找',
+    findNoMatch: '无匹配',
+    // 计数按**消息条数**，不是出现次数——定位只到消息级，同一条里的第 2、3
+    // 次出现跳过去画面不会动（见 lib/threadFind 的 FindHit 注释）。
+    findCount: '{current}/{total} 条',
+    findPrev: '上一条',
+    findNext: '下一条',
+    findClose: '关闭查找',
+    findPrevHint: '上一条 ⇧↵',
+    findNextHint: '下一条 ↵',
+    findCloseHint: '关闭 Esc',
     searchKbdSelect: '选择',
     searchKbdOpen: '打开',
     searchKbdClose: '关闭',
@@ -571,6 +585,17 @@ const STRINGS = {
     searchWhoAi: 'AI: ',
     searchHitCountPrefix: '',
     searchHitCountSuffix: ' matching messages',
+
+    // In-chat find ⌘F — see the zh block for why this is separate from search*.
+    findPlaceholder: 'Find in this chat',
+    findNoMatch: 'No match',
+    findCount: '{current}/{total}',
+    findPrev: 'Previous',
+    findNext: 'Next',
+    findClose: 'Close find',
+    findPrevHint: 'Previous ⇧↵',
+    findNextHint: 'Next ↵',
+    findCloseHint: 'Close Esc',
     searchKbdSelect: 'select',
     searchKbdOpen: 'open',
     searchKbdClose: 'close',

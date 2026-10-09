@@ -363,7 +363,10 @@ interface ChatState {
  * mount of already-in-memory rows — far cheaper than the initial one).
  */
 const HISTORY_WINDOW_INITIAL = 30
-const HISTORY_WINDOW_REVEAL_STEP = 80
+/** 导出给对话内查找用：命中一条还没挂载的早期消息时，要按这个步长算出
+ *  得调几次 revealEarlierMessages 才够得到它（lib/threadFind 的
+ *  revealStepsNeeded）。写死一份常量在那边迟早和这里漂移。 */
+export const HISTORY_WINDOW_REVEAL_STEP = 80
 
 /** Window start for a freshly-(re)mounted transcript: last N rows only. */
 function initialWindowStart(messages: readonly ThreadMessageLike[]): number {

@@ -9,6 +9,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/src/components/ui/too
 import { useI18n, useT } from '../../../i18n'
 import { userMessageCopyText } from '../../../lib/userMessageCopy'
 import { actionBarButtonClass } from './AssistantMessage'
+import { FIND_ACTIVE_CLASS, useFindAnchor } from './useFindAnchor'
 import {
   LEADING_SLASH_COMMAND_RE,
   findSkillChipSpec
@@ -38,6 +39,8 @@ export function UserMessage(): React.JSX.Element {
   // 漏排除的话复制钮会长在卡片底下、把内部 JSON 吐进剪贴板，而这种缺陷
   // 手工走查碰不到。
   const copyText = userMessageCopyText(useUserMessageText())
+  // 对话内查找（⌘F）的滚动锚点与当前命中高亮。下标换算的坑见该 hook 注释。
+  const findAnchor = useFindAnchor()
   return (
     // 钉顶呼吸位（data-[aui-top-anchor-user]:pt-5，2026-07-17 二进宫）：
     // turnAnchor="top" 把最新用户消息滚到视口顶部时，气泡不贴死顶栏 hairline，
@@ -58,7 +61,13 @@ export function UserMessage(): React.JSX.Element {
     // group/umsg：给气泡下方的「复制」钮做 hover 容器。具名（而不是裸
     // `group`）是因为消息树里嵌着好几层 group（AI 那边的 group/msg、长
     // 气泡自己的 toggle 等），匿名 group 会被最近的一层截走。
-    <MessagePrimitive.Root className="group/umsg mb-6 flex w-full flex-col items-end gap-2 data-[aui-top-anchor-user]:pt-5">
+    <MessagePrimitive.Root
+      {...findAnchor}
+      className={cn(
+        'group/umsg mb-6 flex w-full flex-col items-end gap-2 data-[aui-top-anchor-user]:pt-5',
+        FIND_ACTIVE_CLASS
+      )}
+    >
       {/* User bubble — text content. `components.Image` overrides the
           default renderer with our own, and `components.Text` (implicit
           default) just returns the raw string, which is then wrapped by

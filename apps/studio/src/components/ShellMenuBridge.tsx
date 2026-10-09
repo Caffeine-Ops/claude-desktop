@@ -3,6 +3,7 @@
 import { useEffect } from 'react'
 
 import { useDialogStore } from '@/src/chat/stores/dialogs'
+import { useThreadFindStore } from '@/src/chat/stores/threadFind'
 import { getLastCanvasPath, goChat } from '@/src/stores/canvasNav'
 import { useRailStore } from '@/src/stores/rail'
 import { closeSurfaceOverlay } from '@/src/stores/surfaceOverlay'
@@ -58,6 +59,21 @@ export function ShellMenuBridge(): null {
           }
           break
         }
+
+        case 'open-find':
+          // ⌘F。**只在聊天面生效**，画布面直接早退（用户 2026-10-09 拍板）。
+          //
+          // 这不是在重蹈 ⌘K 的覆辙。那次（2026-09-30）把 open-search 搬到根层
+          // 正是因为「画布面按 ⌘K 凭空没反应」是 bug——⌘K 搜的是「哪个对话」，
+          // 跨面有意义，所以该先切面。⌘F 搜的是「这轮对话里的哪句话」，画布面
+          // 根本没有这个语境；把正在看文件的人拽回聊天页才是坏体验。归属靠菜单
+          // 文案「在对话中查找」说明（菜单项一律不灰化，见 index.ts 注释）。
+          //
+          // data-surface 由 SurfaceHost 维护且它是唯一写手（见该组件注释），
+          // 比自己再解析一遍 pathname + 面开关参数可靠。
+          if (document.documentElement.dataset.surface !== 'chat') break
+          useThreadFindStore.getState().openFind()
+          break
 
         case 'toggle-sidebar':
           // 等价于常驻顶栏那颗开关钮。peek（hover 浮出）是 RailShell 的本地
