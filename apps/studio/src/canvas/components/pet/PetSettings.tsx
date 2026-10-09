@@ -517,7 +517,7 @@ export function PetSettings({ cfg, setCfg }: Props) {
   }
 
   return (
-    <section className="flex flex-col">
+    <section className="settings-section">
       {petActionStatus ? (
         <p className="pet-action-status" role="status">
           <Icon name="check" size={12} />
@@ -663,7 +663,7 @@ export function PetSettings({ cfg, setCfg }: Props) {
             </div>
           )}
           {uploadError ? (
-            <p className="pet-image-error text-xs leading-[1.55] text-muted-foreground">{uploadError}</p>
+            <p className="pet-image-error text-xs leading-[1.55]">{uploadError}</p>
           ) : null}
         </div>
       ) : null}
@@ -780,7 +780,7 @@ export function PetSettings({ cfg, setCfg }: Props) {
               : t('pet.imageHintIdle')}
           </p>
           {uploadError ? (
-            <p className="pet-image-error text-xs leading-[1.55] text-muted-foreground">{uploadError}</p>
+            <p className="pet-image-error text-xs leading-[1.55]">{uploadError}</p>
           ) : null}
           {pet.custom.imageUrl && pet.custom.atlas ? (
             <p className="pet-image-atlas-hint text-xs leading-[1.55] text-muted-foreground">{t('pet.atlasActiveHint')}</p>
@@ -788,7 +788,7 @@ export function PetSettings({ cfg, setCfg }: Props) {
           {pet.custom.imageUrl && !pet.custom.atlas ? (
             <div className="pet-image-frames">
               <label className="flex flex-col gap-1">
-                <span className="text-[14.5px] font-semibold text-foreground">{t('pet.fieldFrames')}</span>
+                <span className="field-label">{t('pet.fieldFrames')}</span>
                 <Input
                   type="number"
                   min={FRAMES_MIN}
@@ -804,7 +804,7 @@ export function PetSettings({ cfg, setCfg }: Props) {
                 <p className="text-xs leading-[1.55] text-muted-foreground">{t('pet.fieldFramesHint')}</p>
               </label>
               <label className="flex flex-col gap-1">
-                <span className="text-[14.5px] font-semibold text-foreground">{t('pet.fieldFps')}</span>
+                <span className="field-label">{t('pet.fieldFps')}</span>
                 <Input
                   type="number"
                   min={FPS_MIN}
@@ -902,7 +902,7 @@ export function PetSettings({ cfg, setCfg }: Props) {
 
         <div className="pet-custom-fields">
           <label className="flex flex-col gap-1">
-            <span className="text-[14.5px] font-semibold text-foreground">{t('pet.fieldName')}</span>
+            <span className="field-label">{t('pet.fieldName')}</span>
             <Input
               type="text"
               maxLength={32}
@@ -914,7 +914,7 @@ export function PetSettings({ cfg, setCfg }: Props) {
             />
           </label>
           <label className="flex flex-col gap-1" htmlFor={customGlyphId}>
-            <span className="text-[14.5px] font-semibold text-foreground">{t('pet.fieldGlyph')}</span>
+            <span className="field-label">{t('pet.fieldGlyph')}</span>
             <Input
               id={customGlyphId}
               type="text"
@@ -928,7 +928,7 @@ export function PetSettings({ cfg, setCfg }: Props) {
             <p className="text-xs leading-[1.55] text-muted-foreground">{t('pet.fieldGlyphHint')}</p>
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-[14.5px] font-semibold text-foreground">{t('pet.fieldGreeting')}</span>
+            <span className="field-label">{t('pet.fieldGreeting')}</span>
             <Input
               type="text"
               maxLength={120}
@@ -940,7 +940,7 @@ export function PetSettings({ cfg, setCfg }: Props) {
             />
           </label>
           <div className="flex flex-col gap-1">
-            <span className="text-[14.5px] font-semibold text-foreground">{t('pet.fieldAccent')}</span>
+            <span className="field-label">{t('pet.fieldAccent')}</span>
             <div className="pet-swatches" role="radiogroup" aria-label={t('pet.fieldAccent')}>
               {ACCENT_SWATCHES.map((color) => {
                 const active = pet.custom.accent.toLowerCase() === color.toLowerCase();
@@ -1023,7 +1023,7 @@ export function PetSettings({ cfg, setCfg }: Props) {
             </div>
             {communitySyncStatus ? (
               <p
-                className={`pet-codex-sync-status text-xs leading-[1.55] text-muted-foreground${communitySyncStatus.kind === 'error' ? ' error' : ''}`}
+                className={`pet-codex-sync-status text-xs leading-[1.55]${communitySyncStatus.kind === 'error' ? ' error' : ''}`}
                 role="status"
               >
                 {communitySyncStatus.kind === 'done'
@@ -1059,7 +1059,7 @@ export function PetSettings({ cfg, setCfg }: Props) {
               </div>
             </div>
             <label className="flex flex-col gap-1">
-              <span className="text-[14.5px] font-semibold text-foreground">{t('pet.hatchConcept')}</span>
+              <span className="field-label">{t('pet.hatchConcept')}</span>
               <Input
                 type="text"
                 maxLength={140}

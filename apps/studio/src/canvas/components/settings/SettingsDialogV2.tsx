@@ -49,10 +49,23 @@
  *     全族退役 → SettingGroup/SettingCard/SettingRow）
  *     注：原清单里的 `language` 已于 2026-09-02 并入 `appearance`（见
  *     settingsHelpers.ts 的类型注释），不再是独立 section。
- *   ◐ pet（2026-10-08 迁了一半，**刻意的**）：共享类与裸元素已清——6 个可见的
- *     裸 input → shadcn Input（它们一个类名都没有，外观全靠 canvas 的裸元素
- *     reset 撑着，是本文件唯一真正会被「填空」的地方），hint×16 / field×7 /
- *     field-label×7 / settings-section×1 → utility。seg-btn×12 更早已迁。
+ *   ◐ pet（2026-10-08 迁了一半，**刻意的**）：6 个可见的裸 input → shadcn
+ *     Input（它们一个类名都没有，外观全靠 canvas 的裸元素 reset 撑着，是
+ *     PetSettings.tsx 里唯一真正会被「填空」的地方），hint×16 / field×7
+ *     → utility。seg-btn×12 更早已迁。
+ *     **field-label 与 settings-section 刻意不换 utility**（代码评审发现）：
+ *     判据是「这个类在 V1 和 V2 下解析出的值是否相同」——
+ *       · `.hint`：V1 走 `.modal .hint`、V2 走 `.sv2 .hint`，两边都是
+ *         12px / --text-muted / 1.55，换 utility 两边都等价；
+ *       · `.field`：只有基础的 `.field`（flex 纵向 gap 4px），sv2 没覆盖，同上；
+ *       · `.field-label`：基础值 12px/400/--text-muted，`.sv2 .field-label`
+ *         是 14.5px/600/--text——**两套**。写死任一套都会让另一套退化；
+ *       · `.settings-section`：基础 gap 12px、`.sv2 .settings-section` gap 0——
+ *         同样两套。
+ *     V1 不是死路（App.tsx 的 settingsV2Enabled 读 localStorage.settingsV2
+ *     === '0'，是还在用的降级出口），所以把 V2 的值写死进 markup 等于把
+ *     「两套皮肤」拍扁成一套。**通用判据：删一个 legacy 类之前，先 grep 它
+ *     全部的声明点，确认你抄的是哪一份、其余几份的消费路径是不是真死了。**
  *     **保留 46 个 pet-* 专属类不迁**：它们只有 PetSettings 一个消费者，不存在
  *     跨面泄漏风险，而迁了也删不掉 pet-companion.css（见下）——纯粹是打钩收益。
  *     5 个 button 同样保留：没有一个是真「裸」的（3 个是 .subtab-pill tablist
