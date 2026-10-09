@@ -61,6 +61,8 @@ export const RESERVED_ACCELERATORS: readonly string[] = [
  *
  * 键位取舍：
  * - ⌘N 新对话、⌘K 搜索 —— 与 ChatGPT / Claude.ai 一致，肌肉记忆直接迁移。
+ * - ⌘F 在对话中查找 —— 全平台「在当前文档里找字」的通用键，用别的反而要学。
+ *   注意它与 ⌘K 是两件事：⌘K 跨会话找**哪个对话**，⌘F 在这轮对话里找**哪句话**。
  * - ⇧⌘E 导出 —— 单 ⌘E 在 mac 上是「用选中内容查找」的系统惯例，避开。
  * - ⌘\ 切换侧边栏 —— 跟 Claude.ai 一致（VS Code 用 ⌘B，各家不统一）。
  * - ⌘1 / ⌘2 切面 —— 「第 N 个主视图」是跨应用的通用约定。
@@ -68,6 +70,16 @@ export const RESERVED_ACCELERATORS: readonly string[] = [
 export const MENU_COMMANDS: readonly MenuCommand[] = [
   { action: 'new-chat', label: '新对话', accelerator: 'CmdOrCtrl+N', group: 'file' },
   { action: 'open-search', label: '搜索对话', accelerator: 'CmdOrCtrl+K', group: 'file' },
+  {
+    action: 'open-find',
+    // 文案刻意写「在对话中」而不是光秃秃的「查找」：本项只在聊天面生效，
+    // 画布面按 ⌘F 不做事（见 ipc-channels 里 open-find 的注释）。菜单项
+    // 一律不做动态灰化（见 index.ts 的 commandMenuItem 注释），所以归属
+    // 只能靠文案说清楚。
+    label: '在对话中查找',
+    accelerator: 'CmdOrCtrl+F',
+    group: 'file'
+  },
   {
     action: 'export-transcript',
     label: '导出对话…',

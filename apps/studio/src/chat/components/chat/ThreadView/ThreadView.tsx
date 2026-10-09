@@ -40,6 +40,7 @@ import { AgentTeamDetail } from './AgentTeamDetail'
 import { findSkillChipSpec } from '../../../composer/skillChipRegistry'
 import { SkillChipIcon } from '../SkillChipIcon'
 import { Composer } from './Composer'
+import { FindBar } from './FindBar'
 import { DemoShowcase } from './DemoShowcase'
 import { useSkillCases } from './useSkillCases'
 import { ReplayControlBar } from '../ReplayControlBar'
@@ -691,6 +692,11 @@ export function ThreadView(): React.JSX.Element {
           hairline 底边（见 ChatHeader 注释）。shrink-0 so it never gets
           squeezed by the scrolling viewport below. */}
       <ChatHeader />
+
+      {/* 对话内查找栏 ⌘F（2026-10-09）。只在 store 的 open 为真时渲染，
+          顶栏之下、消息区之上，shrink-0 让它不被下面的滚动区挤扁。
+          刻意不 portal——见 FindBar 头注释第 3 点。 */}
+      <FindBar />
 
       {/* （已删）顶部细进度条 —— 2026-07-17 用户要求，切换加载态改由下面的
           骨架屏承担。 */}

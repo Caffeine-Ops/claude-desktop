@@ -16,6 +16,7 @@ import {
 } from '@/src/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/src/components/ui/tooltip'
 import { cn } from '@/src/lib/utils'
+import { FIND_ACTIVE_CLASS, useFindAnchor } from './useFindAnchor'
 import { useI18n, useT } from '../../../i18n'
 import { REASONING_PLACEHOLDER, useChatStore } from '../../../stores/chat'
 import { openRightPanel, useSplitWorkspaceBusy } from '../../../stores/filePreview'
@@ -481,6 +482,7 @@ function AssistantDeliverables(): React.JSX.Element | null {
 }
 
 export function AssistantMessage(): React.JSX.Element {
+  const findAnchor = useFindAnchor()
   return (
     // group/msg：给下面的 AssistantActionBar 用——复制/喜欢/不喜欢默认
     // 隐去，鼠标移到本条消息任意位置才淡入（同 ChatGPT/Claude.ai 的
@@ -491,7 +493,13 @@ export function AssistantMessage(): React.JSX.Element {
     // 内的工具行要紧排（2px，拼连续竖线）、digest 折叠块要间距归零，
     // 只有 margin 方案能按 data-stack / data-folded 分档。视觉默认档
     // 与原 gap-3 等值（12px）。
-    <MessagePrimitive.Root className="group/msg am-parts mb-6 flex w-full flex-col">
+    // data-find-index / data-find-active：对话内查找（⌘F）的滚动锚点与当前
+    // 命中高亮，见 useFindAnchor。下标是**完整**消息数组的下标，不是
+    // assistant-ui 给的那个相对下标——换算理由在那个 hook 的注释里。
+    <MessagePrimitive.Root
+      {...findAnchor}
+      className={cn('group/msg am-parts mb-6 flex w-full flex-col', FIND_ACTIVE_CLASS)}
+    >
       <TurnActivityProvider>
         {/* 回合总状态行（"正在处理 · 1分24秒" → "已处理 4分32秒"）：
             可见工具行 ≥ 2 时出现，点击折叠全部过程块只看结论。 */}
