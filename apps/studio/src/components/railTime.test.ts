@@ -70,9 +70,11 @@ describe('relativeTime', () => {
     expect(relativeTime(noonDaysAgo(1), NOW)).toBe('昨天')
   })
 
-  it('7 天内 → 周几', () => {
+  // 窗口是 6 天不是 7 天（2026-10-09 收窄，理由见 railTime.ts 注释与下方
+  // 「第 7 天那一档」那条）。整 6 天是取不到的边界，所以这里取 3 天与 5 天。
+  it('6 天内 → 周几', () => {
     expect(relativeTime(noonDaysAgo(3), NOW)).toBe('周四')
-    expect(relativeTime(noonDaysAgo(6), NOW)).toBe('周一')
+    expect(relativeTime(noonDaysAgo(5), NOW)).toBe('周二')
   })
 
   it('超过 7 天 → M月D日', () => {
@@ -107,18 +109,35 @@ describe('relativeTime', () => {
   })
 
   /**
-   * 6~7 天前的条目会显示成**今天这个星期几**——代码评审发现，实测
-   * now = 周日 3/15 12:00、条目 = 上周日 3/8 13:00（相差 167 小时，不足
-   * 7 天）时行尾是「周日」，和今天同名，读起来像今天的会话。
-   *
-   * 本条是**特征化测试**（characterization test）：它锁住的是现状，不是
-   * 「应该如此」。没有在这个 PR 里改掉，是因为本 PR 的范围是「让时间逻辑
-   * 可测」，改文案属于改行为，按仓库纪律要分开一次做。真要修，把星期几
-   * 分支收到 6 天以内即可（第 7 天落回「M月D日」）。
+   * 星期名窗口（6 天）比分组窗口（7 天）窄一天，所以第 7 天那一档落到
+   * 「M月D日」——这是刻意的，见 railTime.ts 里的注释。修的是：原先两个
+   * 窗口一样宽时，第 7 天会显示成**今天这个星期几**（今天周日、上周日的
+   * 会话也写「周日」），读起来像今天的。
    */
-  it('【特征化·已知毛刺】6~7 天前显示成今天同名的星期几', () => {
-    const lastSunday = new Date(2026, 2, 8, 13, 0, 0).getTime()
-    expect(groupLabel(lastSunday, NOW)).toBe('本周')
-    expect(relativeTime(lastSunday, NOW)).toBe('周日') // NOW 本身就是周日
+  it('第 7 天那一档给日期而不是星期（否则会和今天同名）', () => {
+    const lastSunday = new Date(2026, 2, 8, 13, 0, 0).getTime() // NOW 本身是周日
+    expect(groupLabel(lastSunday, NOW)).toBe('本周') // 分组仍是 7 天窗口
+    expect(relativeTime(lastSunday, NOW)).toBe('3月8日') // 行尾不再说「周日」
+  })
+
+  it('6 天这条边界：差一点不到 6 天给星期，刚过 6 天给日期', () => {
+    const SIX_DAYS = 6 * 24 * HOUR
+    expect(relativeTime(NOW - SIX_DAYS + MIN, NOW)).toBe('周一')
+    expect(relativeTime(NOW - SIX_DAYS - MIN, NOW)).toBe('3月9日')
+  })
+
+  /**
+   * 这条才是真正守住修复的那一条：**穷举**窗口内的每一档，断言没有任何
+   * 一档会显示成今天的星期名。单点断言挡不住「有人把 6 改回 7」——穷举
+   * 能，因为只要窗口放宽一天，同名那档立刻落回来。
+   */
+  it('窗口内任何一档都不会显示成今天这个星期几', () => {
+    const todayName = '周日' // NOW = 2026-03-15 是周日
+    for (let h = 1; h <= 7 * 24; h++) {
+      const label = relativeTime(NOW - h * HOUR, NOW)
+      if (label === todayName) {
+        throw new Error(`${h} 小时前的条目显示成了今天的星期名「${todayName}」`)
+      }
+    }
   })
 })
