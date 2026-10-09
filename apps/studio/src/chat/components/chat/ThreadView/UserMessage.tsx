@@ -2,10 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { MessagePrimitive, useMessage } from '@assistant-ui/react'
 import { AnimatePresence, motion } from 'motion/react'
-import { ChevronDown } from 'lucide-react'
+import { Check, ChevronDown, Copy } from 'lucide-react'
 
 import { cn } from '@/src/lib/utils'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/src/components/ui/tooltip'
 import { useI18n, useT } from '../../../i18n'
+import { userMessageCopyText } from '../../../lib/userMessageCopy'
+import { actionBarButtonClass } from './AssistantMessage'
 import {
   LEADING_SLASH_COMMAND_RE,
   findSkillChipSpec
@@ -30,6 +33,11 @@ import {
 /* ─────────────────────── User message ──────────────────────── */
 
 export function UserMessage(): React.JSX.Element {
+  // 「复制」钮该不该长、按下复制什么，由 lib/userMessageCopy 的纯函数定
+  // （null = 不长）。判定没写在这里的理由见那个模块头注释：协议标记气泡
+  // 漏排除的话复制钮会长在卡片底下、把内部 JSON 吐进剪贴板，而这种缺陷
+  // 手工走查碰不到。
+  const copyText = userMessageCopyText(useUserMessageText())
   return (
     // 钉顶呼吸位（data-[aui-top-anchor-user]:pt-5，2026-07-17 二进宫）：
     // turnAnchor="top" 把最新用户消息滚到视口顶部时，气泡不贴死顶栏 hairline，
@@ -47,7 +55,10 @@ export function UserMessage(): React.JSX.Element {
     // 不认 scroll-margin），margin 会被滚出视野，只有 border-box 之内的
     // padding 在锚定后仍然可见。挂在 data 变体上而不是常驻 pt：呼吸位只属于
     // 「被钉顶」这一态，历史消息的行距、首条消息与视口列 pt-8 的关系都不动。
-    <MessagePrimitive.Root className="mb-6 flex w-full flex-col items-end gap-2 data-[aui-top-anchor-user]:pt-5">
+    // group/umsg：给气泡下方的「复制」钮做 hover 容器。具名（而不是裸
+    // `group`）是因为消息树里嵌着好几层 group（AI 那边的 group/msg、长
+    // 气泡自己的 toggle 等），匿名 group 会被最近的一层截走。
+    <MessagePrimitive.Root className="group/umsg mb-6 flex w-full flex-col items-end gap-2 data-[aui-top-anchor-user]:pt-5">
       {/* User bubble — text content. `components.Image` overrides the
           default renderer with our own, and `components.Text` (implicit
           default) just returns the raw string, which is then wrapped by
@@ -88,7 +99,71 @@ export function UserMessage(): React.JSX.Element {
           实底换成半透明 + backdrop-blur，见 ClampedUserBubble 容器。颜色/
           圆角/字号等上面两条纪律都没动，只换材质。 */}
       <ClampedUserBubble />
+      {/* 「复制」钮——AI 回复底下早就有一整条动作栏（复制/喜欢/不喜欢），
+          用户自己发的话却一个动作都没有，想把刚写的长 prompt 捞出来改改
+          重发做不到（2026-10-09 补）。协议标记卡片气泡与纯图片消息不长这
+          个钮，判定在 copyText 那行。 */}
+      {copyText !== null ? <UserCopyButton text={copyText} /> : null}
     </MessagePrimitive.Root>
+  )
+}
+
+/**
+ * 用户气泡的「复制」钮。
+ *
+ * 为什么不用 assistant-ui 的 `ActionBarPrimitive.Copy`（AI 那边用的就是它）
+ * -------------------------------------------------------------------------
+ * 那个 primitive 自己决定往剪贴板写什么（库内按 content parts 拼）。而这里
+ * 「复制什么」是有产品决策的——文件引用要保留 `@"路径"` 原始写法以便粘回
+ * 输入框重发（见 lib/userMessageCopy 头注释），这条决策被那个模块的测试钉
+ * 住了。走 primitive 等于让库绕过那个纯函数，测试就成了假保证。所以这里
+ * 自己写一个钮，复制的正是 `userMessageCopyText` 的返回值。
+ *
+ * 外观 `actionBarButtonClass` 与 Tooltip 文案都跟 AI 那条动作栏共用，所以
+ * 两种气泡底下的钮长得一模一样；只是**不常驻**（AI 那边最后一条回复落定后
+ * 常驻），一律 hover / 键盘聚焦才淡入：用户消息的后面紧跟着 AI 回复，常驻
+ * 图标在转录里只是噪音，而「复制我刚说的话」也不是刚发完就要用的动作。
+ */
+function UserCopyButton({ text }: { text: string }): React.JSX.Element {
+  const [copied, setCopied] = useState(false)
+
+  // 1.5s 后回落成复制图标——与 AI 那边 ActionBarPrimitive.Copy 的
+  // copiedDuration={1500} 对齐。卸载时清掉定时器，免得对已卸载组件 setState。
+  useEffect(() => {
+    if (!copied) return
+    const t = window.setTimeout(() => setCopied(false), 1500)
+    return () => window.clearTimeout(t)
+  }, [copied])
+
+  const label = copied ? '已复制' : '复制'
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-label={label}
+          className={cn(
+            actionBarButtonClass(),
+            // -mt-1 收掉 Root 的 gap-2 一半：钮要贴着气泡读成「它的动作」，
+            // 8px 整的间距会让它飘成一条独立的行。
+            '-mt-1 transition-opacity duration-150',
+            'opacity-0 group-hover/umsg:opacity-100 group-focus-within/umsg:opacity-100'
+          )}
+          onClick={() => {
+            // 写剪贴板失败（无 secure context / 权限被拒）时不改状态——
+            // 图标不跳对勾，用户看得出没成，比假装成功好。
+            void navigator.clipboard
+              .writeText(text)
+              .then(() => setCopied(true))
+              .catch(() => {})
+          }}
+        >
+          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{label}</TooltipContent>
+    </Tooltip>
   )
 }
 
