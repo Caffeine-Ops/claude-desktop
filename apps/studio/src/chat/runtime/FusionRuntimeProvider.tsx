@@ -48,6 +48,7 @@ import { splitBlocks } from '@desktop-shared/proposalBlocks'
 import { extractRevisionResult } from '@desktop-shared/writing'
 import { useWritingStore } from '../stores/writing'
 import { relocateTarget } from '../lib/writingRevision'
+import { shouldAutoCreateSession } from '../lib/sessionAutoSelect'
 import { triggerProposalCitationVerification } from '../lib/proposalVerification'
 import { autoFireProposalGenImages } from '../lib/proposalGenImageFire'
 import { maybeNudgeStageConfirmAfterTurn } from '../lib/proposalStageGate'
@@ -1554,23 +1555,41 @@ function useThreadListAdapter(): ExternalStoreThreadListAdapter {
   // 代价（用户已知情接受）：reload 不再回到「最近用过的会话」，要回历史
   // 会话得从左侧 rail 点。
   //
-  // Guards:
-  //   - `autoSelectedRef` latches true the instant we trigger, so this
-  //     is idempotent even if `threads` changes later in the session.
-  //   - wait for `threadsLoaded` before running — during the initial
-  //     tick `threads` is `[]` because listSessions hasn't returned yet;
-  //     waiting keeps the trigger deterministic (also lets a future
-  //     branch tell empty-vs-populated workspaces apart if needed).
-  //   - skip if the user has already picked a thread (`sessionId` set)
-  //   - skip if a switch is already in flight (`sessionLoading`)
-  const autoSelectedRef = useRef(false)
+  // 四条 guard 的判定抠在 lib/sessionAutoSelect（纯函数，9 条测试）。
+  //
+  // 【2026-10-09 修「永久发不出消息」】这里原来是一个**单向闸门**：
+  //     if (autoSelectedRef.current) return
+  //     autoSelectedRef.current = true   // await 之前置位，此后永不复位
+  // 闸门本意是幂等，但它把「已经尝试过」当成了「已经有会话了」——而
+  // `sessionId` 回到 null 是**设计内的合法状态**（ReplayController 退出
+  // 回放时 setForegroundSession(saved)，其注释原话「为 null 回空态首页」），
+  // 预建那一次本身也可能没落地。一旦落进「闸门已关 + sessionId 为 null」，
+  // 本 effect 永不再跑，应用进入永久发不出消息的状态，而用户只看到控制台
+  // 一行 `[runtime] No active session`，界面毫无反馈、打的字还被清掉了。
+  // 实测抓到过这个现场：{sessionId:null, threadsLoaded:true,
+  // sessionLoading:false, autoSelected:true}——全满足却被挡死。
+  //
+  // 改法：记忆位从「已尝试过」换成「**此刻正在建**」，**settle 即复位**
+  // （下面的 finally，少了它就原样复发）。幂等改由 `sessionId !== null`
+  // 这个事实保证——事实会跟着状态回退，记忆位不会。
+  //
+  // 不会变成重试风暴：失败后 createInFlight 复位，但 effect 的依赖没变，
+  // 不会自己重跑；要等 threads / sessionId / sessionLoading 下次变化。
+  const createInFlightRef = useRef(false)
   useEffect(() => {
-    if (autoSelectedRef.current) return
-    if (!threadsLoaded) return
-    if (sessionId !== null) return
-    if (sessionLoading) return
-    autoSelectedRef.current = true
-    void onSwitchToNewThread()
+    if (
+      !shouldAutoCreateSession({
+        createInFlight: createInFlightRef.current,
+        threadsLoaded,
+        sessionId,
+        sessionLoading
+      })
+    )
+      return
+    createInFlightRef.current = true
+    void onSwitchToNewThread().finally(() => {
+      createInFlightRef.current = false
+    })
   }, [
     threads,
     threadsLoaded,
