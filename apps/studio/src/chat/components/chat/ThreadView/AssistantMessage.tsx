@@ -630,7 +630,9 @@ function AssistantActionBar(): React.JSX.Element | null {
   )
 }
 
-function actionBarButtonClass(active?: boolean): string {
+/** 动作栏图标钮的外观。导出给 UserMessage 的「复制」钮共用——两种气泡
+ *  底下的动作栏必须长得一样，各写一份迟早漂移。 */
+export function actionBarButtonClass(active?: boolean): string {
   return cn(
     'flex size-7 items-center justify-center rounded-md transition-colors',
     active
