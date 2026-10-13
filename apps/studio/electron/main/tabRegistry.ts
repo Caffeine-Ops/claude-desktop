@@ -1,6 +1,7 @@
 import {
   BrowserWindow,
   WebContentsView,
+  screen,
   shell,
   type IpcMainInvokeEvent,
   type WebContents
@@ -10,7 +11,14 @@ import { fileURLToPath } from 'url'
 
 import appIcon from '../../resources/icon.png?asset'
 import { ChatEngine, createChatEngine } from './core/engine'
-import { getThemeMode, resolveIsDarkTheme, setThemeMode } from './core/appSettings'
+import {
+  getAppSettings,
+  getThemeMode,
+  resolveIsDarkTheme,
+  setThemeMode,
+  updateAppSettings
+} from './core/appSettings'
+import { resolveWindowBounds } from './core/windowBounds'
 import { clearUnread, notifyHiddenToTray } from './tray'
 import { finishSplashThenSettle, loadSplashIntoShell, showSplashError } from './splash'
 import { resolveStudioTabUrl } from './services/openDesignServices'
@@ -227,14 +235,37 @@ export function canAddTab(): boolean {
  * 首页的几秒里点了图标毫无反馈，prod 下 did-finish-load ≠ React 画完，
  * show 出来可能仍是一帧空白（「首次启动白屏」，2026-07-06 由此引入闪屏）。
  */
+/** 窗口的出厂尺寸与下限。提成常量是因为「读回上次尺寸」那条路要用同一组值
+ *  当兜底与夹取依据——散成两份字面量迟早漂移。 */
+const WINDOW_DEFAULTS = {
+  width: 1280,
+  height: 800,
+  minWidth: 1226,
+  minHeight: 778
+} as const
+
 export function createShellWindow(): BrowserWindow {
   if (shellWindow && !shellWindow.isDestroyed()) return shellWindow
 
+  // 恢复上次的窗口大小/位置。读回的值**不可信**（显示器可能被拔了、
+  // settings.json 可能被手改坏），一律先过 resolveWindowBounds 夹一遍；
+  // 它返回的 x/y 为 undefined 时不传给 BrowserWindow，由 Electron 居中。
+  // 传 workArea 而不是 bounds：那是扣掉菜单栏和 Dock 之后的可用区域。
+  const restored = resolveWindowBounds(
+    getAppSettings().windowBounds,
+    screen.getAllDisplays().map((d) => d.workArea),
+    WINDOW_DEFAULTS
+  )
+
   const win = new BrowserWindow({
-    width: 1280,
-    height: 800,
-    minWidth: 1226,
-    minHeight: 778,
+    width: restored.width,
+    height: restored.height,
+    // 位置整体给或整体不给——只给一个轴 Electron 会把另一个轴当 0。
+    ...(restored.x !== undefined && restored.y !== undefined
+      ? { x: restored.x, y: restored.y }
+      : {}),
+    minWidth: WINDOW_DEFAULTS.minWidth,
+    minHeight: WINDOW_DEFAULTS.minHeight,
     show: false,
     autoHideMenuBar: true,
     ...(process.platform === 'darwin'
@@ -299,6 +330,47 @@ export function createShellWindow(): BrowserWindow {
   const onUserReturned = (): void => clearUnread()
   win.on('focus', onUserReturned)
   win.on('show', onUserReturned)
+
+  // ── 记住窗口大小 / 位置（2026-10-13）────────────────────────────────
+  // 上次是最大化的就再最大化一次。放在这里（show 之前）是为了让窗口一出现
+  // 就是最大化的，不会先闪一帧小窗再跳大。
+  if (restored.maximized) win.maximize()
+
+  // 存盘时机**刻意不用 'close'**：这个应用关窗是 preventDefault + hide
+  // （见下面的 close handler），窗口根本没销毁；真退出或被系统强杀时也未必
+  // 轮得到。改为跟着移动/缩放走，任何时候断电最多丢最后那一下调整。
+  //
+  // 'moved' / 'resized' 是**拖拽结束**才触发的（不是拖动过程中连续触发），
+  // 本身已经不频繁；防抖只是兜住「快速连续调整」和 maximize 紧跟 resized
+  // 的情况，避免同一秒内多次同步写盘。
+  let boundsSaveTimer: NodeJS.Timeout | null = null
+  const persistWindowBounds = (): void => {
+    if (boundsSaveTimer) clearTimeout(boundsSaveTimer)
+    boundsSaveTimer = setTimeout(() => {
+      boundsSaveTimer = null
+      if (win.isDestroyed()) return
+      // ⚠️ 必须用 getNormalBounds 而不是 getBounds：最大化（或全屏）时
+      // getBounds 返回的是**撑满之后**的尺寸，存下来的话下次启动点「还原」
+      // 会还原成一个满屏大小的非最大化窗口——等于把还原功能弄没了。
+      // getNormalBounds 专门返回「回到普通状态时该多大」。
+      const b = win.getNormalBounds()
+      updateAppSettings({
+        windowBounds: {
+          x: b.x,
+          y: b.y,
+          width: b.width,
+          height: b.height,
+          // 全屏刻意不记（用户 2026-10-13 拍板）：mac 全屏时 isMaximized()
+          // 本就是 false，所以这里天然只记最大化，不记全屏。
+          maximized: win.isMaximized()
+        }
+      })
+    }, 500)
+  }
+  win.on('moved', persistWindowBounds)
+  win.on('resized', persistWindowBounds)
+  win.on('maximize', persistWindowBounds)
+  win.on('unmaximize', persistWindowBounds)
 
   // Keep the active tab's view synchronized with the shell content
   // size. `resize` fires for user drags; `enter-full-screen` /

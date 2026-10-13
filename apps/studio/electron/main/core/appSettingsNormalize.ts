@@ -4,6 +4,7 @@
  */
 
 import type { ImageApiConfig } from '../services/imageGenService'
+import { normalizeSavedWindowBounds, type SavedWindowBounds } from './windowBounds'
 
 export type CliBackend = 'bundled' | 'system'
 
@@ -37,6 +38,9 @@ export interface AppSettings {
    * 触发，同一路径已在算 shell 底色，顺手镜像一份落盘）。
    */
   themeMode?: ThemeMode
+  /** 上次关掉时窗口的大小/位置/是否最大化。读回时要按当前显示器夹一遍，
+   *  见 windowBounds.ts 的 resolveWindowBounds。 */
+  windowBounds?: SavedWindowBounds
 }
 
 /**
@@ -83,5 +87,10 @@ export function normalize(raw: Partial<AppSettings>): Partial<AppSettings> {
   if (raw.themeMode === 'light' || raw.themeMode === 'dark' || raw.themeMode === 'system') {
     out.themeMode = raw.themeMode
   }
+  // 窗口状态：形状校验复用 windowBounds 那边的同一份（读盘和夹取两处用同一
+  // 把尺子，免得「normalize 放行、resolve 又判死」这种两头不一致）。任一
+  // 字段不合法就整条作废——半套坐标比没有更危险，它会被当成合法值去夹取。
+  const wb = normalizeSavedWindowBounds(raw.windowBounds)
+  if (wb) out.windowBounds = wb
   return out
 }
